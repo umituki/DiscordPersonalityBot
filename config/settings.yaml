@@ -1,0 +1,34 @@
+# YUI v2 static runtime settings.
+# Secrets belong in .env, never here (spec 31.1).
+config_version: 1
+
+app:
+  name: yui
+  environment: development
+
+paths:
+  data_dir: data
+  logs_dir: logs
+  backups_dir: backups
+  policies_dir: config/policies
+
+database:
+  filename: yui.db
+  journal_mode: WAL
+  synchronous: FULL
+  busy_timeout_ms: 5000
+  foreign_keys: true
+
+runtime:
+  # normal | degraded | minimal | offline (spec 28.3)
+  mode: normal
+  # internal reference timezone; all stored timestamps are UTC ISO-8601 (spec 38)
+  timezone: UTC
+
+logging:
+  level: INFO
+  file: yui.log
+  format: "%(asctime)s %(levelname)s %(name)s %(message)s"
+
+policies:
+  state_arbitration: state_arbitration.yaml

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yui"
+version = "2.0.0a1"
+description = "YUI v2 — continuous digital personality system (single-user Discord companion)"
+requires-python = ">=3.12"
+dependencies = [
+    # typed validation for domain/public boundaries (spec 3.1, 38)
+    "pydantic>=2.7",
+    # static structured configuration files (spec 31.1)
+    "PyYAML>=6.0",
+    # secrets from .env, never committed (spec 31.1, 39)
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+yui = "app.main:main"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["error::DeprecationWarning:app.*"]
+markers = [
+    "invariant: protects a specification invariant (docs/YUI_v2_SPEC.md 34.2)",
+]

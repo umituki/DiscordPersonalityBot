@@ -1,0 +1,43 @@
+# --- secrets / production data (spec 39) ---
+.env
+.env.*
+!.env.example
+data/
+backups/
+logs/
+userdata/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- generated private life data ---
+simulation_out/
+exports/
+
+# --- models ---
+*.gguf
+*.bin
+*.safetensors
+models/
+
+# --- python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- editors / os ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

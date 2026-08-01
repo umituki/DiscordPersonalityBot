@@ -1,0 +1,71 @@
+# State arbitration policy.
+#
+# Spec 40: tuning values are NOT scientific constants and MUST NOT be scattered
+# as code constants. They live here and are version managed.
+#
+# Spec storage rule: an out-of-policy proposal is REJECTED and recorded.
+# It is never silently clamped into a valid range.
+policy_version: 1
+
+defaults:
+  value_min: 0.0
+  value_max: 1.0
+  # maximum absolute change a single root event may cause in one key
+  max_delta_per_event: 0.15
+  # deep state requires accumulated, cross-context evidence (spec 12.3)
+  requires_consolidation: false
+  min_evidence_count: 0
+
+domains:
+  # --- Layer 0 objective ---
+  world:
+    value_min: null
+    value_max: null
+    max_delta_per_event: null
+
+  # --- Layer 2 immediate psychology (fast) ---
+  emotion:
+    max_delta_per_event: 0.6
+  mood:
+    max_delta_per_event: 0.2
+  needs:
+    max_delta_per_event: 0.25
+
+  # --- Layer 3 adaptive (slow) ---
+  relationship:
+    max_delta_per_event: 0.05
+    min_evidence_count: 1
+  attachment:
+    max_delta_per_event: 0.04
+    min_evidence_count: 1
+  beliefs:
+    max_delta_per_event: 0.10
+  self_schema:
+    max_delta_per_event: 0.05
+  user_model:
+    max_delta_per_event: 0.10
+  goals:
+    max_delta_per_event: 0.30
+  habits:
+    max_delta_per_event: 0.10
+  subjective_memory:
+    max_delta_per_event: 0.50
+
+  # --- Layer 4 deep (very slow) ---
+  # Spec 2.13 / 34.2-5: a single event MUST NOT move personality or values.
+  personality:
+    max_delta_per_event: 0.01
+    requires_consolidation: true
+    min_evidence_count: 3
+  values:
+    max_delta_per_event: 0.01
+    requires_consolidation: true
+    min_evidence_count: 3
+  attachment_disposition:
+    max_delta_per_event: 0.01
+    requires_consolidation: true
+    min_evidence_count: 3
+  narrative_identity:
+    max_delta_per_event: 0.02
+    requires_consolidation: true
+    min_evidence_count: 3
