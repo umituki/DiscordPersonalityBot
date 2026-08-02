@@ -893,6 +893,132 @@ _0009_GROWTH = Migration(
 )
 
 
+_0010_SOCIETY = Migration(
+    version=10,
+    name="npc_society",
+    statements=(
+        # Spec 20.1: three tiers, because not every person in a life is a full
+        # agent. Tier 0 is a name and a face; only tier 2 earns a model.
+        # Spec 20.2: this table is the NPC's *objective* profile. What YUI
+        # believes about them lives in ``npc_models`` and may be wrong.
+        """
+        CREATE TABLE npcs (
+            npc_id       TEXT PRIMARY KEY,
+            name         TEXT NOT NULL UNIQUE,
+            tier         INTEGER NOT NULL DEFAULT 0,
+            role         TEXT NOT NULL DEFAULT '',
+            traits_json  TEXT NOT NULL DEFAULT '{}',
+            availability REAL NOT NULL DEFAULT 0.5,
+            warmth       REAL NOT NULL DEFAULT 0.5,
+            reliability  REAL NOT NULL DEFAULT 0.5,
+            status       TEXT NOT NULL DEFAULT 'active',
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL,
+            origin       TEXT NOT NULL DEFAULT 'virtual_life'
+        )
+        """,
+        "CREATE INDEX idx_npcs_tier ON npcs (tier, status)",
+        # Spec 20.2: YUI's model of an NPC. Separate table, separate writer,
+        # allowed to disagree with the profile above.
+        """
+        CREATE TABLE npc_models (
+            model_id     TEXT PRIMARY KEY,
+            npc_id       TEXT NOT NULL REFERENCES npcs (npc_id),
+            perceived_warmth REAL NOT NULL DEFAULT 0.5,
+            perceived_reliability REAL NOT NULL DEFAULT 0.5,
+            perceived_availability REAL NOT NULL DEFAULT 0.5,
+            observation_count INTEGER NOT NULL DEFAULT 0,
+            confidence   REAL NOT NULL DEFAULT 0.2,
+            updated_at   TEXT NOT NULL,
+            UNIQUE (npc_id)
+        )
+        """,
+        # Spec 20.4: the lifecycle is a named stage, and losing contact is not
+        # the same thing as falling out.
+        """
+        CREATE TABLE npc_relationships (
+            relationship_id TEXT PRIMARY KEY,
+            npc_id       TEXT NOT NULL REFERENCES npcs (npc_id),
+            stage        TEXT NOT NULL DEFAULT 'unmet',
+            previous_stage TEXT NOT NULL DEFAULT '',
+            familiarity  REAL NOT NULL DEFAULT 0.0,
+            closeness    REAL NOT NULL DEFAULT 0.0,
+            conflict     REAL NOT NULL DEFAULT 0.0,
+            interaction_count INTEGER NOT NULL DEFAULT 0,
+            first_met_at TEXT,
+            last_contact_at TEXT,
+            ended_at     TEXT,
+            ended_reason TEXT NOT NULL DEFAULT '',
+            updated_at   TEXT NOT NULL,
+            UNIQUE (npc_id)
+        )
+        """,
+        "CREATE INDEX idx_npc_rel_stage ON npc_relationships (stage, last_contact_at)",
+        # Spec 20.3: groups have their own character, and belonging to one is
+        # a source of relatedness that is not the USER.
+        """
+        CREATE TABLE npc_groups (
+            group_id     TEXT PRIMARY KEY,
+            name         TEXT NOT NULL UNIQUE,
+            activity_type TEXT NOT NULL DEFAULT '',
+            norms_json   TEXT NOT NULL DEFAULT '[]',
+            social_density REAL NOT NULL DEFAULT 0.5,
+            competitiveness REAL NOT NULL DEFAULT 0.5,
+            warmth       REAL NOT NULL DEFAULT 0.5,
+            stability    REAL NOT NULL DEFAULT 0.5,
+            status       TEXT NOT NULL DEFAULT 'active',
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE group_memberships (
+            membership_id TEXT PRIMARY KEY,
+            group_id     TEXT NOT NULL REFERENCES npc_groups (group_id),
+            member_type  TEXT NOT NULL DEFAULT 'npc',
+            npc_id       TEXT REFERENCES npcs (npc_id),
+            role         TEXT NOT NULL DEFAULT 'member',
+            joined_at    TEXT NOT NULL,
+            left_at      TEXT,
+            status       TEXT NOT NULL DEFAULT 'active',
+            UNIQUE (group_id, member_type, npc_id)
+        )
+        """,
+        "CREATE INDEX idx_memberships_group ON group_memberships (group_id, status)",
+        # Spec 20: NPCs know each other independently of YUI. The society is
+        # not a star with YUI at the centre.
+        """
+        CREATE TABLE npc_social_links (
+            link_id      TEXT PRIMARY KEY,
+            from_npc_id  TEXT NOT NULL REFERENCES npcs (npc_id),
+            to_npc_id    TEXT NOT NULL REFERENCES npcs (npc_id),
+            kind         TEXT NOT NULL DEFAULT 'acquaintance',
+            strength     REAL NOT NULL DEFAULT 0.3,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL,
+            UNIQUE (from_npc_id, to_npc_id)
+        )
+        """,
+        # An interaction with an NPC is a fact about virtual life. It is never
+        # mixed with real Discord history (spec 2.10, 34.2-4).
+        """
+        CREATE TABLE npc_interactions (
+            interaction_id TEXT PRIMARY KEY,
+            npc_id       TEXT NOT NULL REFERENCES npcs (npc_id),
+            group_id     TEXT REFERENCES npc_groups (group_id),
+            kind         TEXT NOT NULL DEFAULT 'conversation',
+            valence      REAL NOT NULL DEFAULT 0.0,
+            summary      TEXT NOT NULL DEFAULT '',
+            occurred_at  TEXT NOT NULL,
+            event_id     TEXT,
+            origin       TEXT NOT NULL DEFAULT 'virtual_life'
+        )
+        """,
+        "CREATE INDEX idx_npc_interactions ON npc_interactions (npc_id, occurred_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -903,6 +1029,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0007_AGENCY,
     _0008_VIRTUAL_LIFE,
     _0009_GROWTH,
+    _0010_SOCIETY,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

@@ -56,6 +56,14 @@ domains:
   characteristic_adaptations:
     max_delta_per_event: 0.05
     min_evidence_count: 1
+  # Spec 20: NPC relationships move on the same scale as the USER one, and
+  # never faster just because they are less important.
+  npc_relationships:
+    max_delta_per_event: 0.10
+    min_evidence_count: 1
+  group_belonging:
+    max_delta_per_event: 0.25
+    min_evidence_count: 1
   goals:
     max_delta_per_event: 0.30
   habits:

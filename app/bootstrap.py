@@ -65,6 +65,10 @@ from app.world.service import WorldService
 from app.social.policy import RelationshipPolicy
 from app.social.relationship import RelationshipEngine
 from app.social.user_model import SocialCognitionEngine
+from app.society.groups import GroupEngine
+from app.society.policy import SocietyPolicy
+from app.society.relationships import NPCRelationshipEngine
+from app.society.service import SocietyService
 from app.llm.client import TracedLLMClient
 from app.llm.ollama import OllamaClient
 from app.llm.prompts import PromptRegistry
@@ -94,10 +98,15 @@ from app.storage.repositories import (
     EventRepository,
     FailureRepository,
     GoalRepository,
+    GroupRepository,
     JobRepository,
     HabitRepository,
     LLMCallRepository,
     ManifestRepository,
+    NPCInteractionRepository,
+    NPCModelRepository,
+    NPCRelationshipRepository,
+    NPCRepository,
     NarrativeRepository,
     PersonalityRepository,
     PlanRepository,
@@ -106,6 +115,7 @@ from app.storage.repositories import (
     SelfRepository,
     SleepRepository,
     SnapshotRepository,
+    SocialLinkRepository,
     StateRepository,
     ToolCallRepository,
     ValueRepository,
@@ -168,6 +178,10 @@ class Application:
     values: ValueEngine
     drift: DriftMonitor
     consolidation: ConsolidationJob
+    society_policy: SocietyPolicy
+    society: SocietyService
+    npc_relationships: NPCRelationshipEngine
+    groups: GroupEngine
     appraisal: AppraisalEngine
     emotion: EmotionEngine
     mood: MoodEngine
@@ -260,6 +274,12 @@ class Application:
         narrative_repo = NarrativeRepository(db)
         drift_repo = DriftRepository(db)
         consolidation_repo = ConsolidationRepository(db)
+        npc_repo = NPCRepository(db)
+        npc_model_repo = NPCModelRepository(db)
+        npc_relationship_repo = NPCRelationshipRepository(db)
+        group_repo = GroupRepository(db)
+        social_link_repo = SocialLinkRepository(db)
+        npc_interaction_repo = NPCInteractionRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
@@ -277,6 +297,7 @@ class Application:
         agency_policy = AgencyPolicy.load(resolved_config.agency_policy_path)
         world_policy = WorldPolicy.load(resolved_config.world_policy_path)
         growth_policy = GrowthPolicy.load(resolved_config.growth_policy_path)
+        society_policy = SocietyPolicy.load(resolved_config.society_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -297,6 +318,7 @@ class Application:
         components["agency_policy_version"] = str(agency_policy.policy_version)
         components["world_policy_version"] = str(world_policy.policy_version)
         components["growth_policy_version"] = str(growth_policy.policy_version)
+        components["society_policy_version"] = str(society_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -444,6 +466,28 @@ class Application:
             clock=resolved_clock,
         )
 
+        # --- virtual society (spec 20) ---------------------------------------
+        # The objective record of who exists is separate from YUI's
+        # relationships with them, which are separate again from the USER
+        # relationship above. Three writers, three domains, no overlap.
+        society_service = SocietyService(
+            npcs=npc_repo,
+            relationships=npc_relationship_repo,
+            groups=group_repo,
+            links=social_link_repo,
+            interactions=npc_interaction_repo,
+            policy=society_policy,
+            clock=resolved_clock,
+        )
+        npc_relationship_engine = NPCRelationshipEngine(
+            npcs=npc_repo,
+            relationships=npc_relationship_repo,
+            models=npc_model_repo,
+            policy=society_policy,
+            clock=resolved_clock,
+        )
+        group_engine = GroupEngine(group_repo, society_policy, clock=resolved_clock)
+
         # Update order follows the layers: immediate psychology first, then the
         # adaptive layer that reads it (spec 9.1, 9.5).
         bus.register(emotion_engine, kind="psychology", order=20)
@@ -452,6 +496,10 @@ class Application:
         bus.register(relationship_engine, kind="psychology", order=50)
         bus.register(attachment_engine, kind="psychology", order=60)
         bus.register(social_cognition_engine, kind="psychology", order=70)
+        # Spec 20: NPC state reacts to NPC events only. The engine filters on
+        # actor type as well, so neither path can reach the other's domain.
+        bus.register(npc_relationship_engine, kind="psychology", order=72)
+        bus.register(group_engine, kind="psychology", order=74)
         # The world is Layer 0 and is refreshed before anything interprets it.
         bus.register(world_service, kind="system", order=10)
         # Deep state is reviewed only by the consolidation event, never by an
@@ -581,6 +629,10 @@ class Application:
             values=value_engine,
             drift=drift_monitor,
             consolidation=consolidation_job,
+            society_policy=society_policy,
+            society=society_service,
+            npc_relationships=npc_relationship_engine,
+            groups=group_engine,
             appraisal=appraisal_engine,
             emotion=emotion_engine,
             mood=mood_engine,

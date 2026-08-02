@@ -22,6 +22,7 @@ from app.events.model import Event
 from app.orchestrator.run_view import RunView
 from app.psychology.events import NEED_CHANGED, NeedChangedPayload
 from app.psychology.policy import NeedsPolicy
+from app.society.groups import belonging_of
 from app.state.proposal import StateChangeProposal
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,17 @@ class NeedEngine:
             targets[AUTONOMY] = (
                 current[AUTONOMY] + self._policy.autonomy_gain_on_self_initiated
             )
+
+        # --- belonging elsewhere (spec 20.3) --------------------------------
+        # The USER must not be the only source of relatedness. Group belonging
+        # is read from the snapshot — the group engine owns it and the need
+        # engine only decides what it is worth here.
+        belonging = belonging_of(view)
+        if belonging > 0.0:
+            floor = self._policy.relatedness_floor_from_belonging * belonging
+            base = targets.get(RELATEDNESS, current[RELATEDNESS])
+            if base < floor:
+                targets[RELATEDNESS] = floor
 
         # --- desire follows from loneliness, not the other way round --------
         if LONELINESS in targets:

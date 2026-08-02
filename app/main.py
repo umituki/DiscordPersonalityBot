@@ -168,6 +168,13 @@ def _status(config_file: Path | None) -> int:
             "deep_update_candidates": len(application.growth.pending_candidates()),
             "consolidation_due": application.consolidation.due(),
             "drift_anomalies": len(application.drift.open_anomalies()),
+            "npcs": len(application.society.people()),
+            "tracked_npcs": len(application.society.tracked_people()),
+            "npc_stages": {
+                relationship.npc_id: relationship.stage
+                for relationship in application.npc_relationships.all_relationships()[:5]
+            },
+            "groups": [group.name for group in application.society.groups_of_yui()],
             "integrity": application.db.integrity_check(),
         }
     finally:

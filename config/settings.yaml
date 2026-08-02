@@ -42,6 +42,7 @@ policies:
   agency: agency.yaml
   world: world.yaml
   growth: growth.yaml
+  society: society.yaml
 
 prompts:
   directory: config/prompts

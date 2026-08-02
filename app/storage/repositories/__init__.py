@@ -29,7 +29,13 @@ _EXPORTS: dict[str, str] = {
     "FailureRecord": "failures",
     "FailureRepository": "failures",
     "GoalRepository": "agency",
+    "GroupRepository": "society",
     "HabitRepository": "agency",
+    "NPCInteractionRepository": "society",
+    "NPCModelRepository": "society",
+    "NPCRelationshipRepository": "society",
+    "NPCRepository": "society",
+    "SocialLinkRepository": "society",
     "LLMCallRepository": "llm_calls",
     "ManifestRepository": "manifests",
     "MemoryRepository": "memory",
@@ -61,11 +67,16 @@ __all__ = [
     "FailureRecord",
     "FailureRepository",
     "GoalRepository",
+    "GroupRepository",
     "HabitRepository",
     "JobRepository",
     "LLMCallRepository",
     "ManifestRepository",
     "MemoryRepository",
+    "NPCInteractionRepository",
+    "NPCModelRepository",
+    "NPCRelationshipRepository",
+    "NPCRepository",
     "NarrativeRepository",
     "PersonalityRepository",
     "PlanRepository",
@@ -74,6 +85,7 @@ __all__ = [
     "SelfRepository",
     "SleepRepository",
     "SnapshotRepository",
+    "SocialLinkRepository",
     "StateRepository",
     "ToolCallRepository",
     "ValueRepository",
@@ -120,6 +132,14 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.storage.repositories.runs import ProcessingRunRepository
     from app.storage.repositories.snapshots import SnapshotRepository
     from app.storage.repositories.social import BeliefRepository, SelfRepository
+    from app.storage.repositories.society import (
+        GroupRepository,
+        NPCInteractionRepository,
+        NPCModelRepository,
+        NPCRelationshipRepository,
+        NPCRepository,
+        SocialLinkRepository,
+    )
     from app.storage.repositories.state import StateRepository
     from app.storage.repositories.tools import ToolCallRepository
     from app.storage.repositories.world import (

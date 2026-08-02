@@ -1,0 +1,44 @@
+# NPC / virtual society tuning values (spec 20, 40).
+policy_version: 1
+
+npc:
+  # Spec 20.1: not every NPC is a full agent. Tier 0 people exist and are
+  # remembered as presences; they get no relationship state and no model.
+  min_tier_for_relationship: 1
+  min_tier_for_model: 2
+  # How fast YUI's model of a significant NPC firms up, and how far it can go.
+  model_step: 0.08
+  model_confidence_per_observation: 0.05
+  max_model_confidence: 0.85
+
+relationship:
+  familiarity_per_interaction: 0.06
+  closeness_per_positive: 0.05
+  conflict_per_negative: 0.10
+  conflict_relief_per_positive: 0.04
+  # Contact alone is not closeness (spec 13.1, 23.2): familiarity rises with
+  # any interaction, closeness only with positive ones.
+  positive_valence_threshold: 0.15
+  negative_valence_threshold: -0.15
+  max_change_per_interaction: 0.10
+
+lifecycle:
+  # Spec 20.4: losing contact and falling out are different things.
+  familiar_familiarity: 0.35
+  close_closeness: 0.55
+  strained_conflict: 0.45
+  distant_days: 30.0
+  dormant_days: 120.0
+  # Coming back after being out of touch is its own stage, briefly.
+  reconnected_within_days: 7.0
+
+group:
+  # Spec 20.3: group belonging feeds relatedness, so the USER is not the only
+  # source of it.
+  belonging_per_activity: 0.05
+  belonging_decay_per_idle_day: 0.004
+  initial_belonging: 0.20
+  max_belonging: 0.90
+  # Weight of group belonging in the relatedness need. Deliberately below the
+  # USER's contribution: friends are not a replacement.
+  relatedness_contribution: 0.35

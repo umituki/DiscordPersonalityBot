@@ -78,4 +78,7 @@ needs:
   connection_desire_from_loneliness: 0.50
   solitude_desire_gain_per_interaction: 0.02
   solitude_desire_decay_per_hour: 0.03
+  # spec 20.3: 所属は relatedness の下限を支える。USER だけが関係性の供給源に
+  # ならないようにするための値であり、1.0 未満なのは意図的。
+  relatedness_floor_from_belonging: 0.45
   max_change_per_event: 0.20

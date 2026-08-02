@@ -8,7 +8,7 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 9（Growth）まで**完了。Phase 10 以降は未着手。
+仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 10（Society）まで**完了。Phase 11 以降は未着手。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -22,7 +22,8 @@
 | 7 | Agency（Goals / Decision / Dialogue Act / Habits / Epistemics / Tools） | 実装済み |
 | 8 | Virtual Life（World / Activity / Sleep / Scheduler / Proactive） | 実装済み |
 | 9 | Growth（Consolidation / Adaptations / Personality / Values / Narrative / Drift） | 実装済み |
-| 10+ | Society / Genesis / Hardening | 未着手 |
+| 10 | Society（NPC / Groups / Network / Lifecycle） | 実装済み |
+| 11+ | Genesis / Hardening | 未着手 |
 
 ### Phase 1 で動作するパイプライン
 
@@ -156,6 +157,25 @@ Drift Monitor : 測って分類するだけ。EXPECTED / SUSPICIOUS / INVALID。
 `personality_history` に candidate と run とともに残る。commit が受理しなかった
 変化は台帳にも履歴にも書かれない。
 
+### Phase 10 で動作する仮想社会
+
+```text
+NPC Tier      : 全 NPC を完全 Agent 化しない。Tier 0 は「居るだけ」で
+                関係 state もモデルも持たない。Tier 2 だけがモデルを持つ
+Profile ≠ Model: NPC の客観プロファイルと「YUI がそう思っていること」は
+                別テーブル・別 writer。YUI のモデルは間違っていてよい
+USER / NPC    : 別ドメイン・別 writer・別 origin。NPC event は USER 関係を
+                1 も動かさず、USER の発言は NPC state を 1 も動かさない
+Lifecycle     : unmet / acquaintance / familiar / close / strained /
+                distant / dormant / ended / reconnected。
+                連絡が途絶えること（distant→dormant）と、こじれること
+                （strained）と、終わらせること（ended）は別物。
+                ended は決定であって、時間の結果ではない
+Groups        : 所属は relatedness の供給源。USER だけが関係性の源では
+                なくなる。参加していない集まりは所属にならない
+Network       : NPC 同士も繋がる。社会は YUI を中心とした星型ではない
+```
+
 主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
 
 ## セットアップ
@@ -202,6 +222,7 @@ app/
   world/         activity / sleep / world service（仮想生活の single writer）
   jobs/          scheduler / proactive contact
   consolidation/ adaptations / deep gate / personality / values / narrative / drift
+  society/       npc / npc relationship / groups / social network / lifecycle
   social/        relationship / attachment / user model / beliefs / self model
   tools/         Tool Manager / registry / builtin tools
   interfaces/    discord/ (adapter, dto, gateway)

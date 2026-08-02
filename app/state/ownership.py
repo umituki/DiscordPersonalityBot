@@ -52,6 +52,12 @@ _OWNERSHIP: Mapping[str, DomainOwnership] = MappingProxyType(
             DomainOwnership(
                 "characteristic_adaptations", "adaptation_engine", "spec 12.2 / 23.2"
             ),
+            # Spec 20: YUI's relationships with NPCs, kept strictly apart from
+            # the USER relationship above — different domain, different writer.
+            DomainOwnership("npc_relationships", "npc_relationship_engine", "spec 20.2 / 20.4"),
+            # Spec 20.3: belonging somewhere, so the USER is not the only
+            # source of relatedness.
+            DomainOwnership("group_belonging", "group_engine", "spec 20.3"),
             DomainOwnership("goals", "goal_engine", "spec 9.3 / 15.2"),
             DomainOwnership("habits", "habit_engine", "spec 9.3 / 15.3"),
             DomainOwnership("personality", "growth_engine", "spec 9.3 / 12.1"),

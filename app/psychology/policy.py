@@ -67,6 +67,10 @@ class NeedsPolicy(_Frozen):
     connection_desire_from_loneliness: float = 0.50
     solitude_desire_gain_per_interaction: float = 0.02
     solitude_desire_decay_per_hour: float = 0.03
+    #: Spec 20.3: belonging to a group holds relatedness above a floor, so the
+    #: USER is not the only place connection can come from. Below 1.0 on
+    #: purpose — friends are a real source, not a replacement.
+    relatedness_floor_from_belonging: float = Field(default=0.45, ge=0.0, le=1.0)
     max_change_per_event: float = Field(default=0.20, ge=0.0, le=1.0)
 
 
