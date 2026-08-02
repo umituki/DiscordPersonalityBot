@@ -1371,6 +1371,51 @@ _0016_CANDIDATE_HISTORY = Migration(
 )
 
 
+_0017_CONVERSATION_TRACES = Migration(
+    version=17,
+    name="conversation_traces",
+    statements=(
+        # Patch spec 19.2. The per-call LLM telemetry says how long each model
+        # call took; it does not say where the USER's wait actually went. One
+        # row per inbound message, with the boundary between queue wait and
+        # inference kept visible.
+        """
+        CREATE TABLE conversation_traces (
+            trace_id                TEXT PRIMARY KEY,
+            event_id                TEXT,
+            run_id                  TEXT,
+            channel_id              TEXT,
+            outcome                 TEXT NOT NULL DEFAULT 'unknown',
+            received_at             TEXT NOT NULL,
+            admitted_at             TEXT,
+            typing_started_at       TEXT,
+            appraisal_started_at    TEXT,
+            appraisal_ended_at      TEXT,
+            state_commit_started_at TEXT,
+            state_commit_ended_at   TEXT,
+            memory_recall_started_at TEXT,
+            memory_recall_ended_at  TEXT,
+            dialogue_started_at     TEXT,
+            dialogue_ended_at       TEXT,
+            reply_started_at        TEXT,
+            reply_ended_at          TEXT,
+            discord_send_started_at TEXT,
+            discord_send_ended_at   TEXT,
+            outbound_projected_at   TEXT,
+            typing_stopped_at       TEXT,
+            total_ms                INTEGER,
+            queue_wait_ms           INTEGER NOT NULL DEFAULT 0,
+            inference_ms            INTEGER NOT NULL DEFAULT 0,
+            model_calls             INTEGER NOT NULL DEFAULT 0,
+            detail_json             TEXT NOT NULL DEFAULT '{}'
+        )
+        """,
+        "CREATE INDEX idx_traces_received ON conversation_traces (received_at)",
+        "CREATE INDEX idx_traces_outcome ON conversation_traces (outcome, received_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1388,6 +1433,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0014_LLM_TELEMETRY,
     _0015_RUN_CONFLICTS,
     _0016_CANDIDATE_HISTORY,
+    _0017_CONVERSATION_TRACES,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)
