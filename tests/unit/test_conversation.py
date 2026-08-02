@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -222,7 +222,7 @@ async def test_engine_builds_identity_and_history_into_the_prompt(
     assert generation.context.includes("identity")
     assert generation.context.includes("current_message")
     assert "ただいま" in generation.context.get("recent_conversation").content
-    assert generation.prompt_version == "conversation_reply@v1"
+    assert generation.prompt_version == "conversation_reply@v2"
 
 
 async def test_engine_suppresses_a_guard_violation(

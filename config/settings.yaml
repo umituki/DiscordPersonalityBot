@@ -35,6 +35,7 @@ policies:
   state_arbitration: state_arbitration.yaml
   output_guard: output_guard.yaml
   conversation: conversation.yaml
+  memory: memory.yaml
 
 prompts:
   directory: config/prompts

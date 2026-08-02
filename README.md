@@ -8,8 +8,8 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 3
-（Basic Discord Conversation）まで**完了。Phase 4 以降は未着手。
+仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 4
+（Context / Episode / Memory）まで**完了。Phase 5 以降は未着手。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -17,7 +17,8 @@
 | 1 | SQLite / Event / State transaction core | 実装済み |
 | 2 | Ollama structured LLM | 実装済み |
 | 3 | Basic Discord conversation + Output Guard | 実装済み |
-| 4+ | Memory / Psychology / Agency / Life / Growth / Society / Genesis | 未着手 |
+| 4 | Context / Episode / Memory | 実装済み |
+| 5+ | Psychology / Social / Agency / Life / Growth / Society / Genesis | 未着手 |
 
 ### Phase 1 で動作するパイプライン
 
@@ -58,6 +59,21 @@ Discord message
 Guard に拒否された文は送信されず、`YUI_REPLY_SUPPRESSED` として理由だけ残る。
 拒否された本文は event に入らない（記憶に混入させないため）。
 
+### Phase 4 で動作する記憶
+
+```text
+Events
+→ Episode segmentation（沈黙・件数・時間で区切る）
+→ Encoding Gate（novelty / 感情 / 相手志向 / 内容量で選別）
+→ Episodic Memory（FTS5 trigram + accessibility）
+→ 想起（関連度 + accessibility + 新しさ + 感情 + 重要度）
+→ 想起によって accessibility 上昇（逓減あり）
+→ 時間経過で accessibility 低下（削除はしない）
+```
+
+Objective Archive（events）と Subjective Memory は分離されている。符号化されな
+かった出来事は、archive に残っていても思い出せない。
+
 主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
 
 ## セットアップ
@@ -97,6 +113,7 @@ app/
   context/       Context builder (REQUIRED / IMPORTANT / OPTIONAL)
   conversation/  engine / guard / service / projection
   events/        Event model / store / bus / dispatcher
+  memory/        segmentation / encoding / retrieval / forgetting / engine
   interfaces/    discord/ (adapter, dto, gateway)
   llm/           LLMClient / Ollama / prompts / structured / validation
   state/         proposal / snapshot / ownership / dependency_graph / arbitrator / committer / policy

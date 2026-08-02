@@ -32,6 +32,9 @@ from app.conversation.guard import OutputGuard, OutputGuardPolicy
 from app.conversation.policy import ConversationPolicy
 from app.conversation.service import ConversationService
 from app.interfaces.discord.adapter import DiscordMessageAdapter
+from app.memory.engine import MemoryEngine
+from app.memory.policy import MemoryPolicy
+from app.memory.transcripts import ConversationTranscriptSource
 from app.llm.client import TracedLLMClient
 from app.llm.ollama import OllamaClient
 from app.llm.prompts import PromptRegistry
@@ -49,6 +52,7 @@ from app.storage.database import Database
 from app.storage.migrations import LATEST_VERSION, migrate, schema_version, verify_schema
 from app.storage.repositories import (
     ConversationRepository,
+    MemoryRepository,
     DeliveryRepository,
     EventRepository,
     FailureRepository,
@@ -88,6 +92,9 @@ class Application:
     failures: FailureRepository
     llm_calls: LLMCallRepository
     conversations: ConversationRepository
+    memories: MemoryRepository
+    memory: MemoryEngine
+    memory_policy: MemoryPolicy
     identity: Identity
     conversation_policy: ConversationPolicy
     guard: OutputGuard
@@ -156,6 +163,7 @@ class Application:
         manifest_repo = ManifestRepository(db)
         llm_call_repo = LLMCallRepository(db)
         conversation_repo = ConversationRepository(db)
+        memory_repo = MemoryRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
@@ -166,6 +174,7 @@ class Application:
         identity = load_identity(resolved_config.character_dir)
         guard_policy = OutputGuardPolicy.load(resolved_config.output_guard_policy_path)
         conversation_policy = ConversationPolicy.load(resolved_config.conversation_policy_path)
+        memory_policy = MemoryPolicy.load(resolved_config.memory_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -179,6 +188,7 @@ class Application:
         components["identity_version"] = identity.version_tag()
         components["output_guard_policy_version"] = str(guard_policy.policy_version)
         components["conversation_policy_version"] = str(conversation_policy.policy_version)
+        components["memory_policy_version"] = str(memory_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -237,6 +247,17 @@ class Application:
             clock=resolved_clock,
         )
 
+        memory_engine = MemoryEngine(
+            repository=memory_repo,
+            policy=memory_policy,
+            structured=structured,
+            prompts=prompts,
+            transcripts=ConversationTranscriptSource(
+                conversation_repo, yui_label=identity.name
+            ),
+            clock=resolved_clock,
+        )
+
         processor = EventProcessor(
             db=db,
             event_store=event_store,
@@ -268,6 +289,7 @@ class Application:
                 ),
                 failures=failures,
                 policy=conversation_policy,
+                memory=memory_engine,
                 clock=resolved_clock,
             )
         else:
@@ -300,6 +322,9 @@ class Application:
             failures=failures,
             llm_calls=llm_call_repo,
             conversations=conversation_repo,
+            memories=memory_repo,
+            memory=memory_engine,
+            memory_policy=memory_policy,
             identity=identity,
             conversation_policy=conversation_policy,
             guard=guard,

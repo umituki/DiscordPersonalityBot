@@ -1,0 +1,64 @@
+# Memory policy (spec 10, 40).
+#
+# 忘却曲線・符号化閾値・想起スコア重みは科学的固定値ではない。実測と長期
+# シミュレーションで調整する対象としてここに置く。
+policy_version: 1
+
+segmentation:
+  # この時間だけ沈黙が続いたらエピソードを閉じる
+  max_gap_minutes: 30
+  max_events: 40
+  max_duration_minutes: 180
+  min_events_to_encode: 2
+
+encoding:
+  # spec 10.4: メッセージ単位では長期記憶化しない。エピソード単位で判定する。
+  base_importance: 0.25
+  weights:
+    novelty: 0.25
+    emotional_intensity: 0.30
+    prediction_error: 0.20
+    user_directed: 0.15
+    substance: 0.10
+  encode_threshold: 0.30
+  initial_accessibility: 0.80
+  initial_content_confidence: 0.75
+  initial_source_confidence: 0.90
+  initial_temporal_confidence: 0.70
+  summary_max_chars: 400
+
+forgetting:
+  # accessibility の低下であって delete ではない (spec 10.5)
+  daily_decay_rate: 0.12
+  min_accessibility: 0.02
+  # importance が高いほど decay が遅い
+  importance_protection: 0.60
+  # 消さない: floor に留める
+  hard_delete: false
+
+practice:
+  # 想起は accessibility を上げるが、反芻には逓減がある (spec 10.5)
+  boost: 0.15
+  diminishing_factor: 0.5
+  window_hours: 24
+  max_accessibility: 1.0
+
+retrieval:
+  limit: 4
+  min_score: 0.18
+  candidate_pool: 40
+  min_query_chars: 3
+  recency_half_life_days: 14
+  weights:
+    relevance: 0.40
+    accessibility: 0.20
+    recency: 0.15
+    emotional_salience: 0.15
+    importance: 0.10
+
+semantic:
+  # 同じ内容が繰り返し現れたときに意味記憶へ昇格する
+  promotion_support_count: 3
+  initial_confidence: 0.45
+  confidence_per_support: 0.10
+  max_confidence: 0.90

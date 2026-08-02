@@ -17,6 +17,7 @@ from app.clock import Clock, SystemClock, to_iso
 from app.context.builder import BuiltContext, ContextBuilder, Requirement
 from app.conversation.guard import OutputGuard
 from app.conversation.models import ConversationTurn, ReplyDraft
+from app.memory.models import RetrievalCandidate
 from app.conversation.policy import ConversationPolicy
 from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator, StructuredOutcome
@@ -31,6 +32,7 @@ PROMPT_ID = "conversation_reply"
 PURPOSE = "conversation_reply"
 
 NO_HISTORY = "(まだ記録されたやりとりはない)"
+NO_MEMORIES = "(いま思い出せることはない)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,13 +79,14 @@ class ConversationEngine:
         *,
         user_text: str,
         recent_turns: Sequence[ConversationTurn] = (),
+        memories: Sequence[RetrievalCandidate] = (),
         snapshot: StateSnapshot | None = None,
         run_id: str | None = None,
         event_id: str | None = None,
         tool_success_ids: Sequence[str] = (),
     ) -> ReplyGeneration:
         template = self._prompts.get(PROMPT_ID)
-        context = self._build_context(user_text, recent_turns)
+        context = self._build_context(user_text, recent_turns, memories)
 
         system_content = template.render(
             identity=context.get("identity").content,
@@ -91,6 +94,11 @@ class ConversationEngine:
                 context.get("recent_conversation").content
                 if context.includes("recent_conversation")
                 else NO_HISTORY
+            ),
+            relevant_memories=(
+                context.get("relevant_memories").content
+                if context.includes("relevant_memories")
+                else NO_MEMORIES
             ),
             current_time=to_iso(self._clock.now()),
         )
@@ -126,7 +134,10 @@ class ConversationEngine:
 
     # --- context ------------------------------------------------------------
     def _build_context(
-        self, user_text: str, recent_turns: Sequence[ConversationTurn]
+        self,
+        user_text: str,
+        recent_turns: Sequence[ConversationTurn],
+        memories: Sequence[RetrievalCandidate] = (),
     ) -> BuiltContext:
         builder = ContextBuilder()
         builder.add(
@@ -150,6 +161,16 @@ class ConversationEngine:
             requirement=Requirement.IMPORTANT,
             priority=50,
             source="conversation_turns",
+        )
+        # Recalled memory is OPTIONAL: under context pressure YUI forgets
+        # rather than losing her identity or the message she is answering
+        # (spec 27.1, 27.2).
+        builder.add(
+            "relevant_memories",
+            "\n".join(candidate.as_context_line() for candidate in memories),
+            requirement=Requirement.OPTIONAL,
+            priority=40,
+            source="episodic_memory",
         )
         return builder.build(self._policy.context.budget())
 

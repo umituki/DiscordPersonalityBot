@@ -38,6 +38,7 @@ from app.conversation.events import (
 from app.conversation.policy import ConversationPolicy
 from app.events.model import Event
 from app.interfaces.discord.adapter import DiscordMessageAdapter, IgnoreReason
+from app.memory.engine import MemoryEngine
 from app.interfaces.discord.dto import InboundMessage, OutboundMessage
 from app.orchestrator.processor import EventProcessor, ProcessingOutcome
 from app.storage.repositories.conversations import ConversationRepository
@@ -75,6 +76,7 @@ class ConversationService:
         adapter: DiscordMessageAdapter,
         failures: FailureRepository,
         policy: ConversationPolicy,
+        memory: MemoryEngine | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._processor = processor
@@ -83,6 +85,7 @@ class ConversationService:
         self._adapter = adapter
         self._failures = failures
         self._policy = policy
+        self._memory = memory
         self._clock = clock or SystemClock()
 
     # --- inbound -----------------------------------------------------------
@@ -117,9 +120,24 @@ class ConversationService:
             exclude_event_id=event.event_id,
         )
 
+        memories = ()
+        if self._memory is not None:
+            await asyncio.to_thread(
+                self._memory.observe, event, conversation_id=conversation.conversation_id
+            )
+            # Recall reads subjective memory only — never the archive (spec 10.1).
+            memories = await asyncio.to_thread(
+                self._memory.recall,
+                event.payload.text,
+                now=event.occurred_at,
+                run_id=outcome.run.run_id,
+                event_id=event.event_id,
+            )
+
         generation = await self._engine.draft_reply(
             user_text=event.payload.text,
             recent_turns=recent,
+            memories=memories,
             snapshot=outcome.snapshot,
             run_id=outcome.run.run_id,
             event_id=event.event_id,
@@ -201,7 +219,40 @@ class ConversationService:
             occurred_at=sent.occurred_at,
             message_ref=str(message_id),
         )
+
+        if self._memory is not None:
+            await asyncio.to_thread(
+                self._memory.observe, sent, conversation_id=conversation.conversation_id
+            )
+            await self.run_memory_maintenance()
         return sent
+
+    async def run_memory_maintenance(self) -> None:
+        """Close finished episodes and encode them.
+
+        This runs after the reply has been delivered, so a slow summarisation
+        never makes the USER wait (spec 28.3). The scheduler takes it over in
+        the virtual-life phase.
+        """
+        if self._memory is None:
+            return
+        try:
+            await asyncio.to_thread(self._memory.close_due_episodes)
+            await self._memory.encode_pending()
+            await asyncio.to_thread(self._memory.apply_forgetting)
+        except Exception as exc:  # noqa: BLE001 - background work must not break a reply
+            logger.exception("memory maintenance failed")
+            await asyncio.to_thread(
+                self._failures.record,
+                FailureRecord(
+                    failure_type="behavior",
+                    component=COMPONENT,
+                    reason_code="memory_maintenance_failed",
+                    severity="warning",
+                    detail={"error": repr(exc)[:1000]},
+                ),
+                now=self._clock.now(),
+            )
 
     async def record_send_failure(self, result: ConversationResult, error: str) -> None:
         """A reply that could not be delivered is not an utterance."""

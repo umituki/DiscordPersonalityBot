@@ -27,6 +27,15 @@ DELIVERY: Final = "dlv"
 MANIFEST: Final = "man"
 FAILURE: Final = "fail"
 EVIDENCE: Final = "ev"
+LLM_CALL: Final = "call"
+CONVERSATION: Final = "conv"
+TURN: Final = "turn"
+EPISODE: Final = "epi"
+MEMORY: Final = "mem"
+SEMANTIC: Final = "sem"
+MEMORY_LINK: Final = "lnk"
+RETRIEVAL: Final = "ret"
+REVISION: Final = "rev"
 
 _lock = threading.Lock()
 _last_ms = 0

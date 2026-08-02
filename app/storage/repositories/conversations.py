@@ -15,10 +15,6 @@ from app.clock import from_iso, to_iso
 from app.conversation.models import Conversation, ConversationTurn
 from app.storage.database import Database
 
-CONVERSATION = "conv"
-TURN = "turn"
-
-
 class ConversationRepository:
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -32,7 +28,7 @@ class ConversationRepository:
                 "SELECT * FROM conversations WHERE channel_id = ?", (channel_id,)
             ).fetchone()
             if row is None:
-                conversation_id = ids.new_id(CONVERSATION)
+                conversation_id = ids.new_id(ids.CONVERSATION)
                 connection.execute(
                     """
                     INSERT INTO conversations
@@ -81,7 +77,7 @@ class ConversationRepository:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    ids.new_id(TURN),
+                    ids.new_id(ids.TURN),
                     conversation_id,
                     event_id,
                     speaker,

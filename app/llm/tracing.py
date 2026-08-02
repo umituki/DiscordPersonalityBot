@@ -39,7 +39,7 @@ class NullTracer:
     async def start(
         self, request: LLMRequest, *, run_id: str | None = None, event_id: str | None = None
     ) -> str:
-        return ids.new_id("call")
+        return ids.new_id(ids.LLM_CALL)
 
     async def finish_success(self, call_id: str, *, response: LLMResponse) -> None:
         return None
@@ -69,7 +69,7 @@ class DatabaseTracer:
     async def start(
         self, request: LLMRequest, *, run_id: str | None = None, event_id: str | None = None
     ) -> str:
-        call_id = ids.new_id("call")
+        call_id = ids.new_id(ids.LLM_CALL)
         await asyncio.to_thread(
             self._repository.start,
             call_id=call_id,

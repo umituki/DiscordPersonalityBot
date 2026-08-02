@@ -135,6 +135,9 @@ def _status(config_file: Path | None) -> int:
             "llm_base_url": config.llm.base_url,
             "llm_calls": application.llm_calls.count(),
             "prompts": list(application.prompts.ids()),
+            "episodes": application.memories.episode_count(),
+            "episodic_memories": application.memories.memory_count(status="active"),
+            "semantic_memories": application.memories.semantic_count(),
             "integrity": application.db.integrity_check(),
         }
     finally:

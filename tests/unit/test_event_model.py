@@ -126,6 +126,17 @@ def test_event_cannot_be_its_own_parent(make_event) -> None:
         Event.model_validate(event.model_dump() | {"parent_event_id": event.event_id})
 
 
+def test_a_dumped_event_validates_back_into_a_typed_payload(make_event) -> None:
+    event = make_event(payload=SignalPayload(label="round trip", strength=0.25))
+
+    restored = Event.model_validate(event.model_dump())
+
+    assert isinstance(restored.payload, SignalPayload)
+    assert restored.payload.label == "round trip"
+    assert restored.payload.strength == 0.25
+    assert restored == event
+
+
 def test_ids_must_use_event_prefix(clock: FixedClock) -> None:
     with pytest.raises(ValidationError):
         Event.create(

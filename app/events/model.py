@@ -18,7 +18,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializeAsAny,
+    field_validator,
+    model_validator,
+)
 
 from app import ids
 from app.clock import Clock, SystemClock, ensure_aware
@@ -118,9 +125,28 @@ class Event(BaseModel):
     objective: bool = True
     priority: Priority = "P3"
     origin: EventOrigin
-    payload: EventPayload
+    #: ``SerializeAsAny`` keeps the concrete payload's fields when an event is
+    #: dumped. Without it the base class schema wins and the payload silently
+    #: serialises to ``{}``.
+    payload: SerializeAsAny[EventPayload]
 
     # --- validation --------------------------------------------------------
+    @model_validator(mode="before")
+    @classmethod
+    def _rebuild_payload(cls, data: Any) -> Any:
+        """Let a dumped event validate back into a typed payload.
+
+        ``model_dump()`` writes the concrete payload's fields, so validating the
+        result must look the type up in the registry again — otherwise the base
+        payload class rejects them as extra input.
+        """
+        if isinstance(data, dict) and isinstance(data.get("payload"), dict):
+            event_type = data.get("event_type")
+            if isinstance(event_type, str):
+                version = int(data.get("payload_schema_version", 1) or 1)
+                data = {**data, "payload": build_payload(event_type, version, data["payload"])}
+        return data
+
     @field_validator("occurred_at", "recorded_at")
     @classmethod
     def _aware(cls, value: datetime) -> datetime:

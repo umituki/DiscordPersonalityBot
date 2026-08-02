@@ -6,6 +6,7 @@ from app.storage.repositories.events import EventRepository
 from app.storage.repositories.failures import FailureRecord, FailureRepository
 from app.storage.repositories.llm_calls import LLMCallRepository
 from app.storage.repositories.manifests import ManifestRepository
+from app.storage.repositories.memory import MemoryRepository
 from app.storage.repositories.runs import ProcessingRunRepository
 from app.storage.repositories.snapshots import SnapshotRepository
 from app.storage.repositories.state import StateRepository
@@ -19,6 +20,7 @@ __all__ = [
     "FailureRepository",
     "LLMCallRepository",
     "ManifestRepository",
+    "MemoryRepository",
     "ProcessingRunRepository",
     "SnapshotRepository",
     "StateRepository",

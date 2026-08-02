@@ -13,7 +13,7 @@ import pytest
 
 from app.conversation.events import YUI_MESSAGE_SENT
 from app.interfaces.discord.gateway import DiscordGateway, DiscordGatewayError, to_inbound
-from tests.unit.test_conversation import (  # noqa: F401 - shared fixtures
+from tests.unit.test_conversation import (  # noqa: F401 - pytest fixtures are reused
     CHANNEL,
     OWNER,
     adapter,

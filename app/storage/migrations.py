@@ -316,7 +316,140 @@ _0003_CONVERSATIONS = Migration(
 )
 
 
-MIGRATIONS: tuple[Migration, ...] = (_0001_CORE, _0002_LLM_CALLS, _0003_CONVERSATIONS)
+_0004_MEMORY = Migration(
+    version=4,
+    name="subjective_memory",
+    statements=(
+        # Spec 10.1: this is *subjective* memory. It is deliberately separate
+        # from the objective archive in ``events`` — normal recall reads these
+        # tables and never the archive.
+        """
+        CREATE TABLE episodes (
+            episode_id      TEXT PRIMARY KEY,
+            conversation_id TEXT,
+            origin          TEXT NOT NULL,
+            started_at      TEXT NOT NULL,
+            ended_at        TEXT,
+            event_count     INTEGER NOT NULL DEFAULT 0,
+            status          TEXT NOT NULL DEFAULT 'open',
+            boundary_reason TEXT,
+            event_ids_json  TEXT NOT NULL DEFAULT '[]'
+        )
+        """,
+        "CREATE INDEX idx_episodes_status ON episodes (status, started_at)",
+        "CREATE INDEX idx_episodes_conversation ON episodes (conversation_id, started_at)",
+        # Spec 10.3 fields. accessibility and importance are separate on
+        # purpose (spec 10.5): a memory can matter and still be hard to reach.
+        """
+        CREATE TABLE episodic_memories (
+            memory_id           TEXT PRIMARY KEY,
+            episode_id          TEXT NOT NULL UNIQUE REFERENCES episodes (episode_id),
+            origin              TEXT NOT NULL,
+            summary             TEXT NOT NULL,
+            topics_json         TEXT NOT NULL DEFAULT '[]',
+            importance          REAL NOT NULL,
+            emotional_intensity REAL NOT NULL DEFAULT 0.0,
+            accessibility       REAL NOT NULL,
+            content_confidence  REAL NOT NULL DEFAULT 0.8,
+            source_confidence   REAL NOT NULL DEFAULT 0.9,
+            temporal_confidence REAL NOT NULL DEFAULT 0.8,
+            novelty             REAL NOT NULL DEFAULT 0.0,
+            prediction_error    REAL NOT NULL DEFAULT 0.0,
+            recall_count        INTEGER NOT NULL DEFAULT 0,
+            last_recalled_at    TEXT,
+            last_decayed_at     TEXT,
+            occurred_at         TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            revision_count      INTEGER NOT NULL DEFAULT 0,
+            status              TEXT NOT NULL DEFAULT 'active',
+            source_event_ids_json TEXT NOT NULL DEFAULT '[]'
+        )
+        """,
+        "CREATE INDEX idx_memories_status ON episodic_memories (status, occurred_at)",
+        "CREATE INDEX idx_memories_origin ON episodic_memories (origin, occurred_at)",
+        "CREATE INDEX idx_memories_accessibility ON episodic_memories (accessibility)",
+        # Trigram tokenizer: Japanese has no word breaks, so substring search
+        # is what actually works here (spec 10.7 starts with FTS5).
+        """
+        CREATE VIRTUAL TABLE episodic_memories_fts USING fts5(
+            memory_id UNINDEXED,
+            summary,
+            topics,
+            tokenize='trigram'
+        )
+        """,
+        """
+        CREATE TABLE semantic_memories (
+            semantic_id     TEXT PRIMARY KEY,
+            statement       TEXT NOT NULL,
+            topics_json     TEXT NOT NULL DEFAULT '[]',
+            origin          TEXT NOT NULL,
+            confidence      REAL NOT NULL DEFAULT 0.5,
+            stability       TEXT NOT NULL DEFAULT 'CHANGEABLE',
+            support_count   INTEGER NOT NULL DEFAULT 1,
+            contradiction_count INTEGER NOT NULL DEFAULT 0,
+            first_learned_at TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'active',
+            source_memory_ids_json TEXT NOT NULL DEFAULT '[]'
+        )
+        """,
+        "CREATE INDEX idx_semantic_status ON semantic_memories (status, updated_at)",
+        "CREATE UNIQUE INDEX idx_semantic_statement ON semantic_memories (statement, origin)",
+        """
+        CREATE TABLE memory_links (
+            link_id     TEXT PRIMARY KEY,
+            from_memory_id TEXT NOT NULL,
+            to_memory_id   TEXT NOT NULL,
+            relation    TEXT NOT NULL,
+            strength    REAL NOT NULL DEFAULT 0.5,
+            created_at  TEXT NOT NULL,
+            UNIQUE (from_memory_id, to_memory_id, relation)
+        )
+        """,
+        # Retrieval history feeds retrieval practice (spec 10.5) and makes
+        # "why did she remember that" answerable.
+        """
+        CREATE TABLE memory_retrievals (
+            retrieval_id TEXT PRIMARY KEY,
+            memory_id    TEXT NOT NULL REFERENCES episodic_memories (memory_id),
+            run_id       TEXT,
+            event_id     TEXT,
+            query        TEXT NOT NULL,
+            score        REAL NOT NULL,
+            rank         INTEGER NOT NULL,
+            used         INTEGER NOT NULL DEFAULT 0,
+            retrieved_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_retrievals_memory ON memory_retrievals (memory_id, retrieved_at)",
+        # Spec 10.6: a recall may reinterpret, but the history is kept and the
+        # original event is never destroyed.
+        """
+        CREATE TABLE memory_revisions (
+            revision_id      TEXT PRIMARY KEY,
+            memory_id        TEXT NOT NULL REFERENCES episodic_memories (memory_id),
+            revised_at       TEXT NOT NULL,
+            reason_code      TEXT NOT NULL,
+            previous_summary TEXT NOT NULL,
+            new_summary      TEXT NOT NULL,
+            confidence_after REAL,
+            run_id           TEXT,
+            event_id         TEXT
+        )
+        """,
+        "CREATE INDEX idx_revisions_memory ON memory_revisions (memory_id, revised_at)",
+    ),
+)
+
+
+MIGRATIONS: tuple[Migration, ...] = (
+    _0001_CORE,
+    _0002_LLM_CALLS,
+    _0003_CONVERSATIONS,
+    _0004_MEMORY,
+)
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)
 
