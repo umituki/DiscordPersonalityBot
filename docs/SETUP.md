@@ -282,3 +282,50 @@ python -m app.main diagnose
 `genesis_health` が `needs_rebuild` / `legacy_invalid` なら、そのデータベースの
 Genesis は心理を何も生んでいない。修復手順は
 [`docs/REPAIR.md`](REPAIR.md)。**自動では何も消さない。**
+
+---
+
+## 完全再構築（新しい YUI として始める）
+
+旧 DB を引き継がず、新しい人格として始める場合。**旧履歴はすべて失われる。**
+
+```bash
+# 1. 何が入っているか確認する
+python -m app.main status
+python -m app.main diagnose
+
+# 2. リセット（確認語が必須）
+python -m app.main rebuild-reset --confirm ERASE_YUI_STATE
+
+# 3. どの epoch にいるか確認
+python -m app.main rebuild-status
+```
+
+処理内容（rebuild spec 3.4 の順）:
+
+```text
+確認語の検証 → 検証済みバックアップ → DB を閉じる
+→ 旧 DB を退避 → 新 schema を 0 から作成
+→ rebuild epoch を記録 → Genesis pending
+```
+
+**何も削除しない。** 旧 DB は 2 か所に残る:
+
+```text
+backups/pre_full_rebuild/<timestamp>.db            # 検証済みバックアップ
+backups/pre_full_rebuild/<timestamp>.previous.db   # 退避した現物
+```
+
+どちらも新しい runtime からは読まない（forensic archive）。
+
+確認語が違えば何も開かずに終了する。通常の `run` / launcher からは実行できない。
+
+### 実装状況の確認
+
+```bash
+python -m app.main capabilities
+```
+
+自律機能ごとの Capability Contract の状態を出す。`E2E_VERIFIED` だけが完成扱い
+で、それ以外は「まだ実際には駆動していない」という意味。詳細は
+[`docs/IMPLEMENTATION_LEDGER.md`](IMPLEMENTATION_LEDGER.md)。

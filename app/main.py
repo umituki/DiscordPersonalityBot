@@ -16,6 +16,8 @@ import signal
 import sys
 from pathlib import Path
 
+from app.admin.rebuild import CONFIRMATION as REBUILD_CONFIRMATION
+from app.admin.rebuild import RebuildRefused
 from app.admin.repair import CONFIRMATION, RepairRefused
 from app.admin.shadow import rebuild_genesis, replay_real_history
 from app.bootstrap import Application, StartupError
@@ -25,6 +27,7 @@ from app.observability.logging import configure_logging
 from app.storage.database import Database
 from app.storage.migrations import LATEST_VERSION, migrate, schema_version
 from app.storage.repositories.traces import ConversationTraceRepository
+from app.versioning.capabilities import CapabilityContractError, load_contracts, summary
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,12 @@ logger = logging.getLogger(__name__)
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="yui", description="YUI v2")
     parser.add_argument("--config", type=Path, default=None, help="path to settings.yaml")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="project root that data/, logs/ and backups/ resolve against",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("run", help="start the application and hold it ready")
     subparsers.add_parser("migrate", help="apply pending database migrations")
@@ -45,6 +54,23 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "diagnose", help="report the health of the Genesis under this database (23.3)"
     )
+    subparsers.add_parser(
+        "capabilities", help="capability contract status (rebuild spec 4.3)"
+    )
+    subparsers.add_parser(
+        "rebuild-status", help="which rebuild epoch this database is in"
+    )
+    # Rebuild spec 3.4: its own command, and it does not run without the exact
+    # confirmation. A reset that can happen by accident is not a reset.
+    reset = subparsers.add_parser(
+        "rebuild-reset",
+        help=(
+            "archive this database and start a fresh person "
+            f"(requires --confirm {REBUILD_CONFIRMATION})"
+        ),
+    )
+    reset.add_argument("--confirm", default="", metavar="CONFIRMATION")
+    reset.add_argument("--reason", default="full rebuild")
     latency = subparsers.add_parser(
         "latency", help="reply-latency percentiles from the conversation traces (19.2)"
     )
@@ -88,8 +114,8 @@ def _build_gateway(application: Application, config: AppConfig) -> DiscordGatewa
     )
 
 
-async def _run(config_file: Path | None) -> int:
-    config = load_config(config_file)
+async def _run(config_file: Path | None, root: Path | None = None) -> int:
+    config = load_config(config_file, root_dir=root)
     application = Application.build(config)
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -130,8 +156,8 @@ async def _run(config_file: Path | None) -> int:
     return 0
 
 
-def _migrate(config_file: Path | None) -> int:
-    config = load_config(config_file)
+def _migrate(config_file: Path | None, root: Path | None = None) -> int:
+    config = load_config(config_file, root_dir=root)
     config.ensure_directories()
     configure_logging(level=config.logging.level, log_file=config.log_path)
     with Database(
@@ -151,9 +177,9 @@ def _migrate(config_file: Path | None) -> int:
     return 0
 
 
-def _backup(config_file: Path | None, reason: str) -> int:
+def _backup(config_file: Path | None, reason: str, root: Path | None = None) -> int:
     """Take a backup with SQLite's own mechanism and verify it (spec 32)."""
-    config = load_config(config_file)
+    config = load_config(config_file, root_dir=root)
     config.ensure_directories()
     configure_logging(level=config.logging.level, log_file=config.log_path)
     application = Application.build(config, auto_migrate=False, configure_logs=False)
@@ -179,13 +205,91 @@ def _backup(config_file: Path | None, reason: str) -> int:
         application.db.close()
 
 
-def _latency(config_file: Path | None, limit: int) -> int:
+def _capabilities(config_file: Path | None, root: Path | None = None) -> int:
+    """Rebuild spec 4.3: what actually runs, per capability."""
+    config = load_config(config_file, root_dir=root)
+    contracts = load_contracts(config.root_dir / "config" / "capabilities")
+    report = {
+        "summary": summary(contracts),
+        "capabilities": {
+            name: {"status": contract.status, "acceptance_test": contract.acceptance_test}
+            for name, contract in sorted(contracts.items())
+        },
+    }
+    sys.stdout.write(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    # Nothing is complete until every capability is E2E_VERIFIED (4.2).
+    return 0 if summary(contracts)["E2E_VERIFIED"] == len(contracts) else 1
+
+
+def _rebuild_status(config_file: Path | None, root: Path | None = None) -> int:
+    config = load_config(config_file, root_dir=root)
+    config.ensure_directories()
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        epoch = application.rebuild.current_epoch()
+        if epoch is None:
+            sys.stdout.write(
+                json.dumps({"epoch": None, "note": "no rebuild has been performed"})
+                + "\n"
+            )
+            return 1
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "epoch_id": epoch["epoch_id"],
+                    "started_at": epoch["started_at"],
+                    "spec_version": epoch["spec_version"],
+                    "schema_version": epoch["schema_version"],
+                    "genesis_status": epoch["genesis_status"],
+                    "archived_db": epoch["archived_db_path"],
+                    "backup": epoch["backup_path"],
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+        return 0
+    finally:
+        application.db.close()
+
+
+def _rebuild_reset(
+    config_file: Path | None,
+    *,
+    confirm: str,
+    reason: str,
+    root: Path | None = None,
+) -> int:
+    """Rebuild spec 3.4. Archives the old database; never deletes it.
+
+    The confirmation is checked before anything is opened: a mistyped reset
+    must not so much as touch the database it was about to replace.
+    """
+    if confirm != REBUILD_CONFIRMATION:
+        raise RebuildRefused(
+            f"a rebuild reset requires --confirm {REBUILD_CONFIRMATION}"
+        )
+    config = load_config(config_file, root_dir=root)
+    config.ensure_directories()
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        result = application.rebuild.reset(confirmation=confirm, reason=reason)
+        sys.stdout.write(json.dumps(result.as_detail(), indent=2, ensure_ascii=False) + "\n")
+        return 0 if result.ok else 1
+    finally:
+        application.db.close()
+
+
+def _latency(config_file: Path | None, limit: int, root: Path | None = None) -> int:
     """Patch spec 19.2 / 20: what the USER's wait actually looks like.
 
     Reported from recorded turns only. With nothing recorded it says so rather
     than printing a zero that reads like a passing measurement.
     """
-    config = load_config(config_file)
+    config = load_config(config_file, root_dir=root)
     config.ensure_directories()
     configure_logging(level=config.logging.level, log_file=config.log_path)
     application = Application.build(config, auto_migrate=False, configure_logs=False)
@@ -219,9 +323,9 @@ def _percentile(sorted_samples: list[int], fraction: float) -> int:
     return sorted_samples[index]
 
 
-def _diagnose(config_file: Path | None) -> int:
+def _diagnose(config_file: Path | None, root: Path | None = None) -> int:
     """Patch spec 23.3: say what is wrong. Change nothing."""
-    config = load_config(config_file)
+    config = load_config(config_file, root_dir=root)
     config.ensure_directories()
     configure_logging(level=config.logging.level, log_file=config.log_path)
     application = Application.build(config, auto_migrate=False, configure_logs=False)
@@ -241,9 +345,10 @@ def _repair(
     apply: bool,
     switch: str,
     max_blocks: int | None,
+    root: Path | None = None,
 ) -> int:
     """Patch spec 23.4. Dry run unless asked; never switches unless confirmed."""
-    config = load_config(config_file)
+    config = load_config(config_file, root_dir=root)
     config.ensure_directories()
     configure_logging(level=config.logging.level, log_file=config.log_path)
     application = Application.build(config, auto_migrate=False, configure_logs=False)
@@ -295,8 +400,8 @@ def _repair(
         application.db.close()
 
 
-def _status(config_file: Path | None) -> int:
-    config = load_config(config_file)
+def _status(config_file: Path | None, root: Path | None = None) -> int:
+    config = load_config(config_file, root_dir=root)
     config.ensure_directories()
     configure_logging(level=config.logging.level, log_file=config.log_path)
     application = Application.build(config, auto_migrate=False, configure_logs=False)
@@ -388,24 +493,39 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "run":
-            return asyncio.run(_run(args.config))
+            return asyncio.run(_run(args.config, args.root))
         if args.command == "migrate":
-            return _migrate(args.config)
+            return _migrate(args.config, args.root)
         if args.command == "status":
-            return _status(args.config)
+            return _status(args.config, args.root)
         if args.command == "backup":
-            return _backup(args.config, args.reason)
+            return _backup(args.config, args.reason, args.root)
         if args.command == "diagnose":
-            return _diagnose(args.config)
+            return _diagnose(args.config, args.root)
         if args.command == "latency":
-            return _latency(args.config, args.limit)
+            return _latency(args.config, args.limit, args.root)
+        if args.command == "capabilities":
+            return _capabilities(args.config, args.root)
+        if args.command == "rebuild-status":
+            return _rebuild_status(args.config, args.root)
+        if args.command == "rebuild-reset":
+            return _rebuild_reset(
+                args.config, confirm=args.confirm, reason=args.reason, root=args.root
+            )
         if args.command == "repair":
             return _repair(
                 args.config,
                 apply=args.apply,
                 switch=args.switch,
                 max_blocks=args.max_blocks,
+                root=args.root,
             )
+    except RebuildRefused as exc:
+        logging.getLogger("app.main").error("rebuild refused: %s", exc)
+        return 3
+    except CapabilityContractError as exc:
+        logging.getLogger("app.main").error("%s", exc)
+        return 2
     except RepairRefused as exc:
         logging.getLogger("app.main").error("repair refused: %s", exc)
         return 3

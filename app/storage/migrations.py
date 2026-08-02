@@ -1416,6 +1416,33 @@ _0017_CONVERSATION_TRACES = Migration(
 )
 
 
+_0018_REBUILD_EPOCHS = Migration(
+    version=18,
+    name="rebuild_epochs",
+    statements=(
+        # Rebuild spec 3: a fresh person starts from a fresh database, and the
+        # fact that this happened has to be a row rather than a memory. Every
+        # epoch records what was archived, so "where did the old YUI go" always
+        # has an answer.
+        """
+        CREATE TABLE rebuild_epochs (
+            epoch_id            TEXT PRIMARY KEY,
+            started_at          TEXT NOT NULL,
+            reason              TEXT NOT NULL DEFAULT '',
+            spec_version        TEXT NOT NULL DEFAULT '',
+            schema_version      INTEGER NOT NULL DEFAULT 0,
+            backup_path         TEXT,
+            archived_db_path    TEXT,
+            previous_epoch_id   TEXT,
+            genesis_status      TEXT NOT NULL DEFAULT 'pending',
+            detail_json         TEXT NOT NULL DEFAULT '{}'
+        )
+        """,
+        "CREATE INDEX idx_rebuild_epochs_started ON rebuild_epochs (started_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1434,6 +1461,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0015_RUN_CONFLICTS,
     _0016_CANDIDATE_HISTORY,
     _0017_CONVERSATION_TRACES,
+    _0018_REBUILD_EPOCHS,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

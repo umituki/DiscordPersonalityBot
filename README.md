@@ -7,6 +7,8 @@
 実装規則: [`CLAUDE.md`](CLAUDE.md), [`.claude/rules/`](.claude/rules)
 実機セットアップ: [`docs/SETUP.md`](docs/SETUP.md)
 既存 DB の修復: [`docs/REPAIR.md`](docs/REPAIR.md)
+完全再構築仕様: [`docs/YUI_FULL_REBUILD_SPEC.md`](docs/YUI_FULL_REBUILD_SPEC.md)
+実装台帳: [`docs/IMPLEMENTATION_LEDGER.md`](docs/IMPLEMENTATION_LEDGER.md)
 実機検証由来の修正仕様: [`docs/YUI_v2_bugfix_patch_spec.md`](docs/YUI_v2_bugfix_patch_spec.md)
 
 ## 現在の実装状況

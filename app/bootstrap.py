@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from app.admin.control_plane import AdminControlPlane
 from app.admin.legacy import LegacyHealthScanner
+from app.admin.rebuild import RebuildService
 from app.admin.repair import RepairService
 from app.agency.decision import DecisionEngine
 from app.agency.goals import GoalEngine
@@ -225,6 +226,7 @@ class Application:
     admin: AdminControlPlane
     legacy: LegacyHealthScanner
     repair: RepairService
+    rebuild: RebuildService
     society_policy: SocietyPolicy
     society: SocietyService
     npc_relationships: NPCRelationshipEngine
@@ -726,6 +728,13 @@ class Application:
         legacy_scanner = LegacyHealthScanner(
             health=health_repo, simulations=simulation_repo
         )
+        # Rebuild spec 3.4: its own command, never part of a normal start.
+        rebuild_service = RebuildService(
+            db=db,
+            backups=backup_service,
+            backups_dir=resolved_config.backups_dir,
+            clock=resolved_clock,
+        )
         repair_service = RepairService(
             db=db,
             events=events_repo,
@@ -833,6 +842,7 @@ class Application:
             admin=admin_control_plane,
             legacy=legacy_scanner,
             repair=repair_service,
+            rebuild=rebuild_service,
             society_policy=society_policy,
             society=society_service,
             npc_relationships=npc_relationship_engine,

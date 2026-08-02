@@ -245,6 +245,10 @@ def temp_config(tmp_path: Path) -> AppConfig:
     shutil.copytree(
         REPO_ROOT / "config" / "knowledge", tmp_path / "config" / "knowledge"
     )
+    # Capability contracts are shipped configuration too (rebuild spec 4.3).
+    shutil.copytree(
+        REPO_ROOT / "config" / "capabilities", tmp_path / "config" / "capabilities"
+    )
     shutil.copytree(REPO_ROOT / "character", tmp_path / "character")
     for policy in (
         "output_guard.yaml",

@@ -10,8 +10,13 @@
 # be there (spec 32: the live DB is never in a cloud-synced folder, and the
 # production writer is exactly one Windows host).
 
+# `rebuild-reset` is deliberately absent from this list. The launcher runs
+# migrate and a backup before whatever it was asked for, and a command that
+# replaces the database must not be reachable through the everyday path
+# (rebuild spec 3.4). Run it directly:
+#   .venv\Scripts\python.exe -m app.main rebuild-reset --confirm ERASE_YUI_STATE
 param(
-    [ValidateSet("run", "migrate", "status", "backup", "diagnose", "repair")]
+    [ValidateSet("run", "migrate", "status", "backup", "diagnose", "repair", "capabilities", "rebuild-status")]
     [string]$Command = "run",
     [string]$OllamaUrl = "http://127.0.0.1:11434",
     [int]$OllamaTimeoutSeconds = 120
