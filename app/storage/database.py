@@ -164,3 +164,42 @@ class Database:
         """Return ``ok`` or the first reported integrity problem (spec 32)."""
         row = self.query_one("PRAGMA integrity_check")
         return "ok" if row is None else str(row[0])
+
+
+# --- backup file inspection (spec 32) --------------------------------------
+#: Tables a restore test reads. If a copy cannot answer these, it is not a
+#: database anybody could come back to.
+RESTORE_TEST_TABLES: tuple[str, ...] = ("events", "state_values", "migrations")
+
+
+def verify_file(path: Path) -> tuple[str, int]:
+    """Integrity-check a database *file* and read its schema version.
+
+    Used on backup copies, which are not the live connection and therefore
+    cannot go through :class:`Database` (spec 32).
+    """
+    connection = sqlite3.connect(path)
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        row = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        return integrity, int(row[0]) if row else 0
+    except sqlite3.Error as exc:
+        return f"error: {exc}", 0
+    finally:
+        connection.close()
+
+
+def restore_test(path: Path) -> bool:
+    """Open a backup and read from it. An untested backup is a hope (spec 32)."""
+    connection = sqlite3.connect(path)
+    try:
+        for table in RESTORE_TEST_TABLES:
+            connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+    except sqlite3.Error as exc:
+        logger.error("restore test failed for %s: %r", path, exc)
+        return False
+    finally:
+        connection.close()
+    return True

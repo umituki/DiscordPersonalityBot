@@ -33,6 +33,8 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser("run", help="start the application and hold it ready")
     subparsers.add_parser("migrate", help="apply pending database migrations")
     subparsers.add_parser("status", help="print schema, manifest and store counters")
+    backup = subparsers.add_parser("backup", help="take a verified backup (spec 32)")
+    backup.add_argument("--reason", default="manual", help="why this backup was taken")
     return parser
 
 
@@ -113,6 +115,34 @@ def _migrate(config_file: Path | None) -> int:
     return 0
 
 
+def _backup(config_file: Path | None, reason: str) -> int:
+    """Take a backup with SQLite's own mechanism and verify it (spec 32)."""
+    config = load_config(config_file)
+    config.ensure_directories()
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        record = application.backups.create(kind="manual", reason=reason)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "backup_id": record.backup_id,
+                    "path": str(record.path),
+                    "size_bytes": record.size_bytes,
+                    "integrity": record.integrity,
+                    "restore_tested": record.restore_tested,
+                    "usable": record.usable,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+        return 0 if record.usable else 1
+    finally:
+        application.db.close()
+
+
 def _status(config_file: Path | None) -> int:
     config = load_config(config_file)
     config.ensure_directories()
@@ -187,6 +217,13 @@ def _status(config_file: Path | None) -> int:
                 }
             ),
             "first_boot": application.genesis.has_booted(),
+            "admin_actions": application.admin.count(),
+            "backups": application.backups.count(),
+            "latest_backup": (
+                None
+                if application.backups.latest_usable() is None
+                else str(application.backups.latest_usable().path)
+            ),
             "integrity": application.db.integrity_check(),
         }
     finally:
@@ -204,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
             return _migrate(args.config)
         if args.command == "status":
             return _status(args.config)
+        if args.command == "backup":
+            return _backup(args.config, args.reason)
     except (ConfigError, StartupError) as exc:
         logging.getLogger("app.main").error("%s", exc)
         return 2

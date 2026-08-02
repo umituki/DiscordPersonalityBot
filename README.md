@@ -8,7 +8,7 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 11（Genesis）まで**完了。Phase 12（Production Hardening）は未着手。
+仕様 Section 35 のロードマップに従い、Phase 0 から順番に実装した。**全 13 フェーズ（Phase 0〜12）実装済み**。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -24,7 +24,7 @@
 | 9 | Growth（Consolidation / Adaptations / Personality / Values / Narrative / Drift） | 実装済み |
 | 10 | Society（NPC / Groups / Network / Lifecycle） | 実装済み |
 | 11 | Genesis（Historical Knowledge / Past Simulation / FIRST BOOT） | 実装済み |
-| 12 | Production Hardening | 未着手 |
+| 12 | Production Hardening（Admin / Backup / Resources / Chaos / Launcher） | 実装済み |
 
 ### Phase 1 で動作するパイプライン
 
@@ -205,7 +205,30 @@ FIRST BOOT        : Deep Consolidation → 整合性 → 知識年代 → 同一
                     それ以前に USER との関係経験は 1 件も作らない
 ```
 
-主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
+### Phase 12 で動作する運用
+
+```text
+Admin Plane   : Character Mode と Admin Mode を完全分離。会話の「忘れて」は
+                suppress であって hard delete ではない。
+                YUI 自身に Admin 権限はない
+Destructive   : 影響分析 → dry-run → 確認 → 検証済みスナップショット →
+                変更 → 波及再評価 → 検証 → 監査。
+                確認がなければ実行されず、スナップショットが検証できなければ
+                何も変更しない
+Backup        : SQLite の backup API を使う（Explorer コピーは backup ではない）。
+                作成後に integrity を検証し restore test を行い、
+                通らなかったものは「使える backup」として返さない。
+                live DB がクラウド同期フォルダにあれば起動時に警告する
+Resources     : P0 応答 … P7 過去シミュレーションの優先度キュー。
+                同順位は到着順。USER の入力が来たら background は
+                安全な checkpoint で譲る（途中で殺さない）
+Startup       : 復旧 → world catch-up → scheduler restore → readiness の順。
+                停止中に経過した時間をなかったことにしない
+Chaos         : subscriber 例外・commit 失敗・二重配送・モデル不達・
+                プロセス強制終了を注入しても state は壊れない
+```
+
+主要な不変条件はすべてテストで保護している（`tests/invariants/`, `tests/chaos/`）。
 
 ## セットアップ
 
@@ -221,7 +244,11 @@ cp .env.example .env           # secrets は .env のみ。commit しない
 ```bash
 yui migrate     # DB migration の適用
 yui status      # schema / manifest / event 数 / integrity の確認
+yui backup      # SQLite backup API で取得し、検証と restore test を行う
 yui run         # 起動。token と owner id があれば Discord に接続する
+
+# Windows 本番機
+powershell -File scripts/yui.ps1 -Command run
 ```
 
 `config/settings.yaml` が静的設定、`config/policies/` が調整値（仕様 40）、
@@ -232,6 +259,7 @@ yui run         # 起動。token と owner id があれば Discord に接続す�
 ```bash
 .venv/bin/python -m pytest              # 全件
 .venv/bin/python -m pytest -m invariant # 不変条件のみ
+.venv/bin/python -m pytest -m chaos     # 障害注入のみ
 ```
 
 テストは一時 DB のみを使用し、production `data/` には触れない。
@@ -254,6 +282,8 @@ app/
   society/       npc / npc relationship / groups / social network / lifecycle
   knowledge/     historical knowledge / temporal guard / exposure funnel
   simulation/    temperament seed / experiences / past simulation / genesis
+  admin/         admin control plane / risk classes（spec 30）
+  reliability/   resource manager（LLM priority queue, spec 33）
   social/        relationship / attachment / user model / beliefs / self model
   tools/         Tool Manager / registry / builtin tools
   interfaces/    discord/ (adapter, dto, gateway)

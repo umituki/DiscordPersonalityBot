@@ -1227,6 +1227,53 @@ _0012_SIMULATION = Migration(
 )
 
 
+_0013_OPERATIONS = Migration(
+    version=13,
+    name="admin_and_backup",
+    statements=(
+        # Spec 30 / 31.9: every admin operation is recorded, including the ones
+        # that were previewed and never carried out. "We looked first" has to
+        # be a row, not a habit.
+        """
+        CREATE TABLE admin_actions (
+            action_id    TEXT PRIMARY KEY,
+            operation    TEXT NOT NULL,
+            risk_class   TEXT NOT NULL,
+            target_type  TEXT NOT NULL,
+            target_id    TEXT,
+            stage        TEXT NOT NULL DEFAULT 'requested',
+            dry_run      INTEGER NOT NULL DEFAULT 1,
+            confirmed_by TEXT,
+            snapshot_path TEXT,
+            impact_json  TEXT NOT NULL DEFAULT '{}',
+            result_json  TEXT NOT NULL DEFAULT '{}',
+            reason       TEXT NOT NULL DEFAULT '',
+            requested_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+        """,
+        "CREATE INDEX idx_admin_actions_time ON admin_actions (requested_at)",
+        "CREATE INDEX idx_admin_actions_target ON admin_actions (target_type, target_id)",
+        # Spec 32: a backup is only a backup once its integrity has been
+        # verified, so the verification result lives with the record.
+        """
+        CREATE TABLE backups (
+            backup_id    TEXT PRIMARY KEY,
+            kind         TEXT NOT NULL DEFAULT 'manual',
+            path         TEXT NOT NULL,
+            size_bytes   INTEGER NOT NULL DEFAULT 0,
+            schema_version INTEGER NOT NULL DEFAULT 0,
+            integrity    TEXT NOT NULL DEFAULT 'unknown',
+            restore_tested INTEGER NOT NULL DEFAULT 0,
+            reason       TEXT NOT NULL DEFAULT '',
+            created_at   TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_backups_created ON backups (created_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1240,6 +1287,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0010_SOCIETY,
     _0011_KNOWLEDGE,
     _0012_SIMULATION,
+    _0013_OPERATIONS,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

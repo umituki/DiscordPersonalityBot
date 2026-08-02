@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from app.admin.control_plane import AdminControlPlane
 from app.agency.decision import DecisionEngine
 from app.agency.goals import GoalEngine
 from app.agency.habits import HabitEngine
@@ -82,6 +83,8 @@ from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator
 from app.llm.tracing import DatabaseTracer
 from app.observability.logging import configure_logging
+from app.reliability.resources import ResourceManager
+from app.storage.backup import BackupService, looks_cloud_synced
 from app.resources.identity import Identity, load_identity
 from app.orchestrator.processor import EventProcessor
 from app.state.arbitrator import StateArbitrator
@@ -94,6 +97,7 @@ from app.storage.migrations import LATEST_VERSION, migrate, schema_version, veri
 from app.storage.repositories import (
     AcquisitionRepository,
     ActivityRepository,
+    AdminActionRepository,
     AdaptationRepository,
     BeliefRepository,
     CandidateRepository,
@@ -102,6 +106,7 @@ from app.storage.repositories import (
     DecisionRepository,
     ConversationRepository,
     DriftRepository,
+    MemoryAdminRepository,
     MemoryRepository,
     DeliveryRepository,
     EventRepository,
@@ -197,6 +202,9 @@ class Application:
     seed_builder: SeedBuilder
     simulation: PastSimulationEngine
     genesis: GenesisService
+    resources: ResourceManager
+    backups: BackupService
+    admin: AdminControlPlane
     society_policy: SocietyPolicy
     society: SocietyService
     npc_relationships: NPCRelationshipEngine
@@ -218,6 +226,9 @@ class Application:
     schema_version: int
     started: bool = False
     llm_healthy: bool = False
+    #: Set by :meth:`start` from the spec 32 startup sequence.
+    catch_up: object | None = None
+    retired_jobs: int = 0
 
     # --- construction ------------------------------------------------------
     @classmethod
@@ -621,6 +632,28 @@ class Application:
             clock=resolved_clock,
         )
 
+        # --- operations (spec 30, 32, 33) -------------------------------------
+        resources = ResourceManager(concurrency=resolved_config.llm.concurrency)
+        backup_service = BackupService(
+            db, backups_dir=resolved_config.backups_dir, clock=resolved_clock
+        )
+        if looks_cloud_synced(resolved_config.database_path):
+            # Spec 32: a live SQLite file in a consumer sync folder will be
+            # corrupted eventually. Refusing to start would be worse than
+            # saying so loudly at every startup.
+            logger.error(
+                "the live database is inside a cloud-synced folder (%s); "
+                "spec 32 forbids this and it will corrupt the database",
+                resolved_config.database_path,
+            )
+        admin_control_plane = AdminControlPlane(
+            actions=AdminActionRepository(db),
+            memories=MemoryAdminRepository(db),
+            memory=memory_engine,
+            backups=backup_service,
+            clock=resolved_clock,
+        )
+
         # The conversation path exists only when the single USER is identified
         # (spec 1.2). Without it, YUI has no one to talk to and stays offline.
         conversation: ConversationService | None = None
@@ -707,6 +740,9 @@ class Application:
             seed_builder=seed_builder,
             simulation=simulation_engine,
             genesis=genesis_service,
+            resources=resources,
+            backups=backup_service,
+            admin=admin_control_plane,
             society_policy=society_policy,
             society=society_service,
             npc_relationships=npc_relationship_engine,
@@ -749,6 +785,14 @@ class Application:
         await self.db.run(self.event_store.append, event)
         self.started = True
 
+        # Spec 32 startup order: recovery, then world catch-up, then scheduler
+        # restore, then readiness. Time passed while the process was down and
+        # pretending otherwise would leave the world lying about itself.
+        self.catch_up = await self.db.run(self._catch_up_world)
+        self.retired_jobs = await self.db.run(self.scheduler.restore)
+        if self.retired_jobs:
+            logger.info("scheduler restored; %d stale job(s) retired", self.retired_jobs)
+
         # Spec 32: Ollama health belongs to the startup sequence. An unhealthy
         # model degrades the runtime; it does not corrupt state, so by default
         # it does not block readiness (spec 28.3).
@@ -772,6 +816,15 @@ class Application:
             self.llm_healthy,
         )
         return event
+
+    def _catch_up_world(self):
+        """Advance the world over the offline gap (spec 18.3, 32)."""
+        entry = self.state.get("world", "sleep_pressure")
+        if entry is None:
+            return None
+        return self.world.catch_up(
+            since=entry.updated_at, sleep_pressure=entry.numeric or 0.25
+        )
 
     async def stop(self, reason: str = "shutdown") -> None:
         if self.started:

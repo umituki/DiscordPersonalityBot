@@ -14,6 +14,9 @@ from typing import TYPE_CHECKING, Any
 
 _EXPORTS: dict[str, str] = {
     "AdaptationRepository": "growth",
+    "AdminActionRepository": "admin",
+    "BackupRepository": "admin",
+    "MemoryAdminRepository": "admin",
     "BeliefRepository": "social",
     "CandidateRepository": "growth",
     "ConsolidationRepository": "growth",
@@ -61,6 +64,8 @@ __all__ = [
     "AcquisitionRepository",
     "ActivityRepository",
     "AdaptationRepository",
+    "AdminActionRepository",
+    "BackupRepository",
     "BeliefRepository",
     "CandidateRepository",
     "ConsolidationRepository",
@@ -81,6 +86,7 @@ __all__ = [
     "KnowledgeRepository",
     "LLMCallRepository",
     "ManifestRepository",
+    "MemoryAdminRepository",
     "MemoryRepository",
     "NPCInteractionRepository",
     "NPCModelRepository",
@@ -117,6 +123,11 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from app.storage.repositories.admin import (
+        AdminActionRepository,
+        BackupRepository,
+        MemoryAdminRepository,
+    )
     from app.storage.repositories.agency import (
         DecisionRepository,
         GoalRepository,
