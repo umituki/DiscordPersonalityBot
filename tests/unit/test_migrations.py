@@ -112,3 +112,51 @@ def test_cannot_close_inside_transaction(db: Database) -> None:
 
 def test_integrity_check_passes(db: Database) -> None:
     assert db.integrity_check() == "ok"
+
+
+# --- 0016: resolved candidates are history (patch spec 14 fallout) ----------
+def _candidate(candidates, clock):
+    return candidates.create(
+        domain="personality",
+        key="openness",
+        direction=1,
+        source_adaptation=None,
+        now=clock.now(),
+    )
+
+
+def test_two_expired_candidates_for_one_target_can_coexist(db, clock) -> None:
+    """The UNIQUE constraint covered resolved statuses and should not have.
+
+    Consolidation crashed on the second expiry for the same trait. Patch spec
+    14 made consolidation run many times during a Genesis, which turned a
+    latent conflict into a reliable one.
+    """
+    from app.storage.repositories.growth import CandidateRepository
+
+    candidates = CandidateRepository(db)
+    first = _candidate(candidates, clock)
+    candidates.resolve(first.candidate_id, "expired", now=clock.now())
+    second = _candidate(candidates, clock)
+    candidates.resolve(second.candidate_id, "expired", now=clock.now())
+
+    assert first.candidate_id != second.candidate_id
+    assert candidates.get(first.candidate_id).status == "expired"
+    assert candidates.get(second.candidate_id).status == "expired"
+
+
+def test_only_one_candidate_is_open_per_target_and_direction(db, clock) -> None:
+    """The part of the constraint that was right is kept."""
+    import sqlite3
+
+    import pytest
+
+    from app.storage.repositories.growth import CandidateRepository
+
+    candidates = CandidateRepository(db)
+    _candidate(candidates, clock)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        _candidate(candidates, clock)
+
+    assert len(candidates.accumulating()) == 1

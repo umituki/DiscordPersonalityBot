@@ -239,6 +239,12 @@ def temp_config(tmp_path: Path) -> AppConfig:
     """A full config rooted in tmp_path, with the real policy file copied in."""
     (tmp_path / "config" / "policies").mkdir(parents=True)
     shutil.copytree(REPO_ROOT / "config" / "prompts", tmp_path / "config" / "prompts")
+    # The knowledge bundles are part of the shipped configuration: without them
+    # a Genesis has no period knowledge, and the FIRST BOOT knowledge health
+    # audit refuses the boot (patch spec 16.1, 17.3).
+    shutil.copytree(
+        REPO_ROOT / "config" / "knowledge", tmp_path / "config" / "knowledge"
+    )
     shutil.copytree(REPO_ROOT / "character", tmp_path / "character")
     for policy in (
         "output_guard.yaml",

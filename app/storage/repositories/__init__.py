@@ -35,6 +35,7 @@ _EXPORTS: dict[str, str] = {
     "FailureRepository": "failures",
     "GoalRepository": "agency",
     "GroupRepository": "society",
+    "HealthRepository": "health",
     "HabitRepository": "agency",
     "NPCInteractionRepository": "society",
     "NPCModelRepository": "society",
@@ -86,6 +87,7 @@ __all__ = [
     "KnowledgeRepository",
     "LLMCallRepository",
     "ManifestRepository",
+    "HealthRepository",
     "MemoryAdminRepository",
     "MemoryRepository",
     "NPCInteractionRepository",
@@ -155,6 +157,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     )
     from app.storage.repositories.llm_calls import LLMCallRepository
     from app.storage.repositories.manifests import ManifestRepository
+    from app.storage.repositories.health import HealthRepository
     from app.storage.repositories.memory import MemoryRepository
     from app.storage.repositories.runs import ProcessingRunRepository
     from app.storage.repositories.simulation import SimulationRepository

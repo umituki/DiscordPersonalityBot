@@ -100,6 +100,62 @@ class FirstBootRules(_Frozen):
     min_retained_knowledge: int = Field(default=0, ge=0)
     min_memories: int = Field(default=0, ge=0)
 
+    # --- patch spec 17: the pipeline actually ran ---------------------------
+    #: A run this long is a real life and is held to the multi-year thresholds
+    #: below. Shorter runs exist for tests and smoke checks.
+    multi_year_threshold_years: float = Field(default=2.0, gt=0.0)
+
+    #: Patch spec 17. Each of these is evidence that one stage of the causal
+    #: chain left something behind. Zero anywhere means the chain is broken,
+    #: which is precisely what 238 experiences and no psychology looked like.
+    min_appraised_simulated_events: int = Field(default=1, ge=0)
+    min_state_effect_changes: int = Field(default=1, ge=0)
+    min_encoding_attempts: int = Field(default=1, ge=0)
+    #: ``periodic_consolidation_runs > 1`` — one run at the end is the failure.
+    min_periodic_consolidations: int = Field(default=2, ge=0)
+    min_knowledge_sources_or_candidates: int = Field(default=1, ge=0)
+    min_knowledge_exposures: int = Field(default=1, ge=0)
+
+    # --- 17.1 growth health -------------------------------------------------
+    #: Not "personality changed" — a life that left someone the same is a
+    #: possible life. This is whether the machinery ran at all.
+    min_growth_evidence: int = Field(default=1, ge=0)
+    require_deep_gate_evaluated: bool = True
+
+    # --- 17.2 / 17.3 multi-year floors --------------------------------------
+    #: Patch spec prohibition 5 forbids leaving these at zero and calling the
+    #: audit done. They apply to runs past the multi-year threshold.
+    min_memories_multi_year: int = Field(default=1, ge=0)
+    min_retained_knowledge_multi_year: int = Field(default=1, ge=0)
+    min_encoding_attempts_multi_year: int = Field(default=2, ge=0)
+
+    # --- 18 block audit -----------------------------------------------------
+    #: A block that produced no events is a block that did not happen.
+    allow_zero_event_count_blocks: bool = False
+    #: Every ordinary day described with the same sentence is not a life.
+    min_distinct_block_summaries: int = Field(default=2, ge=1)
+
+    def multi_year(self, years: float) -> bool:
+        return years >= self.multi_year_threshold_years
+
+    def memories_floor(self, years: float) -> int:
+        return max(
+            self.min_memories,
+            self.min_memories_multi_year if self.multi_year(years) else 0,
+        )
+
+    def retained_knowledge_floor(self, years: float) -> int:
+        return max(
+            self.min_retained_knowledge,
+            self.min_retained_knowledge_multi_year if self.multi_year(years) else 0,
+        )
+
+    def encoding_attempts_floor(self, years: float) -> int:
+        return max(
+            self.min_encoding_attempts,
+            self.min_encoding_attempts_multi_year if self.multi_year(years) else 0,
+        )
+
 
 class SimulationPolicy(_Frozen):
     policy_version: int = 1

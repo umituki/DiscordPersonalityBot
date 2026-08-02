@@ -24,11 +24,12 @@ from app.knowledge.builder import Candidate
 from app.orchestrator.run_view import RunView
 from app.simulation.events import FIRST_BOOT, SIMULATED_EXPERIENCE
 from app.simulation.experiences import ExperienceBudget, ExperienceSampler
-from app.simulation.models import EXPERIENCE_CLASSES, TemperamentSeed
+from app.simulation.models import AUDIT_KINDS, EXPERIENCE_CLASSES, TemperamentSeed
 from app.simulation.policy import SimulationPolicy
 from app.simulation.seed import QUESTION_IDS, SeedBuilder, SeedError, SeedRequest
 from app.storage.repositories.events import EventRepository
 from app.storage.repositories.simulation import SimulationRepository
+from tests.support import use_offline_model
 
 pytestmark = pytest.mark.invariant
 
@@ -164,6 +165,7 @@ async def test_a_simulated_life_runs_through_the_normal_pipeline(
     temp_config, clock, make_event
 ) -> None:
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         seed = seed_for(application)
         scaffold = application.simulation.prepare(
@@ -188,6 +190,7 @@ async def test_everything_simulated_is_marked_as_simulated(
     temp_config, clock
 ) -> None:
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         seed = seed_for(application)
         scaffold = application.simulation.prepare(
@@ -212,6 +215,7 @@ async def test_everything_simulated_is_marked_as_simulated(
 async def test_the_simulation_never_creates_the_user(temp_config, clock) -> None:
     """Spec 22.7: no relationship experience with the USER before FIRST BOOT."""
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         seed = seed_for(application)
         scaffold = application.simulation.prepare(
@@ -239,6 +243,7 @@ async def test_the_user_bond_engines_ignore_a_simulated_event(
     not met (spec 22.7).
     """
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         simulated = make_event(actor_type="yui", origin="simulated_past")
         view = RunView(snapshot=application.snapshots.capture(persist=False))
@@ -253,6 +258,7 @@ async def test_the_seed_sets_the_starting_baselines_not_the_result(
     temp_config, clock
 ) -> None:
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         seed = seed_for(application)
         application.simulation.prepare(
@@ -272,6 +278,7 @@ async def test_period_knowledge_never_leaks_into_the_simulation(
     temp_config, clock
 ) -> None:
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         builder = application.knowledge_builder
         old = builder.register(
@@ -318,6 +325,7 @@ async def test_first_boot_is_withheld_until_the_life_is_long_enough(
     temp_config, clock
 ) -> None:
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         seed = seed_for(application)
         scaffold = application.simulation.prepare(
@@ -338,6 +346,7 @@ async def test_first_boot_records_every_audit_whether_it_passed_or_not(
     temp_config, clock
 ) -> None:
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         seed = seed_for(application)
         scaffold = application.simulation.prepare(
@@ -348,13 +357,7 @@ async def test_first_boot_records_every_audit_whether_it_passed_or_not(
 
         audits = application.genesis.audits(result.run.simulation_id)
         kinds = {audit.kind for audit in audits}
-        assert kinds == {
-            "consistency",
-            "knowledge_chronology",
-            "identity",
-            "drift",
-            "quality",
-        }
+        assert kinds == set(AUDIT_KINDS)
     finally:
         application.db.close()
 
@@ -363,6 +366,7 @@ async def test_a_complete_life_boots_and_only_then_is_the_present_real(
     temp_config, clock
 ) -> None:
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         seed = seed_for(application)
         scaffold = application.simulation.prepare(
@@ -390,6 +394,7 @@ async def test_a_user_message_before_first_boot_fails_the_consistency_audit(
 ) -> None:
     """Spec 22.7's last line, enforced rather than assumed."""
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         seed = seed_for(application)
         scaffold = application.simulation.prepare(
@@ -411,6 +416,7 @@ async def test_a_user_message_before_first_boot_fails_the_consistency_audit(
 
 async def test_booting_twice_is_a_no_op(temp_config, clock) -> None:
     application = Application.build(temp_config, clock=clock, configure_logs=False)
+    use_offline_model(application)
     try:
         seed = seed_for(application)
         scaffold = application.simulation.prepare(

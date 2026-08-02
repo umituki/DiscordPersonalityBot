@@ -1316,6 +1316,61 @@ _0015_RUN_CONFLICTS = Migration(
 )
 
 
+_0016_CANDIDATE_HISTORY = Migration(
+    version=16,
+    name="deep_update_candidate_history",
+    statements=(
+        # The table-level UNIQUE covered (domain, key, direction, status),
+        # which is right for `accumulating` — one open candidate per target and
+        # direction — and wrong for everything else. Two candidates for the
+        # same trait that both eventually expired collided, and consolidation
+        # crashed on the second one. Patch spec 14 made consolidation run many
+        # times during a Genesis, which is how a latent conflict became a
+        # reliable one.
+        #
+        # Resolved candidates are history and history accumulates, so the
+        # constraint becomes a partial unique index over the open state only.
+        # Every existing row is carried across; nothing is dropped.
+        """
+        CREATE TABLE deep_update_candidates_new (
+            candidate_id   TEXT PRIMARY KEY,
+            target_domain  TEXT NOT NULL,
+            target_key     TEXT NOT NULL,
+            direction      INTEGER NOT NULL,
+            pattern_count  INTEGER NOT NULL DEFAULT 0,
+            contexts_json  TEXT NOT NULL DEFAULT '[]',
+            evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            outcome_weight REAL NOT NULL DEFAULT 0.0,
+            mood_independent_count INTEGER NOT NULL DEFAULT 0,
+            magnitude      REAL NOT NULL DEFAULT 0.0,
+            source_adaptation TEXT,
+            first_seen_at  TEXT NOT NULL,
+            last_seen_at   TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'accumulating',
+            resolved_at    TEXT,
+            blocked_reason TEXT NOT NULL DEFAULT ''
+        )
+        """,
+        """
+        INSERT INTO deep_update_candidates_new
+        SELECT candidate_id, target_domain, target_key, direction, pattern_count,
+               contexts_json, evidence_ids_json, outcome_weight,
+               mood_independent_count, magnitude, source_adaptation,
+               first_seen_at, last_seen_at, status, resolved_at, blocked_reason
+          FROM deep_update_candidates
+        """,
+        "DROP TABLE deep_update_candidates",
+        "ALTER TABLE deep_update_candidates_new RENAME TO deep_update_candidates",
+        "CREATE INDEX idx_candidates_status ON deep_update_candidates (status, last_seen_at)",
+        """
+        CREATE UNIQUE INDEX idx_candidates_open
+            ON deep_update_candidates (target_domain, target_key, direction)
+         WHERE status = 'accumulating'
+        """,
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1332,6 +1387,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0013_OPERATIONS,
     _0014_LLM_TELEMETRY,
     _0015_RUN_CONFLICTS,
+    _0016_CANDIDATE_HISTORY,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

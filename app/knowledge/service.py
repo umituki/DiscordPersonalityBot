@@ -153,9 +153,21 @@ class KnowledgeService:
         simulation_block_id: str | None = None,
         origin: str = "simulated_past",
     ) -> list[ExposureResult]:
-        """Expose everything the world had at ``moment``, one funnel each."""
+        """Offer a slice of what the world had at ``moment``, one funnel each.
+
+        Not simply the most salient items: ``ORDER BY salience DESC LIMIT n``
+        offered the identical handful in every block of a decade, so anything
+        she was actually interested in — which is usually not the loudest thing
+        around — was never in front of her at all. What she seeks out and what
+        is hard to miss both count, and something she already knows steps aside
+        so the block's attention goes somewhere new.
+
+        This changes what is *offered*. Whether any of it is taken in is still
+        the funnel's decision, stage by stage (spec 21.5).
+        """
+        pool = self._knowledge.available_at(moment, limit=max(limit * 10, 50))
         results = []
-        for item in self._knowledge.available_at(moment, limit=limit):
+        for item in self._select(pool, interest_by_topic, limit, default_interest):
             results.append(
                 self.expose(
                     item,
@@ -167,6 +179,35 @@ class KnowledgeService:
                 )
             )
         return results
+
+    def _select(
+        self,
+        pool: list[KnowledgeItem],
+        interest_by_topic: dict[str, float],
+        limit: int,
+        default_interest: float,
+    ) -> list[KnowledgeItem]:
+        """Which of the available items are put in front of her this time."""
+        if limit <= 0 or not pool:
+            return []
+
+        def rank(item: KnowledgeItem) -> tuple[float, str]:
+            interest = interest_by_topic.get(item.topic, default_interest)
+            return (-(interest + item.salience), item.knowledge_id)
+
+        ordered = sorted(pool, key=rank)
+        known = {
+            acquisition.knowledge_id
+            for acquisition in self._acquisitions.all(status="retained", limit=1000)
+        }
+        fresh = [item for item in ordered if item.knowledge_id not in known]
+        chosen = fresh[:limit]
+        if len(chosen) < limit:
+            already = {item.knowledge_id for item in chosen}
+            chosen += [item for item in ordered if item.knowledge_id not in already][
+                : limit - len(chosen)
+            ]
+        return chosen
 
     # --- what she knows (spec 21.1) ----------------------------------------
     def knows(self, knowledge_id: str) -> bool:

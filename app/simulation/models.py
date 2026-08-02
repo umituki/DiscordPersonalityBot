@@ -41,6 +41,11 @@ AuditKind = Literal[
     "identity",
     "drift",
     "quality",
+    "pipeline_health",
+    "growth_health",
+    "memory_health",
+    "knowledge_health",
+    "block",
 ]
 
 AUDIT_KINDS: tuple[AuditKind, ...] = (
@@ -49,6 +54,13 @@ AUDIT_KINDS: tuple[AuditKind, ...] = (
     "identity",
     "drift",
     "quality",
+    # Patch spec 17: the causal chain left evidence behind at every stage.
+    "pipeline_health",
+    "growth_health",
+    "memory_health",
+    "knowledge_health",
+    # Patch spec 18.
+    "block",
 )
 
 

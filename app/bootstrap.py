@@ -123,6 +123,7 @@ from app.storage.repositories import (
     FailureRepository,
     GoalRepository,
     GroupRepository,
+    HealthRepository,
     JobRepository,
     KnowledgeRepository,
     HabitRepository,
@@ -327,6 +328,7 @@ class Application:
         acquisition_repo = AcquisitionRepository(db)
         coverage_job_repo = CoverageJobRepository(db)
         simulation_repo = SimulationRepository(db)
+        health_repo = HealthRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
@@ -680,6 +682,9 @@ class Application:
             growth=growth_engine,
             drift=drift_monitor,
             policy=simulation_policy.first_boot,
+            # Patch spec 17: the audits read committed rows, not what the run
+            # reported about itself.
+            health=health_repo,
             clock=resolved_clock,
         )
 

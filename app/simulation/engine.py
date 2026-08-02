@@ -59,6 +59,7 @@ from app.simulation.models import (
     SimulationRun,
     TemperamentSeed,
 )
+from app.simulation.plain import compose_plain_summary
 from app.simulation.policy import SimulationPolicy
 from app.storage.repositories.simulation import SimulationRepository
 
@@ -669,7 +670,11 @@ class PastSimulationEngine:
         """
         cost = experience.llm_cost
         if cost == "none" or not self._narration_available:
-            return ExperienceNarration(summary=self._plain_summary(experience, scaffold))
+            return ExperienceNarration(
+                summary=self._plain_summary(
+                    experience, scaffold, occurred_at=occurred_at, seed=seed
+                )
+            )
 
         template = self._prompts.get(NARRATION_PROMPT_ID)
         content = template.render(
@@ -701,7 +706,11 @@ class PastSimulationEngine:
                     "without the model (spec 28.3)",
                     self._narration_failures,
                 )
-            return ExperienceNarration(summary=self._plain_summary(experience, scaffold))
+            return ExperienceNarration(
+                summary=self._plain_summary(
+                    experience, scaffold, occurred_at=occurred_at, seed=seed
+                )
+            )
         self._narration_failures = 0
         return outcome.value
 
@@ -716,11 +725,27 @@ class PastSimulationEngine:
         return self._narration_failures < MAX_NARRATION_FAILURES
 
     @staticmethod
-    def _plain_summary(experience, scaffold: LifeScaffold) -> str:
-        """What an ordinary day looks like without asking a model (spec 22.4)."""
-        where = scaffold.environment or "そのころの暮らし"
-        tone = "よかったこと" if experience.valence >= 0 else "つらかったこと"
-        return f"{where}での{tone}（{experience.experience_class}）"
+    def _plain_summary(
+        experience,
+        scaffold: LifeScaffold,
+        *,
+        occurred_at: datetime,
+        seed: TemperamentSeed | None = None,
+    ) -> str:
+        """What an ordinary day looks like without asking a model (spec 22.4).
+
+        Patch spec 18.3: composed from activity, context, sociality, topic and
+        life stage rather than the two fixed sentences a whole simulated life
+        used to be written in.
+        """
+        return compose_plain_summary(
+            experience_class=experience.experience_class,
+            valence=experience.valence,
+            occurred_at=occurred_at,
+            life_stage=scaffold.life_stage,
+            environment=scaffold.environment,
+            interests=() if seed is None else seed.interests,
+        )
 
     # --- phases -------------------------------------------------------------
     def _create_phases(self, simulation_id: str, scaffold: LifeScaffold):

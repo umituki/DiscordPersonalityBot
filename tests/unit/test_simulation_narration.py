@@ -126,7 +126,10 @@ async def test_ordinary_days_never_reach_the_model(
 
     assert client.requests == []
     assert narration.summary
-    assert experience_class in narration.summary
+    # Patch spec 18.3: the plain summary is composed from activity, context,
+    # sociality, topic and life stage — it deliberately no longer reads as a
+    # template with the class name in it.
+    assert experience_class not in narration.summary
 
 
 @pytest.mark.parametrize("experience_class", ["meaningful", "major", "turning_point"])
@@ -197,7 +200,7 @@ async def test_an_unusable_answer_still_produces_a_life(
     narration = await narrate(engine, seed, scaffold, "major")
 
     assert narration.summary
-    assert "major" in narration.summary
+    assert "major" not in narration.summary
 
 
 async def test_a_dead_model_stops_being_asked(db, clock, simulation_policy) -> None:
@@ -224,3 +227,41 @@ async def test_a_good_answer_clears_the_failure_count(db, clock, simulation_poli
 
     assert recovered.summary == "近所の川沿いを歩いた"
     assert len(client.requests) == 3
+
+
+# --- ordinary days do not all read the same (patch spec 18.3) --------------
+async def test_ordinary_days_are_not_all_the_same_sentence(
+    db, clock, simulation_policy
+) -> None:
+    """The 2026-08-02 Genesis wrote sixty blocks in two sentences."""
+    from datetime import timedelta
+
+    engine, client = build_engine(db, clock, [], simulation_policy)
+    seed, scaffold = scaffold_for(db, clock, simulation_policy)
+
+    summaries = set()
+    for index in range(30):
+        narration = await engine._narrate(  # noqa: SLF001
+            Experience(experience_class="routine", valence=0.3 if index % 2 else -0.3),
+            scaffold=scaffold,
+            seed=seed,
+            occurred_at=PERIOD_START + timedelta(days=30 * index),
+            recent=(),
+        )
+        summaries.add(narration.summary)
+
+    assert client.requests == []
+    assert len(summaries) > 5, f"only {len(summaries)} distinct summaries in 30 days"
+
+
+async def test_the_same_day_is_described_the_same_way_twice(
+    db, clock, simulation_policy
+) -> None:
+    """Spec 29: a replay of the same simulation produces the same life."""
+    engine, _ = build_engine(db, clock, [], simulation_policy)
+    seed, scaffold = scaffold_for(db, clock, simulation_policy)
+
+    first = await narrate(engine, seed, scaffold, "routine", valence=0.4)
+    second = await narrate(engine, seed, scaffold, "routine", valence=0.4)
+
+    assert first.summary == second.summary

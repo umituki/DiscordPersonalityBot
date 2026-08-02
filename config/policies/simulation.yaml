@@ -54,6 +54,31 @@ first_boot:
   # audit uses; the others are pass/fail on their own terms.
   min_experiences: 20
   min_blocks: 12
+  # 短い smoke run 用の下限。実際の multi-year Genesis には下の
+  # *_multi_year が適用される (patch spec 17.2 / 17.3、禁止事項 5)。
   min_retained_knowledge: 0
-  # An identity with no memories at all is not a life.
   min_memories: 0
+
+  # patch spec 17: 因果連鎖が実際に流れた証拠。どれかが 0 なら鎖が切れている。
+  # 「238 experiences あったが心理は何も起きていない」がこの形だった。
+  multi_year_threshold_years: 2.0
+  min_appraised_simulated_events: 1
+  min_state_effect_changes: 1
+  min_encoding_attempts: 1
+  # 「終了時 1 回だけ」を落とすため 2 以上。
+  min_periodic_consolidations: 2
+  min_knowledge_sources_or_candidates: 1
+  min_knowledge_exposures: 1
+
+  # patch spec 17.1: personality が動いたことではなく、成長機構が動いたこと。
+  min_growth_evidence: 1
+  require_deep_gate_evaluated: true
+
+  # patch spec 17.2 / 17.3: multi-year run の下限。
+  min_memories_multi_year: 1
+  min_retained_knowledge_multi_year: 1
+  min_encoding_attempts_multi_year: 2
+
+  # patch spec 18: block audit。
+  allow_zero_event_count_blocks: false
+  min_distinct_block_summaries: 2
