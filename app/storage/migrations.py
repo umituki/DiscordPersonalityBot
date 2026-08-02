@@ -1274,6 +1274,32 @@ _0013_OPERATIONS = Migration(
 )
 
 
+_0014_LLM_TELEMETRY = Migration(
+    version=14,
+    name="llm_call_telemetry",
+    statements=(
+        # Patch spec 19.1. Without these, "the reply took 4 minutes" cannot be
+        # attributed to queueing, model loading, prompt evaluation, generation
+        # or reasoning — which is exactly the position the 2026-08-02 run was
+        # in. Queue wait and inference are deliberately separate columns.
+        "ALTER TABLE llm_calls ADD COLUMN logical_call_id TEXT",
+        "ALTER TABLE llm_calls ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE llm_calls ADD COLUMN queue_wait_ms INTEGER",
+        "ALTER TABLE llm_calls ADD COLUMN transport_latency_ms INTEGER",
+        "ALTER TABLE llm_calls ADD COLUMN model_total_duration_ms INTEGER",
+        "ALTER TABLE llm_calls ADD COLUMN load_duration_ms INTEGER",
+        "ALTER TABLE llm_calls ADD COLUMN prompt_eval_duration_ms INTEGER",
+        "ALTER TABLE llm_calls ADD COLUMN eval_duration_ms INTEGER",
+        # Patch spec 3.3: metadata about reasoning only. The reasoning text
+        # itself is never stored in a production trace.
+        "ALTER TABLE llm_calls ADD COLUMN thinking_enabled INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE llm_calls ADD COLUMN thinking_present INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE llm_calls ADD COLUMN thinking_char_count INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX idx_llm_calls_logical ON llm_calls (logical_call_id)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1288,6 +1314,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0011_KNOWLEDGE,
     _0012_SIMULATION,
     _0013_OPERATIONS,
+    _0014_LLM_TELEMETRY,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

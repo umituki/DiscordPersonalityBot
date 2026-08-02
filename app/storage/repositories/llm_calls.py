@@ -32,18 +32,22 @@ class LLMCallRepository:
         request_fingerprint: str,
         request_transcript: str | None,
         now: datetime,
+        logical_call_id: str | None = None,
+        attempt: int = 1,
+        thinking_enabled: bool = False,
     ) -> None:
         self._db.execute(
             """
             INSERT INTO llm_calls
                 (call_id, run_id, event_id, manifest_id, purpose, priority, model, prompt_id,
                  prompt_version, structured, request_fingerprint, request_transcript,
-                 status, started_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                 logical_call_id, attempt, thinking_enabled, status, started_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             (
                 call_id, run_id, event_id, manifest_id, purpose, priority, model, prompt_id,
                 prompt_version, 1 if structured else 0, request_fingerprint, request_transcript,
+                logical_call_id, attempt, 1 if thinking_enabled else 0,
                 to_iso(now),
             ),
         )
@@ -60,17 +64,37 @@ class LLMCallRepository:
         response_text: str | None,
         error_type: str | None,
         error_detail: str | None,
+        queue_wait_ms: int | None = None,
+        transport_latency_ms: int | None = None,
+        model_total_duration_ms: int | None = None,
+        load_duration_ms: int | None = None,
+        prompt_eval_duration_ms: int | None = None,
+        eval_duration_ms: int | None = None,
+        thinking_present: bool = False,
+        thinking_char_count: int = 0,
     ) -> None:
+        """Close a call trace.
+
+        Patch spec 19.1 keeps queue time and inference time apart: a slow reply
+        must be attributable to waiting for a slot or to the model itself,
+        never to a guess.
+        """
         self._db.execute(
             """
             UPDATE llm_calls
                SET status = ?, finished_at = ?, latency_ms = ?, prompt_tokens = ?,
-                   completion_tokens = ?, response_text = ?, error_type = ?, error_detail = ?
+                   completion_tokens = ?, response_text = ?, error_type = ?, error_detail = ?,
+                   queue_wait_ms = ?, transport_latency_ms = ?, model_total_duration_ms = ?,
+                   load_duration_ms = ?, prompt_eval_duration_ms = ?, eval_duration_ms = ?,
+                   thinking_present = ?, thinking_char_count = ?
              WHERE call_id = ?
             """,
             (
                 status, to_iso(now), latency_ms, prompt_tokens, completion_tokens,
-                response_text, error_type, error_detail, call_id,
+                response_text, error_type, error_detail,
+                queue_wait_ms, transport_latency_ms, model_total_duration_ms,
+                load_duration_ms, prompt_eval_duration_ms, eval_duration_ms,
+                1 if thinking_present else 0, thinking_char_count, call_id,
             ),
         )
 

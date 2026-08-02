@@ -78,7 +78,9 @@ from app.society.policy import SocietyPolicy
 from app.society.relationships import NPCRelationshipEngine
 from app.society.service import SocietyService
 from app.llm.client import TracedLLMClient
+from app.llm.client import PassThroughLimiter
 from app.llm.ollama import OllamaClient
+from app.llm.policy import LLMPolicy
 from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator
 from app.llm.tracing import DatabaseTracer
@@ -195,6 +197,7 @@ class Application:
     values: ValueEngine
     drift: DriftMonitor
     consolidation: ConsolidationJob
+    llm_policy: LLMPolicy
     knowledge_policy: KnowledgePolicy
     knowledge_builder: KnowledgeBuilder
     knowledge: KnowledgeService
@@ -334,6 +337,7 @@ class Application:
         growth_policy = GrowthPolicy.load(resolved_config.growth_policy_path)
         society_policy = SocietyPolicy.load(resolved_config.society_policy_path)
         knowledge_policy = KnowledgePolicy.load(resolved_config.knowledge_policy_path)
+        llm_policy = LLMPolicy.load(resolved_config.llm_policy_path)
         simulation_policy = SimulationPolicy.load(resolved_config.simulation_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
@@ -357,6 +361,7 @@ class Application:
         components["growth_policy_version"] = str(growth_policy.policy_version)
         components["society_policy_version"] = str(society_policy.policy_version)
         components["knowledge_policy_version"] = str(knowledge_policy.policy_version)
+        components["llm_policy_version"] = str(llm_policy.policy_version)
         components["simulation_policy_version"] = str(simulation_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
@@ -376,6 +381,9 @@ class Application:
         committer = StateCommitter(
             db, state_repo, runs, deliveries, failures, clock=resolved_clock
         )
+        # Patch spec 4: the ResourceManager is the single scheduler for model
+        # slots, so it is built before the client that will defer to it.
+        resources = ResourceManager(concurrency=resolved_config.llm.concurrency)
         ollama = OllamaClient(
             base_url=resolved_config.llm.base_url,
             model=resolved_config.llm.model,
@@ -385,6 +393,7 @@ class Application:
             num_ctx=resolved_config.llm.num_ctx,
             temperature=resolved_config.llm.temperature,
             keep_alive=resolved_config.llm.keep_alive,
+            limiter=PassThroughLimiter(),
             clock=resolved_clock,
         )
         tracer = DatabaseTracer(
@@ -404,6 +413,8 @@ class Application:
             tracer=tracer,
             clock=resolved_clock,
             max_attempts=resolved_config.llm.max_attempts,
+            policy=llm_policy,
+            resources=resources,
         )
 
         guard = OutputGuard(guard_policy)
@@ -635,7 +646,6 @@ class Application:
         )
 
         # --- operations (spec 30, 32, 33) -------------------------------------
-        resources = ResourceManager(concurrency=resolved_config.llm.concurrency)
         backup_service = BackupService(
             db, backups_dir=resolved_config.backups_dir, clock=resolved_clock
         )
@@ -735,6 +745,7 @@ class Application:
             values=value_engine,
             drift=drift_monitor,
             consolidation=consolidation_job,
+            llm_policy=llm_policy,
             knowledge_policy=knowledge_policy,
             knowledge_builder=knowledge_builder,
             knowledge=knowledge_service,

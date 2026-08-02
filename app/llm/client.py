@@ -37,6 +37,24 @@ class LLMClient(Protocol):
         """Release transport resources."""
 
 
+class PassThroughLimiter:
+    """Admits everything, because something upstream already admitted it.
+
+    Used when the ResourceManager owns the model slot (patch spec 4.2). Two
+    independent limiters cannot express one priority order between them, so
+    exactly one of them must be doing the limiting.
+    """
+
+    concurrency = 1
+    peak_waiters = 0
+
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+
 class ConcurrencyLimiter:
     """Serialises model calls (spec 3.2)."""
 

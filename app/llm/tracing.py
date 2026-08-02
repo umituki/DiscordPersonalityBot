@@ -87,6 +87,9 @@ class DatabaseTracer:
                 request.transcript(max_chars=self._max_chars) if self._trace_payloads else None
             ),
             now=self._clock.now(),
+            logical_call_id=request.logical_call_id,
+            attempt=request.attempt,
+            thinking_enabled=request.thinking == "enabled",
         )
         return call_id
 
@@ -104,6 +107,15 @@ class DatabaseTracer:
             ),
             error_type=None,
             error_detail=None,
+            queue_wait_ms=response.queue_wait_ms,
+            transport_latency_ms=response.latency_ms,
+            model_total_duration_ms=response.total_duration_ms,
+            load_duration_ms=response.load_duration_ms,
+            prompt_eval_duration_ms=response.prompt_eval_duration_ms,
+            eval_duration_ms=response.eval_duration_ms,
+            # Patch spec 3.3: how much reasoning happened, never what it said.
+            thinking_present=response.thinking_present,
+            thinking_char_count=response.thinking_char_count,
         )
 
     async def finish_failure(self, call_id: str, *, error: BaseException) -> None:

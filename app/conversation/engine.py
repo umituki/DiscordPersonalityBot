@@ -17,6 +17,7 @@ from app.clock import Clock, SystemClock, to_iso
 from app.context.builder import BuiltContext, ContextBuilder, Requirement
 from app.conversation.guard import OutputGuard
 from app.conversation.models import ConversationTurn, DialogueAct, ReplyDraft
+from app.conversation.text import looks_like_question
 from app.memory.models import RetrievalCandidate
 from app.conversation.policy import ConversationPolicy
 from app.llm.prompts import PromptRegistry
@@ -137,7 +138,6 @@ class ConversationEngine:
             event_id=event_id,
             temperature=self._policy.generation.temperature,
             max_tokens=self._policy.generation.max_tokens,
-            timeout_s=self._policy.generation.timeout_s,
             priority="P0",  # a waiting USER outranks background work (spec 33)
             prompt_id=PROMPT_ID,
             prompt_version=template.prompt_version,
@@ -176,16 +176,16 @@ class ConversationEngine:
             event_id=event_id,
             temperature=0.4,
             max_tokens=200,
-            timeout_s=self._policy.generation.timeout_s,
             priority="P0",
             prompt_id=ACT_PROMPT_ID,
             prompt_version=template.prompt_version,
         )
         if outcome.accepted and outcome.value is not None and not outcome.value.is_empty:
             return outcome.value, "llm"
-        # Without a decision, answer in the smallest defensible way rather than
-        # inventing an intention (spec 28.3).
-        return DialogueAct.minimal(), "default"
+        # Without a decision, respond in the smallest defensible way rather
+        # than inventing an intention (spec 28.3, patch spec 3.5). A direct
+        # question is answered, because ignoring one is its own failure.
+        return DialogueAct.minimal(direct_question=looks_like_question(user_text)), "default"
 
     @staticmethod
     def _state_summary(snapshot: StateSnapshot | None) -> str:

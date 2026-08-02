@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import logging
 import re
 from dataclasses import dataclass
@@ -23,7 +24,10 @@ from typing import Any, Generic, Sequence, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from app.clock import Clock, SystemClock
+from app import ids
 from app.llm.errors import LLMError
+from app.llm.policy import CallPlan, LLMPolicy, plan_for
+from app.reliability.resources import ResourceManager
 from app.llm.prompts import PromptRegistry
 from app.llm.tracing import LLMCallTracer, NullTracer
 from app.llm.types import LLMMessage, LLMRequest, LLMResponse
@@ -85,6 +89,8 @@ class StructuredGenerator:
         max_attempts: int = 3,
         retry_stages: frozenset[Stage] = DEFAULT_RETRY_STAGES,
         transport_backoff_s: float = 0.5,
+        policy: LLMPolicy | None = None,
+        resources: ResourceManager | None = None,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
@@ -93,9 +99,25 @@ class StructuredGenerator:
         self._failures = failures
         self._tracer = tracer or NullTracer()
         self._clock = clock or SystemClock()
+        #: Fallback when no per-purpose policy is configured. The policy is
+        #: what production uses; this keeps existing unit tests working.
         self._max_attempts = max_attempts
         self._retry_stages = retry_stages
         self._backoff = transport_backoff_s
+        self._policy = policy
+        self._resources = resources
+
+    def plan_for(self, purpose: str) -> CallPlan:
+        """What this purpose is allowed to spend (patch spec 3.4)."""
+        if self._policy is None:
+            return CallPlan(
+                purpose=purpose,
+                thinking="disabled",
+                max_attempts=self._max_attempts,
+                timeout_s=0.0,
+                retry_backoff_s=self._backoff,
+            )
+        return plan_for(self._policy, purpose)
 
     async def generate(
         self,
@@ -118,6 +140,10 @@ class StructuredGenerator:
         validation_context = context or ValidationContext(
             purpose=purpose, run_id=run_id, event_id=event_id
         )
+        # Patch spec 3.4: attempts, timeout and thinking come from policy, per
+        # purpose, so a background reflection cannot spend a USER's patience.
+        plan = self.plan_for(purpose)
+        logical_call_id = ids.new_id(ids.LLM_CALL)
         request = LLMRequest(
             messages=tuple(messages),
             purpose=purpose,
@@ -126,8 +152,10 @@ class StructuredGenerator:
             temperature=temperature,
             max_tokens=max_tokens,
             num_ctx=num_ctx,
-            timeout_s=timeout_s,
+            timeout_s=timeout_s if timeout_s is not None else (plan.timeout_s or None),
             priority=priority,  # type: ignore[arg-type]
+            thinking=plan.thinking,
+            logical_call_id=logical_call_id,
             prompt_id=prompt_id,
             prompt_version=prompt_version,
         )
@@ -136,12 +164,13 @@ class StructuredGenerator:
         last_failure: ValidationFailure | None = None
         last_response: LLMResponse | None = None
 
-        for attempt in range(1, self._max_attempts + 1):
+        for attempt in range(1, plan.max_attempts + 1):
+            request = request.model_copy(update={"attempt": attempt})
             call_id = await self._tracer.start(request, run_id=run_id, event_id=event_id)
             call_ids.append(call_id)
 
             try:
-                response = await self._client.generate(request)
+                response = await self._generate_once(request)
             except LLMError as exc:
                 await self._tracer.finish_failure(call_id, error=exc)
                 last_failure = ValidationFailure(
@@ -151,9 +180,9 @@ class StructuredGenerator:
                     validator="transport",
                 )
                 self._record_failure(purpose, last_failure, run_id, event_id, call_id, attempt)
-                if not exc.retryable or attempt >= self._max_attempts:
+                if not exc.retryable or attempt >= plan.max_attempts:
                     break
-                await asyncio.sleep(self._backoff * attempt)
+                await asyncio.sleep(plan.retry_backoff_s * attempt)
                 continue
 
             await self._tracer.finish_success(call_id, response=response)
@@ -178,7 +207,7 @@ class StructuredGenerator:
             last_failure = failure
             self._record_failure(purpose, failure, run_id, event_id, call_id, attempt)
 
-            if failure.stage not in self._retry_stages or attempt >= self._max_attempts:
+            if failure.stage not in self._retry_stages or attempt >= plan.max_attempts:
                 break
             request = self._repair_request(request, response, failure)
 
@@ -189,6 +218,24 @@ class StructuredGenerator:
             call_ids=tuple(call_ids),
             response=last_response,
         )
+
+    async def _generate_once(self, request: LLMRequest) -> LLMResponse:
+        """Take a model slot, then call. One scheduler, not two (patch spec 4).
+
+        Queue time is measured separately from inference so a slow reply can be
+        attributed to waiting or to the model, never to a guess (19.1).
+        """
+        if self._resources is None:
+            return await self._client.generate(request)
+
+        waited_from = time.perf_counter()
+        work = await self._resources.acquire(request.priority, name=request.purpose)
+        queue_wait_ms = int((time.perf_counter() - waited_from) * 1000)
+        try:
+            response = await self._client.generate(request)
+        finally:
+            self._resources.release(work)
+        return response.model_copy(update={"queue_wait_ms": queue_wait_ms})
 
     # --- parsing -----------------------------------------------------------
     @staticmethod

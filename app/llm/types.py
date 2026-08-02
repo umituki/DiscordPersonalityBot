@@ -17,9 +17,16 @@ from app.clock import ensure_aware
 
 Role = Literal["system", "user", "assistant"]
 
-#: Spec 33 queue priorities. Recorded now, scheduled by the Resource Manager
-#: when it exists.
+#: Spec 33 queue priorities, scheduled by the Resource Manager.
 CallPriority = Literal["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7"]
+
+#: Patch spec 3.1. Whether the model may spend tokens reasoning before it
+#: answers. Thinking models otherwise leak reasoning into ordinary structured
+#: tasks, which is what turned a 5-second appraisal into a 113-second one.
+#:
+#: ``provider_default`` is forbidden in normal conversation (patch spec 3.2):
+#: leaving it to the provider is how the problem went unnoticed.
+ThinkingPolicy = Literal["disabled", "enabled", "provider_default"]
 
 
 class LLMMessage(BaseModel):
@@ -46,6 +53,14 @@ class LLMRequest(BaseModel):
     stop: tuple[str, ...] = ()
     timeout_s: float | None = Field(default=None, gt=0)
     priority: CallPriority = "P3"
+    #: Patch spec 3.1-3.2. Defaults to ``disabled``: a caller that wants
+    #: reasoning has to ask for it, so no purpose acquires it by accident.
+    thinking: ThinkingPolicy = "disabled"
+    #: Which attempt this is, for telemetry (patch spec 19.1).
+    attempt: int = Field(default=1, ge=1)
+    #: Stable across the retries of one logical call, so queue time and
+    #: attempts can be summed per decision rather than per HTTP request.
+    logical_call_id: str | None = None
     #: Prompt provenance for spec 29 reproducibility.
     prompt_id: str | None = None
     prompt_version: str | None = None
@@ -105,6 +120,19 @@ class LLMResponse(BaseModel):
     completion_tokens: int | None = None
     done_reason: str | None = None
     truncated: bool = False
+    #: Patch spec 3.3: reasoning is measured, never stored. Only these three
+    #: facts about it may reach a production trace.
+    thinking_enabled: bool = False
+    thinking_present: bool = False
+    thinking_char_count: int = 0
+    #: Server-side timings, in nanoseconds as Ollama reports them, converted
+    #: to milliseconds here (patch spec 19.1).
+    total_duration_ms: int | None = None
+    load_duration_ms: int | None = None
+    prompt_eval_duration_ms: int | None = None
+    eval_duration_ms: int | None = None
+    #: How long this call waited for a model slot before it started.
+    queue_wait_ms: int | None = None
 
     @field_validator("created_at")
     @classmethod

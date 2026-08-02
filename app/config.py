@@ -111,6 +111,7 @@ class PoliciesSection(_Section):
     society: str = "society.yaml"
     knowledge: str = "knowledge.yaml"
     simulation: str = "simulation.yaml"
+    llm: str = "llm.yaml"
 
 
 class Secrets(_Section):
@@ -226,6 +227,10 @@ class AppConfig(_Section):
     @property
     def simulation_policy_path(self) -> Path:
         return self.policies_dir / self.policies.simulation
+
+    @property
+    def llm_policy_path(self) -> Path:
+        return self.policies_dir / self.policies.llm
 
     def _resolve(self, value: Path) -> Path:
         return value if value.is_absolute() else (self.root_dir / value)

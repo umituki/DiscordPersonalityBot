@@ -84,6 +84,10 @@ class DialogueAct(BaseModel):
 
     acknowledge: bool = False
     validate_feeling: bool = Field(default=False, alias="validate")
+    #: Patch spec 8: answering a direct question is its own act. Without it,
+    #: the only way to respond to a question was ``ask_followup``, which is how
+    #: a question came back for every question.
+    answer: bool = False
     self_disclose: bool = False
     ask_followup: bool = False
     humor: bool = False
@@ -98,6 +102,7 @@ class DialogueAct(BaseModel):
         names = (
             ("acknowledge", self.acknowledge),
             ("validate", self.validate_feeling),
+            ("answer", self.answer),
             ("self_disclose", self.self_disclose),
             ("ask_followup", self.ask_followup),
             ("humor", self.humor),
@@ -115,6 +120,7 @@ class DialogueAct(BaseModel):
         descriptions = {
             "acknowledge": "相手の言ったことを受け止める",
             "validate": "相手の感じ方を否定しない",
+            "answer": "聞かれたことに答える",
             "self_disclose": "自分のことを少し話す",
             "ask_followup": "質問を返す",
             "humor": "少しだけ軽くする",
@@ -126,8 +132,16 @@ class DialogueAct(BaseModel):
         return "\n".join(lines)
 
     @classmethod
-    def minimal(cls) -> DialogueAct:
-        """The safe fallback when the acts could not be decided."""
+    def minimal(cls, *, direct_question: bool = False) -> DialogueAct:
+        """The safe fallback when the acts could not be decided.
+
+        Patch spec 3.5: acknowledge, and do not invent an intention — no
+        follow-up question, no challenge, no topic shift. A direct question is
+        the one exception: ignoring it would be its own kind of failure, so the
+        fallback answers instead of merely acknowledging.
+        """
+        if direct_question:
+            return cls(acknowledge=True, answer=True, goal="understand_user")
         return cls(acknowledge=True, goal="maintain_connection")
 
 

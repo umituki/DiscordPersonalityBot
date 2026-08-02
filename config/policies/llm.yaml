@@ -1,0 +1,70 @@
+# LLM call policy: thinking, retry and timeout, per purpose.
+#
+# Patch spec 3.4: これらはすべて tuning policy でありコード定数にしない。
+#
+# The numbers exist because of a measured failure: on the target machine an
+# appraisal took 104.8s on average and timed out at 120s, because a thinking
+# model was reasoning its way through a structured scoring task. The fix is
+# `think: false` plus a timeout short enough that a failure degrades instead of
+# becoming the USER's wait (patch spec 3.5).
+policy_version: 1
+
+defaults:
+  # Patch spec 3.1: a caller must ask for reasoning; nothing gets it silently.
+  thinking: disabled
+  max_attempts: 2
+  timeout_s: 30.0
+  # Backoff between attempts. Kept small: a retry the USER is waiting on is
+  # only worth it if it is quick.
+  retry_backoff_s: 0.5
+
+# Purposes that run while the USER is waiting. Patch spec 3.2 requires
+# think=false for all of these.
+purposes:
+  appraisal:
+    thinking: disabled
+    # Patch spec 3.5: one failure moves to a conservative degraded appraisal
+    # rather than making the USER wait through a second 113-second attempt.
+    max_attempts: 1
+    timeout_s: 15.0
+
+  dialogue_act:
+    thinking: disabled
+    max_attempts: 1
+    timeout_s: 15.0
+
+  conversation_reply:
+    thinking: disabled
+    max_attempts: 2
+    timeout_s: 30.0
+
+  conversation_repair:
+    thinking: disabled
+    max_attempts: 1
+    timeout_s: 20.0
+
+  # Runs inside a conversation turn, so it is on the same footing (3.2).
+  episode_summary:
+    thinking: disabled
+    max_attempts: 1
+    timeout_s: 20.0
+
+  simulated_experience:
+    thinking: disabled
+    max_attempts: 1
+    timeout_s: 30.0
+
+  # Background reflection is where thinking is explicitly allowed (3.2).
+  reflection:
+    thinking: enabled
+    max_attempts: 1
+    timeout_s: 120.0
+
+# Purposes that may never use `provider_default` (patch spec 3.2). Leaving the
+# decision to the server is precisely how reasoning got into the reply path.
+conversation_purposes:
+  - appraisal
+  - dialogue_act
+  - conversation_reply
+  - conversation_repair
+  - episode_summary

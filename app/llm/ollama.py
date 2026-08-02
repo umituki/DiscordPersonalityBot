@@ -39,6 +39,7 @@ class OllamaClient:
         request_timeout_s: float = 120.0,
         connect_timeout_s: float = 10.0,
         concurrency: int = 1,
+        limiter: ConcurrencyLimiter | None = None,
         num_ctx: int = 8192,
         temperature: float = 0.7,
         keep_alive: str = "10m",
@@ -52,7 +53,11 @@ class OllamaClient:
         self._temperature = temperature
         self._keep_alive = keep_alive
         self._clock = clock or SystemClock()
-        self._limiter = ConcurrencyLimiter(concurrency)
+        # Patch spec 4.2: one scheduler, not two. When the ResourceManager is
+        # admitting calls it owns the single model slot, and this client is
+        # given a pass-through limiter so a P0 reply cannot be queued behind a
+        # background job that already holds a semaphore the manager cannot see.
+        self._limiter = limiter or ConcurrencyLimiter(concurrency)
         self._connect_timeout_s = connect_timeout_s
         self._transport = transport
         self._http: httpx.AsyncClient | None = None
@@ -119,6 +124,13 @@ class OllamaClient:
         if not isinstance(message, dict) or not isinstance(message.get("content"), str):
             raise LLMProtocolError("ollama response is missing message.content")
 
+        # Patch spec 3.3: reasoning and answer are different fields and must
+        # not be concatenated. A thinking model that puts its reasoning in
+        # `thinking` leaves `content` as the answer; keeping them apart is what
+        # stops "<think>…" arriving at a JSON parser.
+        thinking = message.get("thinking")
+        thinking_text = thinking if isinstance(thinking, str) else ""
+
         done_reason = body.get("done_reason")
         return LLMResponse(
             text=message["content"],
@@ -129,6 +141,14 @@ class OllamaClient:
             completion_tokens=_optional_int(body.get("eval_count")),
             done_reason=done_reason if isinstance(done_reason, str) else None,
             truncated=done_reason == "length",
+            thinking_enabled=payload.get("think") is True,
+            thinking_present=bool(thinking_text),
+            # The count, never the text (patch spec 3.3).
+            thinking_char_count=len(thinking_text),
+            total_duration_ms=_ns_to_ms(body.get("total_duration")),
+            load_duration_ms=_ns_to_ms(body.get("load_duration")),
+            prompt_eval_duration_ms=_ns_to_ms(body.get("prompt_eval_duration")),
+            eval_duration_ms=_ns_to_ms(body.get("eval_duration")),
         )
 
     def _build_payload(self, request: LLMRequest) -> dict[str, Any]:
@@ -152,6 +172,14 @@ class OllamaClient:
         }
         if request.format_schema is not None:
             payload["format"] = request.format_schema
+
+        # Patch spec 3.1. `provider_default` deliberately sends nothing: it is
+        # the only way to ask for whatever the server does on its own, and it
+        # is forbidden for conversation purposes by the policy loader.
+        if request.thinking == "disabled":
+            payload["think"] = False
+        elif request.thinking == "enabled":
+            payload["think"] = True
         return payload
 
     # --- health ------------------------------------------------------------
@@ -182,6 +210,13 @@ class OllamaClient:
         if self._http is not None:
             await self._http.aclose()
             self._http = None
+
+
+def _ns_to_ms(value: Any) -> int | None:
+    """Ollama reports server-side timings in nanoseconds (patch spec 19.1)."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return int(value / 1_000_000)
 
 
 def _optional_int(value: Any) -> int | None:
