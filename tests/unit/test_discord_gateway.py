@@ -7,7 +7,9 @@ gateway connection and no ``discord`` import.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import sys
 from typing import Any
+from types import SimpleNamespace
 
 import pytest
 
@@ -90,6 +92,45 @@ def test_to_inbound_marks_guild_channels(clock) -> None:
 def test_gateway_requires_a_token(service_factory) -> None:
     with pytest.raises(DiscordGatewayError):
         DiscordGateway(service_factory([]), token="")
+
+
+async def test_gateway_publishes_online_presence(monkeypatch) -> None:
+    online = object()
+
+    class FakeIntents:
+        message_content = False
+        dm_messages = False
+
+        @classmethod
+        def default(cls):
+            return cls()
+
+    class FakeClient:
+        def __init__(self, *, intents) -> None:
+            self.intents = intents
+            self.user = "YUI"
+            self.handlers = {}
+            self.presences = []
+
+        def event(self, handler):
+            self.handlers[handler.__name__] = handler
+            return handler
+
+        async def change_presence(self, *, status) -> None:
+            self.presences.append(status)
+
+    fake_discord = SimpleNamespace(
+        Intents=FakeIntents,
+        Client=FakeClient,
+        Status=SimpleNamespace(online=online),
+    )
+    monkeypatch.setitem(sys.modules, "discord", fake_discord)
+    gateway = DiscordGateway(object(), token="fake-token")
+
+    client = gateway.build_client()
+    await client.handlers["on_ready"]()
+
+    assert client.presences == [online]
 
 
 async def test_gateway_sends_the_reply_and_records_it(

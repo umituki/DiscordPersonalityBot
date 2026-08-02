@@ -29,6 +29,14 @@ _NON_WORD = re.compile(r"[^\w\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]+")
 
 MAX_MATCH_TERMS = 12
 
+_AGE_QUESTION = re.compile(r"(?:何\s*歳|年齢)")
+_MEMORY_ORIGIN_QUESTION = re.compile(
+    r"(?:生まれ|誕生|最初.{0,8}記憶|いつ.{0,8}記憶|記憶.{0,8}いつ)"
+)
+_AGE_MEMORY = re.compile(r"[0-9０-９]{1,3}\s*歳")
+_ORIGIN_MEMORY = re.compile(r"(?:生まれ|誕生|出生|幼少|成長|人生|生涯)")
+_DATED_MEMORY = re.compile(r"[0-9０-９]{4}\s*年")
+
 
 def build_match_query(text: str, *, min_chars: int = 3, max_terms: int = MAX_MATCH_TERMS) -> str | None:
     """Turn free text into an FTS5 trigram query.
@@ -113,7 +121,13 @@ class MemoryRetriever:
         for rank, memory in enumerate(matched):
             candidates.append(self._score(memory, moment, relevance=1.0 / (1.0 + rank)))
         for memory in fallback:
-            candidates.append(self._score(memory, moment, relevance=0.0))
+            candidates.append(
+                self._score(
+                    memory,
+                    moment,
+                    relevance=self._conceptual_relevance(query_text, memory),
+                )
+            )
 
         candidates.sort(key=lambda candidate: candidate.score, reverse=True)
         selected = [
@@ -122,6 +136,35 @@ class MemoryRetriever:
             if candidate.score >= self._policy.min_score
         ][:wanted]
         return tuple(selected)
+
+    @staticmethod
+    def _conceptual_relevance(query_text: str, memory: EpisodicMemory) -> float:
+        """Bridge short Japanese questions to autobiographical wording.
+
+        FTS5 trigram search is deliberately literal.  A question such as
+        ``何歳だっけ？`` has no three-character fragment in common with a
+        memory written as ``2007年7月に誕生し、現在は19歳``.  Treating those
+        as unrelated made Genesis memories effectively invisible even though
+        they existed.  This narrow fallback only boosts an autobiographical
+        memory when the question itself asks for autobiographical facts; it
+        does not make the objective event archive recallable.
+        """
+        if not query_text:
+            return 0.0
+        material = f"{memory.summary} {' '.join(memory.topics)}"
+        if _AGE_QUESTION.search(query_text):
+            if _AGE_MEMORY.search(material):
+                return 1.0
+            if _ORIGIN_MEMORY.search(material):
+                return 0.8
+            return 0.55 if _DATED_MEMORY.search(material) else 0.0
+        if _MEMORY_ORIGIN_QUESTION.search(query_text):
+            if _ORIGIN_MEMORY.search(material):
+                return 1.0
+            if _AGE_MEMORY.search(material):
+                return 0.8
+            return 0.55 if _DATED_MEMORY.search(material) else 0.0
+        return 0.0
 
     def _score(
         self, memory: EpisodicMemory, now: datetime, *, relevance: float

@@ -912,8 +912,17 @@ class Application:
         entry = self.state.get("world", "sleep_pressure")
         if entry is None:
             return None
+        # Genesis writes different world keys throughout the simulated life.
+        # ``sleep_pressure`` may legitimately have been touched near birth,
+        # while circadian state was updated at the end of the simulation.  The
+        # newest world value is therefore the reliable offline boundary.  Using
+        # the pressure timestamp alone caused every real boot to replay about
+        # nineteen years of catch-up transitions.
+        world_values = self.state.list_domain("world")
+        since = max((value.updated_at for value in world_values), default=entry.updated_at)
         return self.world.catch_up(
-            since=entry.updated_at, sleep_pressure=entry.numeric or 0.25
+            since=since,
+            sleep_pressure=entry.numeric if entry.numeric is not None else 0.25,
         )
 
     async def stop(self, reason: str = "shutdown") -> None:
