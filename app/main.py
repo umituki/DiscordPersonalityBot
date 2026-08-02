@@ -17,7 +17,8 @@ import sys
 from pathlib import Path
 
 from app.bootstrap import Application, StartupError
-from app.config import ConfigError, load_config
+from app.config import AppConfig, ConfigError, load_config
+from app.interfaces.discord.gateway import DiscordGateway
 from app.observability.logging import configure_logging
 from app.storage.database import Database
 from app.storage.migrations import LATEST_VERSION, migrate, schema_version
@@ -35,8 +36,23 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_gateway(application: Application, config: AppConfig) -> DiscordGateway | None:
+    """Attach Discord only when both the USER and a token are configured."""
+    if application.conversation is None:
+        return None
+    if config.secrets.discord_bot_token is None:
+        logger.warning("DISCORD_BOT_TOKEN is not set; running without the Discord gateway")
+        return None
+    return DiscordGateway(
+        application.conversation,
+        token=config.secrets.require_discord_token(),
+        clock=application.clock,
+    )
+
+
 async def _run(config_file: Path | None) -> int:
-    application = Application.build(load_config(config_file))
+    config = load_config(config_file)
+    application = Application.build(config)
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
@@ -50,10 +66,28 @@ async def _run(config_file: Path | None) -> int:
             signal.signal(signal_number, lambda *_: stop_event.set())
 
     await application.start()
-    logger.info("yui is ready; no conversational interface is attached yet (spec 35 Phase 3)")
+
+    gateway = _build_gateway(application, config)
+    gateway_task: asyncio.Task[None] | None = None
+    if gateway is not None:
+        gateway_task = asyncio.create_task(gateway.start(), name="discord-gateway")
+        gateway_task.add_done_callback(lambda _task: stop_event.set())
+        logger.info("discord gateway starting")
+    else:
+        logger.info("yui is ready; no interface attached")
+
     try:
         await stop_event.wait()
     finally:
+        if gateway is not None:
+            await gateway.close()
+        if gateway_task is not None:
+            gateway_task.cancel()
+            try:
+                await gateway_task
+            except (asyncio.CancelledError, Exception) as exc:  # noqa: BLE001
+                if not isinstance(exc, asyncio.CancelledError):
+                    logger.error("discord gateway ended with an error: %r", exc)
         await application.stop("signal")
     return 0
 

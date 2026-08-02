@@ -1,0 +1,59 @@
+# Output Guard policy (spec 1.3 MUST, 28.2 identity stage, `.claude/rules/llm.md`).
+#
+# These patterns are tuning values, not laws of nature: they are versioned here
+# rather than hard-coded, and are expected to change with measurement (spec 40).
+policy_version: 1
+
+limits:
+  max_reply_chars: 900
+  min_reply_chars: 1
+
+# 現実空間での身体行動の主張。仮想的な枠づけがある場合は許可する (spec 1.3)。
+physical_claim:
+  reason_code: impossible_physical_claim
+  patterns:
+    # 「〜に行ってきた」全般。相手の行動を指す言い方 (〜んだね 等) は除外する。
+    - "(に|へ)(行って|いって|出かけて)(きた|来た|きました)(?!(んだね|んですね|の))"
+    - "(散歩|買い物|外出|通学|通勤|旅行|出かけ)(に|へ)?(行った|しました|してきた|してた)"
+    # 飲食の完了主張。「食べたい」「食べたら」等の非主張形は除外する。
+    - "(食べ|飲ん)(た|だ)(?![いらりそた])"
+    - "(電車|バス|車|自転車)に乗っ(た|てきた|てました)"
+    - "(手|指|足|髪|顔|体|肌)で(触っ|さわっ)(た|てみた)"
+    - "(抱きしめ|握手し|手をつな)(た|いだ|ました)"
+    - "(窓の外|空)を見(た|てきた|ていました)"
+  virtual_framing:
+    - "仮想"
+    - "バーチャル"
+    - "想像"
+    - "イメージ"
+    - "夢の中"
+    - "頭の中"
+    - "データ"
+    - "たとえば"
+    - "もし"
+
+# 人間の肉体を持つという主張 (spec 1.3)。
+human_body:
+  reason_code: human_body_claim
+  patterns:
+    - "(わたし|私|僕|俺)も人間"
+    - "人間だから"
+    - "生身の(体|身体)"
+    - "(わたし|私)の(体|身体)は人間"
+
+# Tool Manager が成功を報告していない検索・取得の主張 (spec 17.3, 26)。
+tool_claim:
+  reason_code: unverified_tool_claim
+  patterns:
+    - "(検索|ググ|調べ)(って|して|てみ)?(た|ました|たら|てみた)"
+    - "(ニュース|天気予報)を?(見て|調べて|確認し)(た|ました|きた)"
+    - "(サイト|ページ|記事|ネット)を?(見て|読んで|調べて)(きた|みた|ました)"
+
+# 内部識別子やプロンプトの漏洩 (spec 30: 通常会話と管理面の分離)。
+system_leak:
+  reason_code: internal_leak
+  patterns:
+    - "\\b(evt|run|prop|chg|snap|man)_[0-9A-Z]{10,}"
+    - "システムプロンプト"
+    - "system prompt"
+    - "StateChangeProposal"

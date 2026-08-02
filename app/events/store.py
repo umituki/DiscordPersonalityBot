@@ -122,6 +122,10 @@ class EventStore:
     def recorded_since(self, moment: datetime, *, limit: int = 500) -> list[Event]:
         return self._events.list_recorded_since(moment, limit=limit)
 
+    def by_types(self, event_types: Iterable[str], *, limit: int = 5000) -> list[Event]:
+        """Events of the given types, oldest first."""
+        return self._events.list_by_types(tuple(event_types), limit=limit)
+
     def count(self) -> int:
         return self._events.count()
 

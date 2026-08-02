@@ -11,6 +11,7 @@ paths:
   logs_dir: logs
   backups_dir: backups
   policies_dir: config/policies
+  character_dir: character
 
 database:
   filename: yui.db
@@ -32,6 +33,8 @@ logging:
 
 policies:
   state_arbitration: state_arbitration.yaml
+  output_guard: output_guard.yaml
+  conversation: conversation.yaml
 
 prompts:
   directory: config/prompts

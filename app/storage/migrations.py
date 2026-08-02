@@ -280,7 +280,43 @@ _0002_LLM_CALLS = Migration(
 )
 
 
-MIGRATIONS: tuple[Migration, ...] = (_0001_CORE, _0002_LLM_CALLS)
+_0003_CONVERSATIONS = Migration(
+    version=3,
+    name="conversation_projection",
+    statements=(
+        # Spec 31.4. These tables are a *projection* of the event stream kept
+        # for cheap recent-history reads. Events stay authoritative (spec 2.9)
+        # and the projection is rebuildable from them.
+        """
+        CREATE TABLE conversations (
+            conversation_id  TEXT PRIMARY KEY,
+            channel_id       TEXT NOT NULL UNIQUE,
+            channel_type     TEXT NOT NULL,
+            started_at       TEXT NOT NULL,
+            last_activity_at TEXT NOT NULL,
+            turn_count       INTEGER NOT NULL DEFAULT 0,
+            status           TEXT NOT NULL DEFAULT 'active'
+        )
+        """,
+        """
+        CREATE TABLE conversation_turns (
+            turn_id         TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL REFERENCES conversations (conversation_id),
+            event_id        TEXT NOT NULL UNIQUE REFERENCES events (event_id),
+            speaker         TEXT NOT NULL,
+            author_id       TEXT,
+            content         TEXT NOT NULL,
+            occurred_at     TEXT NOT NULL,
+            message_ref     TEXT
+        )
+        """,
+        "CREATE INDEX idx_turns_conversation ON conversation_turns "
+        "(conversation_id, occurred_at)",
+    ),
+)
+
+
+MIGRATIONS: tuple[Migration, ...] = (_0001_CORE, _0002_LLM_CALLS, _0003_CONVERSATIONS)
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)
 

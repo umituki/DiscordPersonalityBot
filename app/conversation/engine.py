@@ -1,0 +1,170 @@
+"""Reply generation (spec 35 Phase 3).
+
+Phase 3 is deliberately thin: static identity, recent history, one structured
+model call, and the Output Guard. There is no memory retrieval, no appraisal
+and no dialogue-act planning here — those belong to Phases 4, 5 and 7, and
+faking them now would produce a second, simplified personality engine that the
+architecture rules forbid.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Sequence
+
+from app.clock import Clock, SystemClock, to_iso
+from app.context.builder import BuiltContext, ContextBuilder, Requirement
+from app.conversation.guard import OutputGuard
+from app.conversation.models import ConversationTurn, ReplyDraft
+from app.conversation.policy import ConversationPolicy
+from app.llm.prompts import PromptRegistry
+from app.llm.structured import StructuredGenerator, StructuredOutcome
+from app.llm.types import LLMMessage
+from app.llm.validation import ValidationContext, ValidationPipeline
+from app.resources.identity import Identity
+from app.state.snapshot import StateSnapshot
+
+logger = logging.getLogger(__name__)
+
+PROMPT_ID = "conversation_reply"
+PURPOSE = "conversation_reply"
+
+NO_HISTORY = "(まだ記録されたやりとりはない)"
+
+
+@dataclass(frozen=True, slots=True)
+class ReplyGeneration:
+    """Everything one reply attempt produced, accepted or not."""
+
+    outcome: StructuredOutcome[ReplyDraft]
+    context: BuiltContext
+    prompt_version: str
+
+    @property
+    def accepted(self) -> bool:
+        return self.outcome.accepted
+
+    @property
+    def text(self) -> str | None:
+        return None if self.outcome.value is None else self.outcome.value.text.strip()
+
+
+class ConversationEngine:
+    def __init__(
+        self,
+        *,
+        identity: Identity,
+        prompts: PromptRegistry,
+        structured: StructuredGenerator,
+        guard: OutputGuard,
+        policy: ConversationPolicy,
+        clock: Clock | None = None,
+    ) -> None:
+        self._identity = identity
+        self._prompts = prompts
+        self._structured = structured
+        self._guard = guard
+        self._policy = policy
+        self._clock = clock or SystemClock()
+
+    @property
+    def identity(self) -> Identity:
+        return self._identity
+
+    async def draft_reply(
+        self,
+        *,
+        user_text: str,
+        recent_turns: Sequence[ConversationTurn] = (),
+        snapshot: StateSnapshot | None = None,
+        run_id: str | None = None,
+        event_id: str | None = None,
+        tool_success_ids: Sequence[str] = (),
+    ) -> ReplyGeneration:
+        template = self._prompts.get(PROMPT_ID)
+        context = self._build_context(user_text, recent_turns)
+
+        system_content = template.render(
+            identity=context.get("identity").content,
+            recent_conversation=(
+                context.get("recent_conversation").content
+                if context.includes("recent_conversation")
+                else NO_HISTORY
+            ),
+            current_time=to_iso(self._clock.now()),
+        )
+
+        outcome = await self._structured.generate(
+            ReplyDraft,
+            (
+                LLMMessage(role="system", content=system_content),
+                LLMMessage(role="user", content=user_text),
+            ),
+            purpose=PURPOSE,
+            pipeline=self._structured_pipeline(),
+            context=ValidationContext(
+                purpose=PURPOSE,
+                run_id=run_id,
+                event_id=event_id,
+                snapshot=snapshot,
+                extras={"tool_success_ids": list(tool_success_ids)},
+            ),
+            run_id=run_id,
+            event_id=event_id,
+            temperature=self._policy.generation.temperature,
+            max_tokens=self._policy.generation.max_tokens,
+            timeout_s=self._policy.generation.timeout_s,
+            priority="P0",  # a waiting USER outranks background work (spec 33)
+            prompt_id=PROMPT_ID,
+            prompt_version=template.prompt_version,
+        )
+
+        return ReplyGeneration(
+            outcome=outcome, context=context, prompt_version=template.prompt_version
+        )
+
+    # --- context ------------------------------------------------------------
+    def _build_context(
+        self, user_text: str, recent_turns: Sequence[ConversationTurn]
+    ) -> BuiltContext:
+        builder = ContextBuilder()
+        builder.add(
+            "identity",
+            self._identity.render_for_prompt(),
+            requirement=Requirement.REQUIRED,
+            priority=100,
+            source="character/",
+        )
+        builder.add(
+            "current_message",
+            user_text,
+            requirement=Requirement.REQUIRED,
+            priority=90,
+            source="discord",
+        )
+        history = self._render_history(recent_turns)
+        builder.add(
+            "recent_conversation",
+            history,
+            requirement=Requirement.IMPORTANT,
+            priority=50,
+            source="conversation_turns",
+        )
+        return builder.build(self._policy.context.budget())
+
+    def _render_history(self, turns: Sequence[ConversationTurn]) -> str:
+        limit = self._policy.context.recent_turn_limit
+        max_chars = self._policy.context.recent_turn_max_chars
+        selected = list(turns)[-limit:] if limit else []
+        lines = []
+        for turn in selected:
+            content = turn.content.strip()
+            if len(content) > max_chars:
+                content = content[:max_chars] + "…"
+            label = "USER" if turn.speaker == "user" else self._identity.name
+            lines.append(f"{label}: {content}")
+        return "\n".join(lines)
+
+    def _structured_pipeline(self) -> ValidationPipeline:
+        return ValidationPipeline([self._guard])

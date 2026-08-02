@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from datetime import datetime
 
 from app.clock import from_iso, to_iso
@@ -97,6 +98,17 @@ class EventRepository:
             f"SELECT {_COLUMNS} FROM events WHERE recorded_at >= ? "
             "ORDER BY recorded_at, event_id LIMIT ?",
             (to_iso(moment), limit),
+        )
+        return [self._to_event(row) for row in rows]
+
+    def list_by_types(self, event_types: Sequence[str], *, limit: int = 5000) -> list[Event]:
+        if not event_types:
+            return []
+        placeholders = ", ".join("?" for _ in event_types)
+        rows = self._db.query_all(
+            f"SELECT {_COLUMNS} FROM events WHERE event_type IN ({placeholders}) "
+            "ORDER BY occurred_at, event_id LIMIT ?",
+            (*event_types, limit),
         )
         return [self._to_event(row) for row in rows]
 

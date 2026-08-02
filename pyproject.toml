@@ -17,6 +17,9 @@ dependencies = [
     # async HTTP for the Ollama boundary; the stdlib has no async client and
     # the transport needs per-request timeouts (spec 3.1, 28.1)
     "httpx>=0.27",
+    # the Discord gateway itself (spec 3.1); imported only by
+    # app/interfaces/discord/gateway.py
+    "discord.py>=2.3",
 ]
 
 [project.optional-dependencies]

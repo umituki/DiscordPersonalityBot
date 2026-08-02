@@ -51,6 +51,9 @@ class ProcessingOutcome:
     dispatch: DispatchResult | None
     arbitration: ArbitrationResult | None
     commit: CommitResult | None
+    #: The S0 snapshot the run read. Callers that generate an action from the
+    #: same event must read this, not live state (spec 9.2).
+    snapshot: StateSnapshot | None = None
     error: str | None = None
 
     @property
@@ -108,6 +111,7 @@ class EventProcessor:
                 dispatch=None,
                 arbitration=None,
                 commit=None,
+                snapshot=snapshot,
                 error=repr(exc),
             )
 
@@ -126,6 +130,7 @@ class EventProcessor:
                 dispatch=dispatch,
                 arbitration=arbitration,
                 commit=None,
+                snapshot=snapshot,
                 error=repr(exc),
             )
 
@@ -144,6 +149,7 @@ class EventProcessor:
             dispatch=dispatch,
             arbitration=arbitration,
             commit=commit,
+            snapshot=snapshot,
         )
 
     # --- synchronous units of work ----------------------------------------

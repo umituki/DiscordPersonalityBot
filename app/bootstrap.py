@@ -27,12 +27,18 @@ from app.events.bus import EventBus
 from app.events.dispatcher import EventDispatcher
 from app.events.model import Event, SystemStartedPayload, SystemStoppedPayload
 from app.events.store import EventStore
+from app.conversation.engine import ConversationEngine
+from app.conversation.guard import OutputGuard, OutputGuardPolicy
+from app.conversation.policy import ConversationPolicy
+from app.conversation.service import ConversationService
+from app.interfaces.discord.adapter import DiscordMessageAdapter
 from app.llm.client import TracedLLMClient
 from app.llm.ollama import OllamaClient
 from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator
 from app.llm.tracing import DatabaseTracer
 from app.observability.logging import configure_logging
+from app.resources.identity import Identity, load_identity
 from app.orchestrator.processor import EventProcessor
 from app.state.arbitrator import StateArbitrator
 from app.state.committer import StateCommitter
@@ -42,6 +48,7 @@ from app.state.snapshot import SnapshotService
 from app.storage.database import Database
 from app.storage.migrations import LATEST_VERSION, migrate, schema_version, verify_schema
 from app.storage.repositories import (
+    ConversationRepository,
     DeliveryRepository,
     EventRepository,
     FailureRepository,
@@ -80,6 +87,13 @@ class Application:
     deliveries: DeliveryRepository
     failures: FailureRepository
     llm_calls: LLMCallRepository
+    conversations: ConversationRepository
+    identity: Identity
+    conversation_policy: ConversationPolicy
+    guard: OutputGuard
+    conversation_engine: ConversationEngine
+    #: ``None`` until the owner's Discord user id is configured.
+    conversation: ConversationService | None
     prompts: PromptRegistry
     llm: TracedLLMClient
     structured: StructuredGenerator
@@ -141,11 +155,17 @@ class Application:
         snapshot_repo = SnapshotRepository(db)
         manifest_repo = ManifestRepository(db)
         llm_call_repo = LLMCallRepository(db)
+        conversation_repo = ConversationRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
         if interrupted:
             logger.warning("recovered %d interrupted run(s) from a previous process", interrupted)
+
+        # --- static identity and conversation policy (spec 1.3, 40) ----------
+        identity = load_identity(resolved_config.character_dir)
+        guard_policy = OutputGuardPolicy.load(resolved_config.output_guard_policy_path)
+        conversation_policy = ConversationPolicy.load(resolved_config.conversation_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -156,6 +176,9 @@ class Application:
         )
         components["model_version"] = resolved_config.llm.model
         components["llm_provider"] = resolved_config.llm.provider
+        components["identity_version"] = identity.version_tag()
+        components["output_guard_policy_version"] = str(guard_policy.policy_version)
+        components["conversation_policy_version"] = str(conversation_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -204,6 +227,16 @@ class Application:
             max_attempts=resolved_config.llm.max_attempts,
         )
 
+        guard = OutputGuard(guard_policy)
+        conversation_engine = ConversationEngine(
+            identity=identity,
+            prompts=prompts,
+            structured=structured,
+            guard=guard,
+            policy=conversation_policy,
+            clock=resolved_clock,
+        )
+
         processor = EventProcessor(
             db=db,
             event_store=event_store,
@@ -217,6 +250,30 @@ class Application:
             mode=resolved_config.runtime.mode,
             clock=resolved_clock,
         )
+
+        # The conversation path exists only when the single USER is identified
+        # (spec 1.2). Without it, YUI has no one to talk to and stays offline.
+        conversation: ConversationService | None = None
+        owner_user_id = resolved_config.secrets.discord_owner_user_id
+        if owner_user_id:
+            channel_id = resolved_config.secrets.discord_channel_id
+            conversation = ConversationService(
+                processor=processor,
+                engine=conversation_engine,
+                conversations=conversation_repo,
+                adapter=DiscordMessageAdapter(
+                    owner_user_id=owner_user_id,
+                    allowed_channel_ids=frozenset({channel_id} if channel_id else set()),
+                    clock=resolved_clock,
+                ),
+                failures=failures,
+                policy=conversation_policy,
+                clock=resolved_clock,
+            )
+        else:
+            logger.warning(
+                "DISCORD_OWNER_USER_ID is not set; the conversation interface is disabled"
+            )
 
         logger.info(
             "application built environment=%s schema=%d manifest=%s policy=%d",
@@ -242,6 +299,12 @@ class Application:
             deliveries=deliveries,
             failures=failures,
             llm_calls=llm_call_repo,
+            conversations=conversation_repo,
+            identity=identity,
+            conversation_policy=conversation_policy,
+            guard=guard,
+            conversation_engine=conversation_engine,
+            conversation=conversation,
             prompts=prompts,
             llm=llm_client,
             structured=structured,

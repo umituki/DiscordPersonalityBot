@@ -229,6 +229,12 @@ def temp_config(tmp_path: Path) -> AppConfig:
     """A full config rooted in tmp_path, with the real policy file copied in."""
     (tmp_path / "config" / "policies").mkdir(parents=True)
     shutil.copytree(REPO_ROOT / "config" / "prompts", tmp_path / "config" / "prompts")
+    shutil.copytree(REPO_ROOT / "character", tmp_path / "character")
+    for policy in ("output_guard.yaml", "conversation.yaml"):
+        shutil.copy(
+            REPO_ROOT / "config" / "policies" / policy,
+            tmp_path / "config" / "policies" / policy,
+        )
     shutil.copy(
         REPO_ROOT / "config" / "settings.yaml", tmp_path / "config" / "settings.yaml"
     )

@@ -1,0 +1,21 @@
+# Conversation policy (spec 3.2 context limits, 16, 27.2, 40).
+policy_version: 1
+
+context:
+  # 仕様 3.2: context 上限は 8192 から開始し実測で調整する。
+  # ここは prompt 側に割り当てる概算 token 数。
+  max_tokens: 3000
+  chars_per_token: 2.0
+  recent_turn_limit: 12
+  recent_turn_max_chars: 600
+
+generation:
+  temperature: 0.8
+  max_tokens: 400
+  # spec 28.2: parse/schema 失敗のみ再試行する
+  max_attempts: 2
+  timeout_s: 90
+
+reply:
+  # Guard に拒否された場合、Phase 3 では黙る（誤った発話より無応答を選ぶ）。
+  on_rejection: suppress

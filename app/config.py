@@ -41,6 +41,7 @@ class PathsSection(_Section):
     logs_dir: Path = Path("logs")
     backups_dir: Path = Path("backups")
     policies_dir: Path = Path("config/policies")
+    character_dir: Path = Path("character")
 
 
 class DatabaseSection(_Section):
@@ -98,6 +99,8 @@ class PromptsSection(_Section):
 
 class PoliciesSection(_Section):
     state_arbitration: str = "state_arbitration.yaml"
+    output_guard: str = "output_guard.yaml"
+    conversation: str = "conversation.yaml"
 
 
 class Secrets(_Section):
@@ -161,6 +164,18 @@ class AppConfig(_Section):
     @property
     def prompts_dir(self) -> Path:
         return self._resolve(self.prompts.directory)
+
+    @property
+    def character_dir(self) -> Path:
+        return self._resolve(self.paths.character_dir)
+
+    @property
+    def output_guard_policy_path(self) -> Path:
+        return self.policies_dir / self.policies.output_guard
+
+    @property
+    def conversation_policy_path(self) -> Path:
+        return self.policies_dir / self.policies.conversation
 
     def _resolve(self, value: Path) -> Path:
         return value if value.is_absolute() else (self.root_dir / value)
