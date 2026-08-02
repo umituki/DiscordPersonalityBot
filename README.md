@@ -5,6 +5,7 @@
 
 正式仕様: [`docs/YUI_v2_SPEC.md`](docs/YUI_v2_SPEC.md)
 実装規則: [`CLAUDE.md`](CLAUDE.md), [`.claude/rules/`](.claude/rules)
+実機セットアップ: [`docs/SETUP.md`](docs/SETUP.md)
 
 ## 現在の実装状況
 
