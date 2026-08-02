@@ -41,6 +41,9 @@ from app.psychology.mood import MoodEngine
 from app.psychology.needs import NeedEngine
 from app.psychology.policy import PsychologyPolicy
 from app.social.attachment import AttachmentEngine
+from app.social.belief_policy import BeliefSelfPolicy
+from app.social.beliefs import BeliefEngine
+from app.social.self_model import SelfEngine
 from app.social.policy import RelationshipPolicy
 from app.social.relationship import RelationshipEngine
 from app.social.user_model import SocialCognitionEngine
@@ -60,6 +63,7 @@ from app.state.snapshot import SnapshotService
 from app.storage.database import Database
 from app.storage.migrations import LATEST_VERSION, migrate, schema_version, verify_schema
 from app.storage.repositories import (
+    BeliefRepository,
     ConversationRepository,
     MemoryRepository,
     DeliveryRepository,
@@ -68,6 +72,7 @@ from app.storage.repositories import (
     LLMCallRepository,
     ManifestRepository,
     ProcessingRunRepository,
+    SelfRepository,
     SnapshotRepository,
     StateRepository,
 )
@@ -109,6 +114,9 @@ class Application:
     relationship: RelationshipEngine
     attachment: AttachmentEngine
     social_cognition: SocialCognitionEngine
+    belief_self_policy: BeliefSelfPolicy
+    beliefs: BeliefEngine
+    self_model: SelfEngine
     appraisal: AppraisalEngine
     emotion: EmotionEngine
     mood: MoodEngine
@@ -182,6 +190,8 @@ class Application:
         llm_call_repo = LLMCallRepository(db)
         conversation_repo = ConversationRepository(db)
         memory_repo = MemoryRepository(db)
+        belief_repo = BeliefRepository(db)
+        self_repo = SelfRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
@@ -195,6 +205,7 @@ class Application:
         memory_policy = MemoryPolicy.load(resolved_config.memory_policy_path)
         psychology_policy = PsychologyPolicy.load(resolved_config.psychology_policy_path)
         relationship_policy = RelationshipPolicy.load(resolved_config.relationship_policy_path)
+        belief_self_policy = BeliefSelfPolicy.load(resolved_config.belief_self_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -211,6 +222,7 @@ class Application:
         components["memory_policy_version"] = str(memory_policy.policy_version)
         components["psychology_policy_version"] = str(psychology_policy.policy_version)
         components["relationship_policy_version"] = str(relationship_policy.policy_version)
+        components["belief_self_policy_version"] = str(belief_self_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -300,6 +312,11 @@ class Application:
         social_cognition_engine = SocialCognitionEngine(
             relationship_policy.user_model, clock=resolved_clock
         )
+        # Beliefs and the self model are evidence-driven services rather than
+        # per-event subscribers: they change when evidence arrives, which the
+        # knowledge and consolidation phases will supply (spec 12.4, 25).
+        belief_engine = BeliefEngine(belief_repo, belief_self_policy.belief, clock=resolved_clock)
+        self_engine = SelfEngine(self_repo, belief_self_policy.self_schema, clock=resolved_clock)
 
         # Update order follows the layers: immediate psychology first, then the
         # adaptive layer that reads it (spec 9.1, 9.5).
@@ -384,6 +401,9 @@ class Application:
             relationship=relationship_engine,
             attachment=attachment_engine,
             social_cognition=social_cognition_engine,
+            belief_self_policy=belief_self_policy,
+            beliefs=belief_engine,
+            self_model=self_engine,
             appraisal=appraisal_engine,
             emotion=emotion_engine,
             mood=mood_engine,

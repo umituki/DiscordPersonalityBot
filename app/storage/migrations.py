@@ -444,11 +444,98 @@ _0004_MEMORY = Migration(
 )
 
 
+_0005_BELIEFS_SELF = Migration(
+    version=5,
+    name="beliefs_and_self",
+    statements=(
+        # Spec 31.5. A belief carries content, so unlike a scalar it needs a
+        # row of its own; its confidence is derived from evidence, never set.
+        """
+        CREATE TABLE beliefs (
+            belief_id       TEXT PRIMARY KEY,
+            statement       TEXT NOT NULL,
+            subject         TEXT NOT NULL,
+            origin          TEXT NOT NULL,
+            confidence      REAL NOT NULL,
+            support_weight  REAL NOT NULL DEFAULT 0.0,
+            contradiction_weight REAL NOT NULL DEFAULT 0.0,
+            status          TEXT NOT NULL DEFAULT 'held',
+            first_formed_at TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            revision_count  INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (statement, subject, origin)
+        )
+        """,
+        "CREATE INDEX idx_beliefs_subject ON beliefs (subject, status)",
+        # Spec 25: evidence is kept for and against, and a repost of the same
+        # primary source must not count twice. The unique index is that rule.
+        """
+        CREATE TABLE belief_evidence (
+            evidence_id       TEXT PRIMARY KEY,
+            belief_id         TEXT NOT NULL REFERENCES beliefs (belief_id),
+            stance            TEXT NOT NULL,
+            weight            REAL NOT NULL,
+            source_type       TEXT NOT NULL,
+            primary_source_id TEXT NOT NULL,
+            event_id          TEXT,
+            recorded_at       TEXT NOT NULL,
+            UNIQUE (belief_id, primary_source_id, stance)
+        )
+        """,
+        "CREATE INDEX idx_belief_evidence_belief ON belief_evidence (belief_id, stance)",
+        # Spec 12.4: self schemas are separate from personality, and may be
+        # wrong. behaviour_evidence lets the schema lag behind behaviour
+        # (spec 23.2) instead of tracking it instantly.
+        """
+        CREATE TABLE self_schemas (
+            schema_id        TEXT PRIMARY KEY,
+            name             TEXT NOT NULL UNIQUE,
+            statement        TEXT NOT NULL,
+            strength         REAL NOT NULL,
+            clarity          REAL NOT NULL DEFAULT 0.5,
+            supporting_count INTEGER NOT NULL DEFAULT 0,
+            contradicting_count INTEGER NOT NULL DEFAULT 0,
+            pending_evidence REAL NOT NULL DEFAULT 0.0,
+            last_behaviour_at TEXT,
+            first_formed_at  TEXT NOT NULL,
+            updated_at       TEXT NOT NULL,
+            status           TEXT NOT NULL DEFAULT 'active'
+        )
+        """,
+        """
+        CREATE TABLE self_event_connections (
+            connection_id TEXT PRIMARY KEY,
+            schema_id     TEXT NOT NULL REFERENCES self_schemas (schema_id),
+            event_id      TEXT NOT NULL,
+            relation      TEXT NOT NULL,
+            recorded_at   TEXT NOT NULL,
+            UNIQUE (schema_id, event_id, relation)
+        )
+        """,
+        "CREATE INDEX idx_self_connections_schema ON self_event_connections (schema_id)",
+        # Spec 12.4: who YUI might become. Kept apart from who she thinks she is.
+        """
+        CREATE TABLE possible_selves (
+            possible_self_id TEXT PRIMARY KEY,
+            name          TEXT NOT NULL UNIQUE,
+            statement     TEXT NOT NULL,
+            valence       TEXT NOT NULL,
+            salience      REAL NOT NULL DEFAULT 0.3,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            status        TEXT NOT NULL DEFAULT 'active'
+        )
+        """,
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
     _0003_CONVERSATIONS,
     _0004_MEMORY,
+    _0005_BELIEFS_SELF,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

@@ -143,6 +143,8 @@ def _status(config_file: Path | None) -> int:
             "episodes": application.memories.episode_count(),
             "episodic_memories": application.memories.memory_count(status="active"),
             "semantic_memories": application.memories.semantic_count(),
+            "beliefs": application.beliefs.held_beliefs().__len__(),
+            "self_schemas": len(application.self_model.active_schemas()),
             "integrity": application.db.integrity_check(),
         }
     finally:

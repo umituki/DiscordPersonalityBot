@@ -8,8 +8,7 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 6 の途中**（Relationship / Attachment / Social Cognition）まで完了。
-Phase 6 の残り（Beliefs / Self Model）と Phase 7 以降は未着手。
+仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 6（Social / Belief / Self）まで**完了。Phase 7 以降は未着手。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -19,7 +18,7 @@ Phase 6 の残り（Beliefs / Self Model）と Phase 7 以降は未着手。
 | 3 | Basic Discord conversation + Output Guard | 実装済み |
 | 4 | Context / Episode / Memory | 実装済み |
 | 5 | Immediate Psychology（Appraisal / Emotion / Mood / Needs） | 実装済み |
-| 6 | Social / Belief / Self | Relationship・Attachment・USER Model は実装済み / Beliefs・Self Model は未着手 |
+| 6 | Social / Belief / Self | 実装済み |
 | 7+ | Agency / Life / Growth / Society / Genesis | 未着手 |
 
 ### Phase 1 で動作するパイプライン
@@ -100,6 +99,10 @@ Appraisal + Event
                  security が高いほど分離に強く、依存は増えない
 → Social Cogn. : 「いまそう見える」と「そういう人だ」を分離
                  一度の短いメッセージで trait は動かない（証拠 6 件が必要）
+→ Beliefs      : 確信度は証拠から導出。支持と反証の両方を保持し、
+                 同一一次ソースの再掲は 1 件としてしか数えない
+→ Self Model   : 自己像は行動より遅れて変わる。証拠が混ざると
+                 自己像が揺れるのではなく明瞭さ(clarity)が下がる
 ```
 
 主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
@@ -143,7 +146,7 @@ app/
   events/        Event model / store / bus / dispatcher
   memory/        segmentation / encoding / retrieval / forgetting / engine
   psychology/    appraisal / emotion / mood / needs
-  social/        relationship / attachment / user model / signals
+  social/        relationship / attachment / user model / beliefs / self model
   interfaces/    discord/ (adapter, dto, gateway)
   llm/           LLMClient / Ollama / prompts / structured / validation
   state/         proposal / snapshot / ownership / dependency_graph / arbitrator / committer / policy

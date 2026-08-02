@@ -38,6 +38,7 @@ policies:
   memory: memory.yaml
   psychology: psychology.yaml
   relationship: relationship.yaml
+  belief_self: belief_self.yaml
 
 prompts:
   directory: config/prompts

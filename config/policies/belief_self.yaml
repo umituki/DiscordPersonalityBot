@@ -1,0 +1,37 @@
+# Belief / Self model policy (spec 12.4, 23.2, 25, 40).
+policy_version: 1
+
+belief:
+  # 証拠の重みから確信度を出す。確信度を直接与えることはしない。
+  initial_confidence: 0.40
+  # 反証は支持よりわずかに強く効く（信じ続けるより疑うほうが安い）
+  contradiction_bias: 1.20
+  # 証拠の「量」が prior をどれだけ動かすか。小さいほど早く確信する。
+  evidence_half_weight: 0.50
+  # 支持と反証が拮抗したら「争点あり」にする。消しはしない。
+  contested_ratio: 0.60
+  # これを下回ったら保持をやめる（ただし行は残る）
+  abandon_confidence: 0.15
+  max_confidence: 0.95
+  # 一次ソースが同じ情報は何度出てきても 1 件
+  weight_per_evidence:
+    real_user_message: 0.30
+    virtual_npc: 0.15
+    web_search: 0.20
+    external_source: 0.20
+    self_inference: 0.10
+    reflection: 0.10
+    simulated_past: 0.15
+    admin_override: 0.50
+    system_migration: 0.10
+
+self_schema:
+  initial_strength: 0.50
+  # spec 23.2: 自己像は実際の行動変化より遅れて変わる。
+  # 行動証拠がこの量たまるまで strength は動かない。
+  evidence_before_change: 4.0
+  strength_step: 0.05
+  max_change_per_update: 0.06
+  # 支持と反証が入り混じるほど自己概念の明瞭さは下がる
+  clarity_from_consistency: 0.80
+  clarity_floor: 0.10

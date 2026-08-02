@@ -9,9 +9,11 @@ from app.storage.repositories.manifests import ManifestRepository
 from app.storage.repositories.memory import MemoryRepository
 from app.storage.repositories.runs import ProcessingRunRepository
 from app.storage.repositories.snapshots import SnapshotRepository
+from app.storage.repositories.social import BeliefRepository, SelfRepository
 from app.storage.repositories.state import StateRepository
 
 __all__ = [
+    "BeliefRepository",
     "ConversationRepository",
     "DeliveryDecision",
     "DeliveryRepository",
@@ -22,6 +24,7 @@ __all__ = [
     "ManifestRepository",
     "MemoryRepository",
     "ProcessingRunRepository",
+    "SelfRepository",
     "SnapshotRepository",
     "StateRepository",
 ]
