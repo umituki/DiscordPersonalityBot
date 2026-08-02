@@ -1,0 +1,48 @@
+# Past simulation tuning values (spec 22, 40).
+policy_version: 1
+
+seed:
+  # Spec 22.2: about seven questions, and they produce temperament only.
+  expected_question_count: 7
+  # Answers move temperament from the midpoint by at most this much, so a
+  # questionnaire can bias a starting point and never specify a person.
+  max_temperament_shift: 0.25
+  neutral: 0.5
+
+blocks:
+  # Spec 22.5: stable stretches are compressed. A block is a month unless
+  # something in it deserves expanding.
+  compressed_block_days: 30.0
+  expanded_block_days: 7.0
+  max_blocks: 400
+  # A block is expanded when its own drivers say something is happening.
+  expansion_threshold: 0.55
+
+experience:
+  # Spec 22.4: the mix. Routine dominates a life, and it is meant to.
+  routine_share: 0.72
+  minor_share: 0.20
+  meaningful_share: 0.065
+  major_share: 0.013
+  turning_point_share: 0.002
+  # Spec 22.4: 「Major event をキャラクターの深みのために乱発しない」。
+  # Hard ceilings per simulated year, enforced regardless of the shares above.
+  max_major_per_year: 1.0
+  max_turning_points_total: 3
+  # Spec 22.4: 「Trauma を性格形成の便利な説明装置にしない」。
+  max_negative_major_share: 0.5
+
+knowledge:
+  # How much of the period's available knowledge is put in front of YUI per
+  # block. The exposure funnel then decides what, if anything, sticks.
+  exposures_per_block: 4
+  base_curiosity: 0.5
+
+first_boot:
+  # Spec 22.7: every audit must pass. These are the thresholds the quality
+  # audit uses; the others are pass/fail on their own terms.
+  min_experiences: 20
+  min_blocks: 12
+  min_retained_knowledge: 0
+  # An identity with no memories at all is not a life.
+  min_memories: 0

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 
 from app.clock import from_iso, to_iso
@@ -114,6 +114,27 @@ class EventRepository:
 
     def count(self) -> int:
         return int(self._db.scalar("SELECT COUNT(*) FROM events") or 0)
+
+    def count_by_origin(self, origins: Iterable[str]) -> int:
+        """How many events came from a given origin (spec 2.10, 22.7)."""
+        values = tuple(origins)
+        if not values:
+            return 0
+        placeholders = ", ".join("?" for _ in values)
+        return int(
+            self._db.scalar(
+                f"SELECT COUNT(*) FROM events WHERE origin IN ({placeholders})", values
+            )
+            or 0
+        )
+
+    def count_by_actor(self, actor_type: str) -> int:
+        return int(
+            self._db.scalar(
+                "SELECT COUNT(*) FROM events WHERE actor_type = ?", (actor_type,)
+            )
+            or 0
+        )
 
     # --- mapping -----------------------------------------------------------
     @staticmethod

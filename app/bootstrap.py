@@ -40,6 +40,10 @@ from app.epistemics.actions import EpistemicActionSelector
 from app.knowledge.builder import KnowledgeBuilder
 from app.knowledge.policy import KnowledgePolicy
 from app.knowledge.service import KnowledgeService
+from app.simulation.engine import PastSimulationEngine
+from app.simulation.genesis import GenesisService
+from app.simulation.policy import SimulationPolicy
+from app.simulation.seed import SeedBuilder
 from app.jobs.proactive import ProactiveEngine
 from app.jobs.scheduler import Scheduler
 from app.events.store import EventStore
@@ -120,6 +124,7 @@ from app.storage.repositories import (
     ProactiveRepository,
     ProcessingRunRepository,
     SelfRepository,
+    SimulationRepository,
     SleepRepository,
     SnapshotRepository,
     SocialLinkRepository,
@@ -188,6 +193,10 @@ class Application:
     knowledge_policy: KnowledgePolicy
     knowledge_builder: KnowledgeBuilder
     knowledge: KnowledgeService
+    simulation_policy: SimulationPolicy
+    seed_builder: SeedBuilder
+    simulation: PastSimulationEngine
+    genesis: GenesisService
     society_policy: SocietyPolicy
     society: SocietyService
     npc_relationships: NPCRelationshipEngine
@@ -294,6 +303,7 @@ class Application:
         exposure_repo = ExposureRepository(db)
         acquisition_repo = AcquisitionRepository(db)
         coverage_job_repo = CoverageJobRepository(db)
+        simulation_repo = SimulationRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
@@ -313,6 +323,7 @@ class Application:
         growth_policy = GrowthPolicy.load(resolved_config.growth_policy_path)
         society_policy = SocietyPolicy.load(resolved_config.society_policy_path)
         knowledge_policy = KnowledgePolicy.load(resolved_config.knowledge_policy_path)
+        simulation_policy = SimulationPolicy.load(resolved_config.simulation_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -335,6 +346,7 @@ class Application:
         components["growth_policy_version"] = str(growth_policy.policy_version)
         components["society_policy_version"] = str(society_policy.policy_version)
         components["knowledge_policy_version"] = str(knowledge_policy.policy_version)
+        components["simulation_policy_version"] = str(simulation_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -584,6 +596,31 @@ class Application:
             clock=resolved_clock,
         )
 
+        # --- genesis (spec 22) -----------------------------------------------
+        # The past simulation reuses this processor, so a simulated experience
+        # goes through the same appraisal, engines, arbitrator and transaction
+        # as a real one. There is no second personality engine.
+        seed_builder = SeedBuilder(simulation_policy.seed, clock=resolved_clock)
+        simulation_engine = PastSimulationEngine(
+            processor=processor,
+            repository=simulation_repo,
+            knowledge=knowledge_service,
+            growth=growth_engine,
+            policy=simulation_policy,
+            clock=resolved_clock,
+        )
+        genesis_service = GenesisService(
+            repository=simulation_repo,
+            events=events_repo,
+            event_store=event_store,
+            consolidation=consolidation_job,
+            knowledge=knowledge_service,
+            growth=growth_engine,
+            drift=drift_monitor,
+            policy=simulation_policy.first_boot,
+            clock=resolved_clock,
+        )
+
         # The conversation path exists only when the single USER is identified
         # (spec 1.2). Without it, YUI has no one to talk to and stays offline.
         conversation: ConversationService | None = None
@@ -666,6 +703,10 @@ class Application:
             knowledge_policy=knowledge_policy,
             knowledge_builder=knowledge_builder,
             knowledge=knowledge_service,
+            simulation_policy=simulation_policy,
+            seed_builder=seed_builder,
+            simulation=simulation_engine,
+            genesis=genesis_service,
             society_policy=society_policy,
             society=society_service,
             npc_relationships=npc_relationship_engine,

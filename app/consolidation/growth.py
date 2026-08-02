@@ -85,13 +85,21 @@ class GrowthEngine:
         return self._gate
 
     # --- seeding (ledger only, never state) --------------------------------
-    def ensure_seeded(self) -> list[PersonalityTrait]:
-        """Give the traits their starting baselines (spec 12.1).
+    def ensure_seeded(
+        self, temperament: Mapping[str, float] | None = None
+    ) -> list[PersonalityTrait]:
+        """Give the traits their starting baselines (spec 12.1, 22.1).
 
         This writes the engine's own ledger, not the ``personality`` state
         domain: what YUI *expresses* still has to be proposed and committed.
+
+        ``temperament`` overrides the policy defaults, which is how a
+        temperamental seed enters the pipeline — as a *starting bias*, never as
+        a finished personality (spec 22.2). Seeding is idempotent, so a life
+        already under way is not reset by a later call.
         """
-        return self._traits.seed(self._policy.personality.temperament, now=self._clock.now())
+        starting = {**self._policy.personality.temperament, **(temperament or {})}
+        return self._traits.seed(starting, now=self._clock.now())
 
     # --- as a subscriber ---------------------------------------------------
     async def handle(self, event: Event, view: RunView) -> SubscriberResult:

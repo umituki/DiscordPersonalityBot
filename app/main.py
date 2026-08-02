@@ -177,6 +177,16 @@ def _status(config_file: Path | None) -> int:
             "groups": [group.name for group in application.society.groups_of_yui()],
             "knowledge": application.knowledge.counts(),
             "coverage_jobs": len(application.knowledge_builder.coverage_jobs()),
+            "simulation": (
+                None
+                if application.simulation.latest_run() is None
+                else {
+                    "status": application.simulation.latest_run().status,
+                    "blocks": application.simulation.latest_run().blocks_run,
+                    "experiences": application.simulation.latest_run().experiences,
+                }
+            ),
+            "first_boot": application.genesis.has_booted(),
             "integrity": application.db.integrity_check(),
         }
     finally:

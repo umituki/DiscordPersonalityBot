@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 DOMAIN = "attachment"
 MODULE = "attachment_engine"
 
+#: Spec 22.7: ``FIRST BOOT 以前に USER との関係経験を生成しない``. This bond is
+#: with the USER, and a simulated past contains no USER — so a simulated event
+#: must never touch it. What a simulated life *does* shape is the general
+#: attachment disposition, which consolidation reaches at Layer 4 (spec 13.2).
+NON_RELATIONAL_ORIGINS: frozenset[str] = frozenset({"simulated_past"})
+
+
 ACTIVATION = "current_activation"
 FELT_SECURITY = "felt_security"
 PROXIMITY_DESIRE = "proximity_desire"
@@ -58,6 +65,8 @@ class AttachmentEngine:
 
     async def handle(self, event: Event, view: RunView) -> SubscriberResult:
         if event.actor_type not in ("user", "yui"):
+            return SubscriberResult()
+        if event.origin in NON_RELATIONAL_ORIGINS:
             return SubscriberResult()
 
         appraisal = view.appraisal if isinstance(view.appraisal, Appraisal) else None

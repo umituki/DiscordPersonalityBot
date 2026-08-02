@@ -1133,6 +1133,100 @@ _0011_KNOWLEDGE = Migration(
 )
 
 
+_0012_SIMULATION = Migration(
+    version=12,
+    name="past_simulation",
+    statements=(
+        # Spec 22.2: the questionnaire produces a temperamental seed and
+        # nothing else. There is deliberately no column here for a finished
+        # personality, a value ranking, or a set of interests.
+        """
+        CREATE TABLE temperament_seeds (
+            seed_id      TEXT PRIMARY KEY,
+            answers_json TEXT NOT NULL DEFAULT '{}',
+            temperament_json TEXT NOT NULL DEFAULT '{}',
+            avoid_json   TEXT NOT NULL DEFAULT '[]',
+            interests_json TEXT NOT NULL DEFAULT '[]',
+            created_at   TEXT NOT NULL
+        )
+        """,
+        # Spec 22.3: what may be decided in advance. Hobbies, values, habits
+        # and the current personality are results, not scaffold.
+        """
+        CREATE TABLE life_scaffolds (
+            scaffold_id  TEXT PRIMARY KEY,
+            seed_id      TEXT NOT NULL REFERENCES temperament_seeds (seed_id),
+            period_start TEXT NOT NULL,
+            period_end   TEXT NOT NULL,
+            environment  TEXT NOT NULL DEFAULT '',
+            education_context TEXT NOT NULL DEFAULT '',
+            social_density REAL NOT NULL DEFAULT 0.5,
+            technology_availability REAL NOT NULL DEFAULT 0.5,
+            life_stage   TEXT NOT NULL DEFAULT '',
+            created_at   TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE simulation_runs (
+            simulation_id TEXT PRIMARY KEY,
+            seed_id      TEXT NOT NULL REFERENCES temperament_seeds (seed_id),
+            scaffold_id  TEXT NOT NULL REFERENCES life_scaffolds (scaffold_id),
+            status       TEXT NOT NULL DEFAULT 'running',
+            started_at   TEXT NOT NULL,
+            ended_at     TEXT,
+            simulated_from TEXT NOT NULL,
+            simulated_to TEXT NOT NULL,
+            blocks_run   INTEGER NOT NULL DEFAULT 0,
+            experiences  INTEGER NOT NULL DEFAULT 0,
+            first_boot_at TEXT,
+            detail_json  TEXT NOT NULL DEFAULT '{}'
+        )
+        """,
+        # Spec 22.5: stable stretches are compressed into blocks; only periods
+        # with something in them are expanded.
+        """
+        CREATE TABLE life_phases (
+            phase_id     TEXT PRIMARY KEY,
+            simulation_id TEXT NOT NULL REFERENCES simulation_runs (simulation_id),
+            name         TEXT NOT NULL,
+            started_at   TEXT NOT NULL,
+            ended_at     TEXT NOT NULL,
+            summary      TEXT NOT NULL DEFAULT '',
+            ordinal      INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        """
+        CREATE TABLE simulation_blocks (
+            block_id     TEXT PRIMARY KEY,
+            simulation_id TEXT NOT NULL REFERENCES simulation_runs (simulation_id),
+            phase_id     TEXT REFERENCES life_phases (phase_id),
+            started_at   TEXT NOT NULL,
+            ended_at     TEXT NOT NULL,
+            detail_level TEXT NOT NULL DEFAULT 'compressed',
+            experience_class TEXT NOT NULL DEFAULT 'routine',
+            summary      TEXT NOT NULL DEFAULT '',
+            event_count  INTEGER NOT NULL DEFAULT 0,
+            ordinal      INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        "CREATE INDEX idx_blocks_simulation ON simulation_blocks (simulation_id, ordinal)",
+        # Spec 22.7: FIRST BOOT is gated on audits that are recorded, so a
+        # failed audit is visible rather than a thing somebody remembers.
+        """
+        CREATE TABLE genesis_audits (
+            audit_id     TEXT PRIMARY KEY,
+            simulation_id TEXT NOT NULL REFERENCES simulation_runs (simulation_id),
+            kind         TEXT NOT NULL,
+            passed       INTEGER NOT NULL DEFAULT 0,
+            detail_json  TEXT NOT NULL DEFAULT '{}',
+            recorded_at  TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_audits_simulation ON genesis_audits (simulation_id, kind)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1145,6 +1239,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0009_GROWTH,
     _0010_SOCIETY,
     _0011_KNOWLEDGE,
+    _0012_SIMULATION,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

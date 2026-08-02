@@ -8,7 +8,7 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 10（Society）まで**完了。Phase 11 以降は未着手。
+仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 11（Genesis）まで**完了。Phase 12（Production Hardening）は未着手。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -23,7 +23,8 @@
 | 8 | Virtual Life（World / Activity / Sleep / Scheduler / Proactive） | 実装済み |
 | 9 | Growth（Consolidation / Adaptations / Personality / Values / Narrative / Drift） | 実装済み |
 | 10 | Society（NPC / Groups / Network / Lifecycle） | 実装済み |
-| 11+ | Genesis / Hardening | 未着手 |
+| 11 | Genesis（Historical Knowledge / Past Simulation / FIRST BOOT） | 実装済み |
+| 12 | Production Hardening | 未着手 |
 
 ### Phase 1 で動作するパイプライン
 
@@ -176,6 +177,34 @@ Groups        : 所属は relatedness の供給源。USER だけが関係性の�
 Network       : NPC 同士も繋がる。社会は YUI を中心とした星型ではない
 ```
 
+### Phase 11 で動作する生成（Genesis）
+
+```text
+Knowledge Builder : 「世界が何をいつ知っていたか」を検証可能な形で記録する。
+                    available_from のない候補は既定値で埋めずに拒否する
+Temporal Guard    : その時点より後にしか存在しない情報は Exposure に入れない。
+                    後年の資料を「当時公表されていた証拠」に使うのは可。
+                    違反は握りつぶさず例外にする
+Exposure Funnel   : 存在した → 機会 → 届いた → 気づいた → 気になった →
+                    理解できた → 符号化された → 保持された。
+                    どの段階でも止まる。有名だっただけでは「知っている」に
+                    ならない
+Knows()           : acquisition record だけを根拠にする。LLM が事前学習で
+                    知っていることは YUI が知っている根拠にしない
+Seed              : 7 問の回答が作れるのは Temperament だけ。どの回答も
+                    中央値から一定幅しか動かせず、極端に固定できない。
+                    価値観・習慣・完成人格は Simulation の結果
+Experience        : Routine が大半。Major は年あたり上限、Turning Point は
+                    生涯上限、否定的な Major の比率にも上限がある
+                    （つらい出来事を人格の説明装置にしない）
+Simulation        : 通常の processor / appraisal / arbitrator / transaction を
+                    そのまま通す。第二の人格エンジンは作らない。
+                    最終人格を指定する引数は存在しない
+FIRST BOOT        : Deep Consolidation → 整合性 → 知識年代 → 同一性 →
+                    ドリフト → 品質。全部通ったときだけ FIRST_BOOT を出す。
+                    それ以前に USER との関係経験は 1 件も作らない
+```
+
 主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
 
 ## セットアップ
@@ -223,6 +252,8 @@ app/
   jobs/          scheduler / proactive contact
   consolidation/ adaptations / deep gate / personality / values / narrative / drift
   society/       npc / npc relationship / groups / social network / lifecycle
+  knowledge/     historical knowledge / temporal guard / exposure funnel
+  simulation/    temperament seed / experiences / past simulation / genesis
   social/        relationship / attachment / user model / beliefs / self model
   tools/         Tool Manager / registry / builtin tools
   interfaces/    discord/ (adapter, dto, gateway)

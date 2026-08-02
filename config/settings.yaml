@@ -44,6 +44,7 @@ policies:
   growth: growth.yaml
   society: society.yaml
   knowledge: knowledge.yaml
+  simulation: simulation.yaml
 
 prompts:
   directory: config/prompts
