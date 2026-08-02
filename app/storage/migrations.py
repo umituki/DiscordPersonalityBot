@@ -239,7 +239,48 @@ _0001_CORE = Migration(
 )
 
 
-MIGRATIONS: tuple[Migration, ...] = (_0001_CORE,)
+_0002_LLM_CALLS = Migration(
+    version=2,
+    name="llm_call_traces",
+    statements=(
+        # Spec 29: important LLM calls must stay attributable to a model and
+        # prompt version, so a behaviour change can be told apart from growth.
+        """
+        CREATE TABLE llm_calls (
+            call_id             TEXT PRIMARY KEY,
+            run_id              TEXT,
+            event_id            TEXT,
+            manifest_id         TEXT REFERENCES runtime_manifests (manifest_id),
+            purpose             TEXT NOT NULL,
+            priority            TEXT NOT NULL,
+            model               TEXT NOT NULL,
+            prompt_id           TEXT,
+            prompt_version      TEXT,
+            structured          INTEGER NOT NULL DEFAULT 0,
+            request_fingerprint TEXT NOT NULL,
+            request_transcript  TEXT,
+            status              TEXT NOT NULL,
+            attempts            INTEGER NOT NULL DEFAULT 1,
+            rejection_stage     TEXT,
+            reason_code         TEXT,
+            started_at          TEXT NOT NULL,
+            finished_at         TEXT,
+            latency_ms          INTEGER,
+            prompt_tokens       INTEGER,
+            completion_tokens   INTEGER,
+            response_text       TEXT,
+            error_type          TEXT,
+            error_detail        TEXT
+        )
+        """,
+        "CREATE INDEX idx_llm_calls_started ON llm_calls (started_at)",
+        "CREATE INDEX idx_llm_calls_purpose ON llm_calls (purpose, started_at)",
+        "CREATE INDEX idx_llm_calls_run ON llm_calls (run_id)",
+    ),
+)
+
+
+MIGRATIONS: tuple[Migration, ...] = (_0001_CORE, _0002_LLM_CALLS)
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)
 

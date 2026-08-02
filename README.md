@@ -8,14 +8,14 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、**Phase 0（Project Foundation）と Phase 1
-（Persistence / Event / State Core）まで**を実装している。Phase 2 以降は未着手。
+仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 2
+（Ollama / Structured LLM）まで**完了。Phase 3 以降は未着手。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
 | 0 | config / bootstrap / CLI | 実装済み |
 | 1 | SQLite / Event / State transaction core | 実装済み |
-| 2 | Ollama structured LLM | 未着手 |
+| 2 | Ollama structured LLM | 実装済み |
 | 3 | Basic Discord conversation | 未着手 |
 | 4+ | Memory / Psychology / Agency / Life / Growth / Society / Genesis | 未着手 |
 
@@ -30,6 +30,18 @@ Event
 → StateArbitrator (ownership / layer / policy 検証)
 → StateCommitter (単一 transaction で state + history + failure + delivery)
 ```
+
+### Phase 2 で動作する LLM 境界
+
+```text
+LLMRequest
+→ OllamaClient (concurrency 1 / timeout)
+→ Parse → Schema → Semantic → State → Identity  (spec 28.2)
+→ 受理された候補のみ呼び出し側へ
+```
+
+不正出力は値として返らず `failures` に記録される。prompt は `config/prompts/`
+の versioned file、model / prompt version は runtime manifest と `llm_calls` に記録。
 
 主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
 
@@ -67,12 +79,13 @@ yui run         # 起動して ready 状態を保持（Phase 1 では interface 
 app/
   config.py bootstrap.py main.py clock.py ids.py
   events/        Event model / store / bus / dispatcher
+  llm/           LLMClient / Ollama / prompts / structured / validation
   state/         proposal / snapshot / ownership / dependency_graph / arbitrator / committer / policy
   storage/       Database / migrations / repositories（SQL の唯一の境界）
   orchestrator/  RunContext / EventProcessor
   versioning/    RuntimeManifest
   observability/ logging
-config/          settings.yaml, policies/
+config/          settings.yaml, policies/, prompts/
 docs/            YUI_v2_SPEC.md
 tests/           unit/, invariants/
 ```
@@ -83,4 +96,5 @@ tests/           unit/, invariants/
 - 各 state domain には Single Writer がある。他 module は Proposal を出す。
 - 不正な Proposal は clamp せず reject し、`failures` に記録する。
 - Event は immutable。訂正は新しい Event（`EVENT_INVALIDATED` 等）で行う。
+- LLM 出力は候補にすぎず、検証を通らなければ値として返らない。
 - 先のフェーズを先取り実装しない。

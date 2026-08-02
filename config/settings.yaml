@@ -32,3 +32,22 @@ logging:
 
 policies:
   state_arbitration: state_arbitration.yaml
+
+prompts:
+  directory: config/prompts
+
+llm:
+  provider: ollama
+  base_url: http://127.0.0.1:11434
+  model: qwen3.5:9b
+  request_timeout_s: 120
+  connect_timeout_s: 10
+  # spec 3.2: concurrency 1, context starts at 8192 and is tuned by measurement
+  concurrency: 1
+  num_ctx: 8192
+  temperature: 0.7
+  keep_alive: 10m
+  max_attempts: 3
+  require_healthy_on_start: false
+  trace_payloads: true
+  max_traced_chars: 4000

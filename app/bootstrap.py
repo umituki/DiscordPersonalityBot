@@ -1,6 +1,6 @@
 """Application assembly and startup sequence.
 
-Spec 32 startup order, restricted to what exists in Phase 1::
+Spec 32 startup order, restricted to what exists so far::
 
     config
     → logging
@@ -8,11 +8,12 @@ Spec 32 startup order, restricted to what exists in Phase 1::
     → integrity check
     → schema / migration
     → crash recovery
-    → runtime manifest
+    → prompts / runtime manifest
     → readiness
+    → Ollama health
 
-Ollama health, world catch-up, scheduler restore and the Discord connection are
-added by their own phases.
+World catch-up, scheduler restore and the Discord connection are added by their
+own phases.
 """
 
 from __future__ import annotations
@@ -26,6 +27,11 @@ from app.events.bus import EventBus
 from app.events.dispatcher import EventDispatcher
 from app.events.model import Event, SystemStartedPayload, SystemStoppedPayload
 from app.events.store import EventStore
+from app.llm.client import TracedLLMClient
+from app.llm.ollama import OllamaClient
+from app.llm.prompts import PromptRegistry
+from app.llm.structured import StructuredGenerator
+from app.llm.tracing import DatabaseTracer
 from app.observability.logging import configure_logging
 from app.orchestrator.processor import EventProcessor
 from app.state.arbitrator import StateArbitrator
@@ -39,6 +45,7 @@ from app.storage.repositories import (
     DeliveryRepository,
     EventRepository,
     FailureRepository,
+    LLMCallRepository,
     ManifestRepository,
     ProcessingRunRepository,
     SnapshotRepository,
@@ -72,9 +79,14 @@ class Application:
     runs: ProcessingRunRepository
     deliveries: DeliveryRepository
     failures: FailureRepository
+    llm_calls: LLMCallRepository
+    prompts: PromptRegistry
+    llm: TracedLLMClient
+    structured: StructuredGenerator
     manifest_id: str
     schema_version: int
     started: bool = False
+    llm_healthy: bool = False
 
     # --- construction ------------------------------------------------------
     @classmethod
@@ -128,20 +140,28 @@ class Application:
         state_repo = StateRepository(db)
         snapshot_repo = SnapshotRepository(db)
         manifest_repo = ManifestRepository(db)
+        llm_call_repo = LLMCallRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
         if interrupted:
             logger.warning("recovered %d interrupted run(s) from a previous process", interrupted)
 
+        # --- prompts (spec 38: versioned prompt files, never inline) ---------
+        prompts = PromptRegistry.load(resolved_config.prompts_dir)
+
         # --- runtime manifest (spec 29) -------------------------------------
+        components = base_components(
+            policy_version=policy.policy_version, schema_version=current_schema
+        )
+        components["model_version"] = resolved_config.llm.model
+        components["llm_provider"] = resolved_config.llm.provider
+        components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
             event_schema_version=1,
             code_commit_hash=detect_commit_hash(resolved_config.root_dir),
-            components=base_components(
-                policy_version=policy.policy_version, schema_version=current_schema
-            ),
+            components=components,
         )
         manifest_record = ManifestService(manifest_repo, clock=resolved_clock).ensure(manifest)
 
@@ -154,6 +174,36 @@ class Application:
         committer = StateCommitter(
             db, state_repo, runs, deliveries, failures, clock=resolved_clock
         )
+        ollama = OllamaClient(
+            base_url=resolved_config.llm.base_url,
+            model=resolved_config.llm.model,
+            request_timeout_s=resolved_config.llm.request_timeout_s,
+            connect_timeout_s=resolved_config.llm.connect_timeout_s,
+            concurrency=resolved_config.llm.concurrency,
+            num_ctx=resolved_config.llm.num_ctx,
+            temperature=resolved_config.llm.temperature,
+            keep_alive=resolved_config.llm.keep_alive,
+            clock=resolved_clock,
+        )
+        tracer = DatabaseTracer(
+            llm_call_repo,
+            clock=resolved_clock,
+            manifest_id=manifest_record.manifest_id,
+            trace_payloads=resolved_config.llm.trace_payloads,
+            max_traced_chars=resolved_config.llm.max_traced_chars,
+        )
+        # Free-form calls are traced by the decorator; structured generation
+        # traces every attempt itself, so it wraps the raw client instead.
+        llm_client = TracedLLMClient(ollama, tracer, clock=resolved_clock)
+        structured = StructuredGenerator(
+            ollama,
+            prompts=prompts,
+            failures=failures,
+            tracer=tracer,
+            clock=resolved_clock,
+            max_attempts=resolved_config.llm.max_attempts,
+        )
+
         processor = EventProcessor(
             db=db,
             event_store=event_store,
@@ -191,6 +241,10 @@ class Application:
             runs=runs,
             deliveries=deliveries,
             failures=failures,
+            llm_calls=llm_call_repo,
+            prompts=prompts,
+            llm=llm_client,
+            structured=structured,
             manifest_id=manifest_record.manifest_id,
             schema_version=current_schema,
         )
@@ -216,7 +270,29 @@ class Application:
         )
         await self.db.run(self.event_store.append, event)
         self.started = True
-        logger.info("application ready mode=%s", self.config.runtime.mode)
+
+        # Spec 32: Ollama health belongs to the startup sequence. An unhealthy
+        # model degrades the runtime; it does not corrupt state, so by default
+        # it does not block readiness (spec 28.3).
+        self.llm_healthy = await self.llm.health()
+        if not self.llm_healthy:
+            if self.config.llm.require_healthy_on_start:
+                await self.stop("llm unavailable")
+                raise StartupError(
+                    f"model {self.config.llm.model!r} is not available at "
+                    f"{self.config.llm.base_url}"
+                )
+            logger.warning(
+                "model %s not reachable at %s; running degraded",
+                self.config.llm.model,
+                self.config.llm.base_url,
+            )
+
+        logger.info(
+            "application ready mode=%s llm_healthy=%s",
+            self.config.runtime.mode,
+            self.llm_healthy,
+        )
         return event
 
     async def stop(self, reason: str = "shutdown") -> None:
@@ -233,6 +309,7 @@ class Application:
             )
             await self.db.run(self.event_store.append, event)
             self.started = False
+        await self.llm.aclose()
         self.db.close()
         logger.info("application stopped reason=%s", reason)
 

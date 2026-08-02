@@ -71,6 +71,31 @@ class LoggingSection(_Section):
     format: str = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
 
+class LLMSection(_Section):
+    """Local model settings (spec 3.1, 3.2)."""
+
+    provider: Literal["ollama"] = "ollama"
+    base_url: str = "http://127.0.0.1:11434"
+    model: str = "qwen3.5:9b"
+    request_timeout_s: float = Field(default=120.0, gt=0)
+    connect_timeout_s: float = Field(default=10.0, gt=0)
+    #: Spec 3.2: concurrency is 1 by default.
+    concurrency: int = Field(default=1, ge=1)
+    #: Spec 3.2: start at ~8192 and tune from measurements.
+    num_ctx: int = Field(default=8192, gt=0)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    keep_alive: str = "10m"
+    max_attempts: int = Field(default=3, ge=1)
+    #: Startup fails only if the owner demands a healthy model (spec 28.3).
+    require_healthy_on_start: bool = False
+    trace_payloads: bool = True
+    max_traced_chars: int = Field(default=4000, gt=0)
+
+
+class PromptsSection(_Section):
+    directory: Path = Path("config/prompts")
+
+
 class PoliciesSection(_Section):
     state_arbitration: str = "state_arbitration.yaml"
 
@@ -100,6 +125,8 @@ class AppConfig(_Section):
     runtime: RuntimeSection = RuntimeSection()
     logging: LoggingSection = LoggingSection()
     policies: PoliciesSection = PoliciesSection()
+    llm: LLMSection = LLMSection()
+    prompts: PromptsSection = PromptsSection()
     secrets: Secrets = Secrets()
 
     # --- resolved locations -------------------------------------------------
@@ -131,6 +158,10 @@ class AppConfig(_Section):
     def state_arbitration_policy_path(self) -> Path:
         return self.policies_dir / self.policies.state_arbitration
 
+    @property
+    def prompts_dir(self) -> Path:
+        return self._resolve(self.prompts.directory)
+
     def _resolve(self, value: Path) -> Path:
         return value if value.is_absolute() else (self.root_dir / value)
 
@@ -148,6 +179,9 @@ _ENV_OVERRIDES: Mapping[str, tuple[str, str]] = {
     "YUI_LOG_LEVEL": ("logging", "level"),
     "YUI_RUNTIME_MODE": ("runtime", "mode"),
     "YUI_DB_FILENAME": ("database", "filename"),
+    "OLLAMA_BASE_URL": ("llm", "base_url"),
+    "YUI_LLM_MODEL": ("llm", "model"),
+    "YUI_LLM_CONCURRENCY": ("llm", "concurrency"),
 }
 
 

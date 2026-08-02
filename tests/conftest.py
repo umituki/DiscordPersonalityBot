@@ -19,6 +19,8 @@ from app.events.bus import EventBus, SubscriberResult
 from app.events.dispatcher import EventDispatcher
 from app.events.model import Event, EventPayload, register_payload
 from app.events.store import EventStore
+from app.llm.prompts import PromptRegistry
+from app.llm.tracing import DatabaseTracer
 from app.state.arbitrator import StateArbitrator
 from app.state.committer import StateCommitter
 from app.state.policy import ArbitrationPolicy
@@ -30,6 +32,7 @@ from app.storage.repositories import (
     DeliveryRepository,
     EventRepository,
     FailureRepository,
+    LLMCallRepository,
     ManifestRepository,
     ProcessingRunRepository,
     SnapshotRepository,
@@ -112,6 +115,22 @@ def snapshots(
     state_repo: StateRepository, snapshot_repo: SnapshotRepository, clock: FixedClock
 ) -> SnapshotService:
     return SnapshotService(state_repo, snapshot_repo, clock=clock)
+
+
+@pytest.fixture
+def llm_calls_repo(db: Database) -> LLMCallRepository:
+    return LLMCallRepository(db)
+
+
+@pytest.fixture
+def tracer(llm_calls_repo: LLMCallRepository, clock: FixedClock) -> DatabaseTracer:
+    return DatabaseTracer(llm_calls_repo, clock=clock)
+
+
+@pytest.fixture
+def prompt_registry() -> PromptRegistry:
+    """The committed prompt files."""
+    return PromptRegistry.load(REPO_ROOT / "config" / "prompts")
 
 
 @pytest.fixture
@@ -209,6 +228,7 @@ def recording_subscriber():
 def temp_config(tmp_path: Path) -> AppConfig:
     """A full config rooted in tmp_path, with the real policy file copied in."""
     (tmp_path / "config" / "policies").mkdir(parents=True)
+    shutil.copytree(REPO_ROOT / "config" / "prompts", tmp_path / "config" / "prompts")
     shutil.copy(
         REPO_ROOT / "config" / "settings.yaml", tmp_path / "config" / "settings.yaml"
     )

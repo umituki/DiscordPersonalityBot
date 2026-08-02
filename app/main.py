@@ -1,8 +1,8 @@
 """Command line entry point.
 
-Phase 1 has no Discord interface yet, so ``run`` starts the application, holds
-it in a ready state, and shuts down cleanly on SIGINT/SIGTERM. That is enough
-to verify the spec 35 Phase 0 "start/stop" acceptance criterion and the
+No Discord interface exists yet (Phase 3), so ``run`` starts the application,
+holds it in a ready state, and shuts down cleanly on SIGINT/SIGTERM. That is
+enough to verify the spec 35 Phase 0 "start/stop" acceptance criterion and the
 Phase 1 restart-recovery behaviour.
 """
 
@@ -50,7 +50,7 @@ async def _run(config_file: Path | None) -> int:
             signal.signal(signal_number, lambda *_: stop_event.set())
 
     await application.start()
-    logger.info("yui is ready; no interface is attached in this phase (spec 35 Phase 1)")
+    logger.info("yui is ready; no conversational interface is attached yet (spec 35 Phase 3)")
     try:
         await stop_event.wait()
     finally:
@@ -97,6 +97,10 @@ def _status(config_file: Path | None) -> int:
             "state_changes": application.state.change_count(),
             "state_domains": application.state.domains(),
             "failures": application.failures.count(),
+            "llm_model": config.llm.model,
+            "llm_base_url": config.llm.base_url,
+            "llm_calls": application.llm_calls.count(),
+            "prompts": list(application.prompts.ids()),
             "integrity": application.db.integrity_check(),
         }
     finally:
