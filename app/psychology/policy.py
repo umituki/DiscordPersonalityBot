@@ -33,10 +33,47 @@ class AppraisalDefaults(_Frozen):
         return Appraisal(**self.model_dump(), source=source)  # type: ignore[arg-type]
 
 
+class HeuristicAppraisalRules(_Frozen):
+    """How Python reads an event that does not justify a model call.
+
+    Patch spec 12.3. Every number here is tuning: what matters structurally is
+    that a real appraisal reaches the engines downstream, not the exact
+    coefficients.
+    """
+
+    #: Experience classes appraised in Python rather than by the model.
+    classes: tuple[str, ...] = ("routine", "minor")
+    #: How much weight each class carries. Higher means more novel and more
+    #: expectation-violating for the same valence.
+    class_weight: dict[str, float] = Field(
+        default_factory=lambda: {"routine": 0.25, "minor": 0.5}
+    )
+    default_class_weight: float = Field(default=0.4, ge=0.0, le=1.0)
+
+    base_self_relevance: float = Field(default=0.30, ge=0.0, le=1.0)
+    significance_gain: float = Field(default=0.55, ge=0.0, le=2.0)
+    base_novelty: float = Field(default=0.10, ge=0.0, le=1.0)
+    class_novelty_gain: float = Field(default=0.50, ge=0.0, le=2.0)
+    valence_gain: float = Field(default=0.80, ge=0.0, le=2.0)
+    social_valence_gain: float = Field(default=0.60, ge=0.0, le=2.0)
+    base_social_meaning: float = Field(default=0.15, ge=-1.0, le=1.0)
+    expectation_gain: float = Field(default=0.70, ge=0.0, le=2.0)
+    base_certainty: float = Field(default=0.65, ge=0.0, le=1.0)
+    base_control: float = Field(default=0.50, ge=0.0, le=1.0)
+    base_agency: float = Field(default=0.45, ge=0.0, le=1.0)
+    agency_gain: float = Field(default=0.10, ge=0.0, le=1.0)
+    #: Never as trusted as a considered reading, and capped like one (spec 24).
+    confidence: float = Field(default=0.45, ge=0.0, le=1.0)
+
+    def covers(self, experience_class: str) -> bool:
+        return experience_class in self.classes
+
+
 class AppraisalPolicy(_Frozen):
     defaults: AppraisalDefaults = AppraisalDefaults()
     #: Spec 24: a model's self-reported confidence is capped, not trusted whole.
     max_trusted_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    heuristic: HeuristicAppraisalRules = HeuristicAppraisalRules()
 
 
 class EmotionPolicy(_Frozen):

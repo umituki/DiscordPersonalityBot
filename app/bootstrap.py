@@ -631,6 +631,10 @@ class Application:
             structured=structured,
             prompts=prompts,
             policy=simulation_policy,
+            # Patch spec 14: consolidation runs *during* the simulated life,
+            # not once at the end, so the Deep Gate sees several separated
+            # evidence windows instead of one.
+            consolidation=consolidation_job,
             clock=resolved_clock,
         )
         genesis_service = GenesisService(

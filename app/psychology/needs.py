@@ -55,7 +55,9 @@ class NeedEngine:
         self._clock = clock or SystemClock()
 
     async def handle(self, event: Event, view: RunView) -> SubscriberResult:
-        now = self._clock.now()
+        # Patch spec 13: the run's time, not the machine's. In a simulation
+        # these are decades apart.
+        now = view.now(self._clock)
         is_contact = event.actor_type == "user"
         idle_hours = self._idle_hours(view, now)
 

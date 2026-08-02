@@ -46,7 +46,9 @@ class EmotionEngine:
             # No interpretation, no emotion. Silence is the safe outcome.
             return SubscriberResult()
 
-        now = self._clock.now()
+        # Patch spec 13: the run's time, not the machine's. In a simulation
+        # these are decades apart.
+        now = view.now(self._clock)
         proposals: list[StateChangeProposal] = []
         events: list[Event] = []
 

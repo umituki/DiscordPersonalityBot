@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from app.clock import Clock, SystemClock, from_iso
+from app.config import RuntimeMode
 from app.consolidation.adaptations import AdaptationEngine, AdaptationEvidence
 from app.consolidation.drift import DriftMonitor, DriftReport
 from app.consolidation.events import (
@@ -163,8 +164,23 @@ class ConsolidationJob:
         interval = timedelta(hours=self._policy.consolidation.min_hours_between_runs)
         return moment - last >= interval
 
-    async def run(self, *, kind: str = "routine", force: bool = False) -> ConsolidationResult:
-        now = self._clock.now()
+    async def run(
+        self,
+        *,
+        kind: str = "routine",
+        force: bool = False,
+        now: datetime | None = None,
+        mode: RuntimeMode | None = None,
+    ) -> ConsolidationResult:
+        """Run one consolidation.
+
+        ``now`` is the effective time (patch spec 13). A consolidation inside a
+        simulated life happens at a simulated moment, and every window it reads
+        — evidence age, candidate persistence, theme recency — has to be
+        measured against that moment or a decade of life collapses into the
+        instant the machine happened to run.
+        """
+        now = now or self._clock.now()
         if not force and not self.due(now=now):
             recent = self._consolidations.recent(limit=1)
             return ConsolidationResult(
@@ -181,7 +197,7 @@ class ConsolidationJob:
         tallies, changes_read = self._scan_changes(now=now)
 
         # --- 2. adaptations: Layer 3 moves before Layer 4 (spec 23.2) ------
-        review_event = self._review_event(record.consolidation_id, kind=kind)
+        review_event = self._review_event(record.consolidation_id, kind=kind, now=now)
         adaptations_moved = self._apply_adaptation_evidence(tallies)
 
         # --- 3. candidates: accumulated evidence, not yet a change ---------
@@ -193,22 +209,22 @@ class ConsolidationJob:
         semantic_facts = self._consolidate_semantic()
 
         # --- 5. the deep review runs through the normal pipeline -----------
-        outcome = await self._processor.process(review_event)
+        outcome = await self._processor.process(review_event, mode=mode)
         committed = self._committed_values(outcome)
         deep_updates = tuple(
             self._growth.apply_committed(
-                committed=committed, run_id=outcome.run.run_id, now=self._clock.now()
+                committed=committed, run_id=outcome.run.run_id, now=now
             )
         )
         value_shifts = tuple(
             self._values.apply_committed(
-                committed=committed, run_id=outcome.run.run_id, now=self._clock.now()
+                committed=committed, run_id=outcome.run.run_id, now=now
             )
         )
         await self._record_applied(review_event, deep_updates)
 
         # --- 6. drift monitoring: observe and classify only ----------------
-        drift = self._drift.measure(now=self._clock.now())
+        drift = self._drift.measure(now=now)
         await self._record_anomalies(review_event, drift)
 
         finished = self._consolidations.finish(
@@ -224,7 +240,7 @@ class ConsolidationJob:
                 "drift_anomalies": len(drift.anomalies),
                 "run_id": outcome.run.run_id,
             },
-            now=self._clock.now(),
+            now=now,
         )
         logger.info(
             "consolidation complete changes=%d adaptations=%d candidates=%d deep=%d",
@@ -417,7 +433,9 @@ class ConsolidationJob:
         return created
 
     # --- 5/6. events for what actually happened ----------------------------
-    def _review_event(self, consolidation_id: str, *, kind: str) -> Event:
+    def _review_event(
+        self, consolidation_id: str, *, kind: str, now: datetime | None = None
+    ) -> Event:
         return Event.create(
             event_type=DEEP_CONSOLIDATION_REVIEW,
             category="system",
@@ -425,6 +443,9 @@ class ConsolidationJob:
             source_type=MODULE,
             origin="system",
             priority="P4",
+            # The review happened when the life reached this point, which is
+            # not when the machine got round to it (patch spec 13).
+            occurred_at=now,
             payload=ConsolidationReviewPayload(consolidation_id=consolidation_id, kind=kind),
             clock=self._clock,
         )

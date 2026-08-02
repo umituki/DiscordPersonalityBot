@@ -47,7 +47,9 @@ class MoodEngine:
         self._clock = clock or SystemClock()
 
     async def handle(self, event: Event, view: RunView) -> SubscriberResult:
-        now = self._clock.now()
+        # Patch spec 13: the run's time, not the machine's. In a simulation
+        # these are decades apart.
+        now = view.now(self._clock)
         current_valence = view.number(DOMAIN, VALENCE, self._policy.baseline_valence)
         current_arousal = view.number(DOMAIN, AROUSAL, self._policy.baseline_arousal)
         assert current_valence is not None and current_arousal is not None

@@ -70,7 +70,9 @@ class AttachmentEngine:
             return SubscriberResult()
 
         appraisal = view.appraisal if isinstance(view.appraisal, Appraisal) else None
-        now = self._clock.now()
+        # Patch spec 13: the run's time, not the machine's. In a simulation
+        # these are decades apart.
+        now = view.now(self._clock)
         separation_days = self._separation_days(view, now)
         signals = signals_from(event, appraisal, separation_days=separation_days)
 

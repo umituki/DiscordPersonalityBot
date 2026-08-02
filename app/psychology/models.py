@@ -57,8 +57,12 @@ class Appraisal(BaseModel):
     expectation_violation: float = Field(default=0.0, ge=0.0, le=1.0)
     #: The producer's own confidence. Only ever one signal (spec 24).
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
-    #: Where this reading came from, for provenance.
-    source: Literal["llm", "default", "degraded"] = "default"
+    #: Where this reading came from, for provenance. ``heuristic`` is a Python
+    #: reading of an event whose class does not justify a model call — patch
+    #: spec 12.3: ``routine/minorはvalence/significance/contextからPython
+    #: heuristic appraisalを作ってよい``. It is a real appraisal, not a default:
+    #: it varies with the event, and downstream cannot tell the difference.
+    source: Literal["llm", "heuristic", "default", "degraded"] = "default"
     reason: str = ""
 
     def dimension(self, name: str) -> float:
@@ -71,7 +75,7 @@ class Appraisal(BaseModel):
 
     @property
     def is_trusted(self) -> bool:
-        return self.source in ("llm", "default")
+        return self.source in ("llm", "heuristic", "default")
 
 
 class AppraisalCandidate(BaseModel):

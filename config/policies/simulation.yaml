@@ -38,6 +38,17 @@ knowledge:
   exposures_per_block: 4
   base_curiosity: 0.5
 
+# patch spec 14: Genesis 終了時 1 回だけの consolidation を禁止する。
+# 目的は Deep Gate を迂回することではなく、正しい simulated time と
+# 複数 window の evidence を Gate へ届けること。
+genesis:
+  # 90 日は tuning 値。
+  consolidation_interval_simulated_days: 90.0
+  consolidate_on_phase_boundary: true
+  consolidate_after_major_event: true
+  final_consolidation: true
+  major_classes: [major, turning_point]
+
 first_boot:
   # Spec 22.7: every audit must pass. These are the thresholds the quality
   # audit uses; the others are pass/fail on their own terms.

@@ -75,6 +75,25 @@ class KnowledgeExposureRules(_Frozen):
     base_curiosity: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
+class GenesisRules(_Frozen):
+    """When consolidation happens during a simulated life (patch spec 14).
+
+    ``Genesis終了時1回だけを禁止する``. One consolidation at the end cannot
+    produce growth: the Deep Gate needs the same tendency to show up across
+    several separated windows, and a single run has exactly one window. The
+    fix is not to weaken the gate — it is to let the life actually pass
+    through consolidation as it goes.
+    """
+
+    #: How much simulated time between routine consolidations. Tuning.
+    consolidation_interval_simulated_days: float = Field(default=90.0, gt=0.0)
+    consolidate_on_phase_boundary: bool = True
+    consolidate_after_major_event: bool = True
+    final_consolidation: bool = True
+    #: Experience classes that count as "major" for the trigger above.
+    major_classes: tuple[str, ...] = ("major", "turning_point")
+
+
 class FirstBootRules(_Frozen):
     min_experiences: int = Field(default=20, ge=0)
     min_blocks: int = Field(default=12, ge=0)
@@ -88,6 +107,7 @@ class SimulationPolicy(_Frozen):
     blocks: BlockRules = BlockRules()
     experience: ExperienceRules = ExperienceRules()
     knowledge: KnowledgeExposureRules = KnowledgeExposureRules()
+    genesis: GenesisRules = GenesisRules()
     first_boot: FirstBootRules = FirstBootRules()
 
     @classmethod

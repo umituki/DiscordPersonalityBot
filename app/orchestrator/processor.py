@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, Protocol
 
 from app import ids
@@ -209,6 +210,7 @@ class EventProcessor:
             interpretation=interpretation,
             run_id=run.run_id,
             mode=run_mode,
+            effective_now=self._effective_now(event, run_mode),
         )
 
         try:
@@ -288,6 +290,21 @@ class EventProcessor:
             commit_attempt=commit_attempt,
             retry_of_run_id=retry_of,
         )
+
+    def _effective_now(self, event: Event, mode: RuntimeMode) -> datetime:
+        """The psychological ``now`` every engine in this run must use.
+
+        Patch spec 13: ``normal runtimeではwall clock、simulationではsimulated
+        timeを使う``. One value per run, decided here — an engine reaching for
+        its own clock during a simulation is what turned ten simulated years
+        into a few wall-clock seconds of decay.
+
+        Monotonicity within a run is therefore structural: there is only one
+        moment, and every engine sees it.
+        """
+        if mode == "simulation":
+            return event.occurred_at
+        return self._clock.now()
 
     # --- synchronous units of work ----------------------------------------
     def _open_run(

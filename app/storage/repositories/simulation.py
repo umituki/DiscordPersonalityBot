@@ -243,6 +243,18 @@ class SimulationRepository:
             (summary, block_id),
         )
 
+    def set_block_event_count(self, block_id: str, event_count: int) -> None:
+        """Record how many events the block really produced (patch spec 24).
+
+        Written after the block runs rather than guessed when it is created:
+        the count is a fact about what happened, and a constant here made a
+        simulation look uniform when it was not.
+        """
+        self._db.execute(
+            "UPDATE simulation_blocks SET event_count = ? WHERE block_id = ?",
+            (int(event_count), block_id),
+        )
+
     def block(self, block_id: str) -> SimulationBlock | None:
         row = self._db.query_one(
             "SELECT * FROM simulation_blocks WHERE block_id = ?", (block_id,)

@@ -28,7 +28,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from random import Random
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 from app.clock import Clock, FixedClock, SystemClock, to_iso
 from app.consolidation.growth import GrowthEngine
@@ -62,6 +62,9 @@ from app.simulation.models import (
 from app.simulation.policy import SimulationPolicy
 from app.storage.repositories.simulation import SimulationRepository
 
+if TYPE_CHECKING:  # pragma: no cover - the job imports this module's siblings
+    from app.consolidation.job import ConsolidationJob
+
 logger = logging.getLogger(__name__)
 
 MODULE = "past_simulation_engine"
@@ -92,6 +95,12 @@ class SimulationProgress:
     demotions: list[str] = field(default_factory=list)
     by_class: dict[str, int] = field(default_factory=dict)
     recent_summaries: list[str] = field(default_factory=list)
+    #: Patch spec 14: consolidations that ran *during* the life, by trigger.
+    consolidations: int = 0
+    consolidation_triggers: dict[str, int] = field(default_factory=dict)
+    #: Patch spec 12: appraisals the experiences actually produced, by source.
+    appraisals: int = 0
+    appraisals_by_source: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +127,7 @@ class PastSimulationEngine:
         structured: StructuredGenerator,
         prompts: PromptRegistry,
         policy: SimulationPolicy,
+        consolidation: "ConsolidationJob | None" = None,
         clock: Clock | None = None,
         rng: Random | None = None,
     ) -> None:
@@ -128,6 +138,10 @@ class PastSimulationEngine:
         self._structured = structured
         self._prompts = prompts
         self._policy = policy
+        #: Patch spec 14. Optional so the engine can still be exercised alone,
+        #: but a Genesis run without it produces no growth — which is what the
+        #: FIRST BOOT audits are there to refuse.
+        self._consolidation = consolidation
         self._clock = clock or SystemClock()
         self._rng = rng or Random(20260101)
         self._sampler = ExperienceSampler(policy.experience, rng=self._rng)
@@ -198,14 +212,20 @@ class PastSimulationEngine:
         blocks: list[SimulationBlock] = []
         moment = scaffold.period_start
         ordinal = 0
+        # Patch spec 14: consolidation happens *during* the life, on simulated
+        # time. Tracked here rather than inside the block so a phase change
+        # between blocks is visible.
+        last_consolidated_at = scaffold.period_start
+        previous_phase_id: str | None = None
 
         while moment < scaffold.period_end and ordinal < limit:
             phase = self._phase_at(phases, moment)
+            phase_id = None if phase is None else phase.phase_id
             block, moment = await self._run_block(
                 run=run,
                 scaffold=scaffold,
                 seed=seed,
-                phase_id=None if phase is None else phase.phase_id,
+                phase_id=phase_id,
                 started_at=moment,
                 ordinal=ordinal,
                 budget=budget,
@@ -213,6 +233,21 @@ class PastSimulationEngine:
             )
             blocks.append(block)
             ordinal += 1
+
+            trigger = self._consolidation_trigger(
+                block=block,
+                moment=moment,
+                last_consolidated_at=last_consolidated_at,
+                phase_id=phase_id,
+                previous_phase_id=previous_phase_id,
+                first_block=ordinal == 1,
+            )
+            previous_phase_id = phase_id
+            if trigger is not None and await self._consolidate(moment, trigger, progress):
+                last_consolidated_at = moment
+
+        if self._policy.genesis.final_consolidation:
+            await self._consolidate(moment, "final", progress)
 
         progress.blocks = len(blocks)
         progress.demotions = list(budget.demotions)
@@ -227,6 +262,12 @@ class PastSimulationEngine:
                 "knowledge_acquired": progress.knowledge_acquired,
                 "demotions": progress.demotions[:20],
                 "by_class": progress.by_class,
+                # Patch spec 12 and 14: the evidence that the causal chain
+                # actually ran, kept where the FIRST BOOT audits can read it.
+                "appraisals": progress.appraisals,
+                "appraisals_by_source": progress.appraisals_by_source,
+                "consolidations": progress.consolidations,
+                "consolidation_triggers": progress.consolidation_triggers,
             },
             now=self._clock.now(),
         )
@@ -295,23 +336,107 @@ class PastSimulationEngine:
             experience=experience,
             narration=narration,
         )
-        await self._processor.process(event, mode="simulation")
+        outcome = await self._processor.process(event, mode="simulation")
+        self._record_appraisal(outcome, progress)
         progress.experiences += 1
         progress.recent_summaries.append(narration.summary)
         self._repository.set_block_summary(block.block_id, narration.summary)
 
         # --- and so does whatever the world was saying at the time ----------
-        self._expose_period_knowledge(
+        block_exposures = self._expose_period_knowledge(
             moment=started_at,
             seed=seed,
             block_id=block.block_id,
             progress=progress,
         )
 
-        await self._processor.process(
-            self._block_event(block, event), mode="simulation"
+        # Patch spec 24 (Patch D): the count is the events this block really
+        # produced, not a constant. The experience, plus one event per piece of
+        # period knowledge that reached her, plus the block event itself.
+        event_count = 1 + block_exposures + 1
+        block_event = self._block_event(
+            block, event, occurred_at=ended_at, event_count=event_count
         )
-        return block, ended_at
+        await self._processor.process(block_event, mode="simulation")
+        self._repository.set_block_event_count(block.block_id, event_count)
+        return block.model_copy(update={"event_count": event_count}), ended_at
+
+    @staticmethod
+    def _record_appraisal(outcome, progress: SimulationProgress) -> None:
+        """Patch spec 12.1: an experience that produced no appraisal was not lived.
+
+        Counted per run so a Genesis that silently stopped appraising is
+        visible in the run detail, and refusable by the FIRST BOOT audits,
+        rather than showing up only as a personality that never moved.
+        """
+        appraisal = None
+        if outcome.interpretation is not None:
+            appraisal = outcome.interpretation.appraisal
+        if appraisal is None:
+            return
+        progress.appraisals += 1
+        source = getattr(appraisal, "source", "unknown")
+        progress.appraisals_by_source[source] = progress.appraisals_by_source.get(source, 0) + 1
+
+    # --- consolidation during the life (patch spec 14) ----------------------
+    def _consolidation_trigger(
+        self,
+        *,
+        block: SimulationBlock,
+        moment: datetime,
+        last_consolidated_at: datetime,
+        phase_id: str | None,
+        previous_phase_id: str | None,
+        first_block: bool,
+    ) -> str | None:
+        """Why consolidation should run now, or ``None``.
+
+        Deliberately several triggers rather than one interval: a life reviews
+        itself when enough time has passed, when a chapter of it ends, and
+        after something large. Each produces a separate evidence window, which
+        is what the Deep Gate needs and what one final run cannot give it.
+        """
+        rules = self._policy.genesis
+        if rules.consolidate_after_major_event and block.experience_class in rules.major_classes:
+            return "major_event"
+        if (
+            rules.consolidate_on_phase_boundary
+            and not first_block
+            and phase_id != previous_phase_id
+        ):
+            return "phase_boundary"
+        elapsed = (moment - last_consolidated_at).total_seconds() / 86400.0
+        if elapsed >= rules.consolidation_interval_simulated_days:
+            return "interval"
+        return None
+
+    async def _consolidate(
+        self, moment: datetime, trigger: str, progress: SimulationProgress
+    ) -> bool:
+        """Run one consolidation at a simulated moment.
+
+        ``force=True`` because the job's own interval is measured in wall-clock
+        hours between real runs, which says nothing about a simulated life; the
+        interval that matters here is the simulated one, already checked by
+        :meth:`_consolidation_trigger`.
+
+        A failure degrades the life rather than ending it — the run is still a
+        life, and the FIRST BOOT audits will refuse it if too little happened.
+        """
+        if self._consolidation is None:
+            return False
+        try:
+            await self._consolidation.run(
+                kind=f"genesis_{trigger}", force=True, now=moment, mode="simulation"
+            )
+        except Exception:  # noqa: BLE001 - recorded, then the life continues
+            logger.exception("consolidation failed during simulation at %s", moment.isoformat())
+            return False
+        progress.consolidations += 1
+        progress.consolidation_triggers[trigger] = (
+            progress.consolidation_triggers.get(trigger, 0) + 1
+        )
+        return True
 
     def _expose_period_knowledge(
         self,
@@ -320,8 +445,12 @@ class PastSimulationEngine:
         seed: TemperamentSeed,
         block_id: str,
         progress: SimulationProgress,
-    ) -> None:
-        """Offer the period's knowledge. The funnel decides what sticks."""
+    ) -> int:
+        """Offer the period's knowledge. The funnel decides what sticks.
+
+        Returns how many exposures actually happened, which is part of the
+        block's real event count.
+        """
         rules = self._policy.knowledge
         interests = {topic: 0.7 for topic in seed.interests}
         try:
@@ -339,9 +468,10 @@ class PastSimulationEngine:
             # leaking is never the fallback (spec 21.4).
             progress.leakage_attempts += 1
             logger.error("temporal leakage blocked at %s", moment.isoformat())
-            return
+            return 0
         progress.knowledge_exposures += len(results)
         progress.knowledge_acquired += sum(1 for result in results if result.learned)
+        return len(results)
 
     # --- events -------------------------------------------------------------
     def _experience_event(
@@ -379,20 +509,34 @@ class PastSimulationEngine:
             clock=self._clock,
         )
 
-    def _block_event(self, block: SimulationBlock, parent: Event) -> Event:
+    def _block_event(
+        self,
+        block: SimulationBlock,
+        parent: Event,
+        *,
+        occurred_at: datetime,
+        event_count: int,
+    ) -> Event:
+        """The block is closed at the simulated moment it ended.
+
+        Patch spec 13: without ``occurred_at`` this event lands at wall-clock
+        now, which puts a 2003 block after a 2026 one and makes the simulated
+        timeline non-monotonic in the archive.
+        """
         return parent.child(
             event_type=SIMULATION_BLOCK_COMPLETED,
             category="internal",
             actor_type="yui",
             source_type=MODULE,
             clock=self._clock,
+            occurred_at=occurred_at,
             priority="P5",
             payload=BlockCompletedPayload(
                 block_id=block.block_id,
                 detail_level=block.detail_level,
                 experience_class=block.experience_class,
                 days=round(block.days, 2),
-                event_count=1,
+                event_count=event_count,
             ),
         )
 

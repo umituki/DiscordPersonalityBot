@@ -90,7 +90,9 @@ class SocialCognitionEngine:
 
         appraisal = view.appraisal if isinstance(view.appraisal, Appraisal) else None
         signals = signals_from(event, appraisal)
-        now = self._clock.now()
+        # Patch spec 13: the run's time, not the machine's. In a simulation
+        # these are decades apart.
+        now = view.now(self._clock)
         text = getattr(event.payload, "text", "") or ""
 
         current = {key: self._current(view, key) for key in DEFAULTS}

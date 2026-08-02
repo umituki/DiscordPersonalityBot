@@ -23,6 +23,7 @@ from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator
 from app.llm.types import LLMMessage
 from app.orchestrator.run_view import Interpretation
+from app.psychology.heuristic import appraise_event
 from app.psychology.models import Appraisal, AppraisalCandidate
 from app.psychology.policy import AppraisalPolicy
 from app.resources.identity import Identity
@@ -36,6 +37,17 @@ NO_HISTORY = "(直近のやりとりはない)"
 
 #: Events worth appraising. Everything else passes through uninterpreted.
 APPRAISABLE_CATEGORIES = frozenset({"social", "world", "action", "knowledge"})
+
+#: Patch spec 12.1: ``category="internal"`` だけで除外しない.
+#:
+#: A simulated experience is categorised ``internal`` because it is not
+#: something that happened in the real world — and that categorisation silently
+#: excluded the entire simulated past from appraisal. 238 experiences produced
+#: zero appraisals, so no emotion, no needs, no evidence, no growth: a life
+#: that was recorded but never lived. These types are appraisable regardless of
+#: category, provided they carry the simulated-past origin.
+APPRAISABLE_SIMULATED_TYPES = frozenset({"SIMULATED_EXPERIENCE"})
+SIMULATED_ORIGIN = "simulated_past"
 
 #: Patch spec 5.3: YUI's own outbound message is not something that happened
 #: *to* her, and re-reading it through the appraisal prompt spends a model call
@@ -71,7 +83,7 @@ class AppraisalEngine:
         self._recent_turns = tuple(turns)
 
     async def interpret(self, event: Event, snapshot: StateSnapshot) -> Interpretation:
-        if event.category not in APPRAISABLE_CATEGORIES:
+        if not self.is_appraisable(event):
             return Interpretation()
         if self.is_self_authored(event):
             return Interpretation()
@@ -79,11 +91,40 @@ class AppraisalEngine:
         return Interpretation(appraisal=appraisal)
 
     @staticmethod
+    def is_appraisable(event: Event) -> bool:
+        """Whether this event is read at all (patch spec 12.1)."""
+        if event.category in APPRAISABLE_CATEGORIES:
+            return True
+        return (
+            event.event_type in APPRAISABLE_SIMULATED_TYPES
+            and event.origin == SIMULATED_ORIGIN
+        )
+
+    @staticmethod
     def is_self_authored(event: Event) -> bool:
-        """Whether YUI is appraising her own outbound act (patch spec 5.3)."""
+        """Whether YUI is appraising her own outbound act (patch spec 5.3).
+
+        A simulated experience is authored by ``yui`` too, but it is something
+        that happened *to* her in the given past — not a message she just
+        chose to send — so it is read like any other event.
+        """
         return event.actor_type == "yui" and event.event_type in SELF_AUTHORED_EVENT_TYPES
 
+    def uses_heuristic(self, event: Event) -> bool:
+        """Whether this event is read in Python rather than by the model.
+
+        Patch spec 12.3: routine and minor experiences are the bulk of a
+        simulated life, and a model call for each is what makes decades
+        unaffordable. The appraisal still happens.
+        """
+        rules = self._policy.heuristic
+        experience_class = str(getattr(event.payload, "experience_class", "") or "")
+        return bool(experience_class) and rules.covers(experience_class)
+
     async def appraise(self, event: Event, snapshot: StateSnapshot) -> Appraisal:
+        if self.uses_heuristic(event):
+            return appraise_event(event, self._policy.heuristic)
+
         situation = _describe(event)
         template = self._prompts.get(PROMPT_ID)
         content = template.render(

@@ -104,7 +104,9 @@ class WorldService:
     # --- as a subscriber ---------------------------------------------------
     async def handle(self, event: Event, view: RunView) -> SubscriberResult:
         """Keep the world's clock-derived state current for this run."""
-        now = self._clock.now()
+        # Patch spec 13: sleep pressure and the day's progression follow the
+        # run's time, so a simulated year is a year of world progression.
+        now = view.now(self._clock)
         awake = (view.number(DOMAIN, AWAKE, 1.0) or 0.0) >= 0.5
         pressure = view.number(DOMAIN, SLEEP_PRESSURE, DEFAULTS[SLEEP_PRESSURE]) or 0.0
         elapsed = self._hours_since(view, now)
