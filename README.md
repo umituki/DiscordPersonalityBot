@@ -258,8 +258,9 @@ powershell -File scripts/yui.ps1 -Command run
 
 ```bash
 .venv/bin/python -m pytest              # 全件
-.venv/bin/python -m pytest -m invariant # 不変条件のみ
-.venv/bin/python -m pytest -m chaos     # 障害注入のみ
+.venv/bin/python -m pytest -m invariant # 不変条件のみ（仕様 34.2）
+.venv/bin/python -m pytest -m scenario  # 必須シナリオのみ（仕様 34.3）
+.venv/bin/python -m pytest -m chaos     # 障害注入のみ（仕様 34.1）
 ```
 
 テストは一時 DB のみを使用し、production `data/` には触れない。
@@ -297,7 +298,7 @@ app/
 character/       identity.yaml, immutable_rules.yaml, speech.md
 config/          settings.yaml, policies/, prompts/
 docs/            YUI_v2_SPEC.md
-tests/           unit/, invariants/
+tests/           unit/, invariants/, scenarios/, chaos/
 ```
 
 ## 開発上の約束

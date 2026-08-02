@@ -42,4 +42,5 @@ filterwarnings = ["error::DeprecationWarning:app.*"]
 markers = [
     "invariant: protects a specification invariant (docs/YUI_v2_SPEC.md 34.2)",
     "chaos: failure injection, per docs/YUI_v2_SPEC.md 34.1",
+    "scenario: required behaviour example, per docs/YUI_v2_SPEC.md 34.3",
 ]
