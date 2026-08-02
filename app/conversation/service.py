@@ -27,6 +27,7 @@ from typing import Awaitable
 from dataclasses import dataclass
 
 from app.clock import Clock, SystemClock
+from app.conversation.common_ground import CommonGroundTracker, CorrectionOutcome
 from app.conversation.engine import ConversationEngine, ReplyGeneration
 from app.conversation.events import (
     USER_MESSAGE_RECEIVED,
@@ -78,6 +79,11 @@ class ConversationResult:
     #: Patch spec 19.2. Carried back so the interface can add the marks only it
     #: knows — when typing started, when Discord actually took the message.
     trace: ConversationTrace | None = None
+    #: Rebuild spec 11. Carried so that, once the send is confirmed, the claims
+    #: the reply made are entered into the common ground against the same
+    #: evidence they were checked against — not against a context rebuilt
+    #: later, which would have moved on.
+    grounding_context: object | None = None
 
     @property
     def should_send(self) -> bool:
@@ -99,6 +105,7 @@ class ConversationService:
         appraisal: AppraisalEngine | None = None,
         tools: ToolManager | None = None,
         grounding: GroundingContextBuilder | None = None,
+        common_ground: CommonGroundTracker | None = None,
         tracer: ConversationTracer | None = None,
         clock: Clock | None = None,
     ) -> None:
@@ -121,6 +128,9 @@ class ConversationService:
         #: Rebuild spec 15.1: what is actually known, assembled before the
         #: reply exists so nothing the model writes can end up in it.
         self._grounding = grounding
+        #: Rebuild spec 11: what this conversation is treating as true, and
+        #: what happens when the USER says it is not.
+        self._common_ground = common_ground
         #: Patch spec 19.2: where the USER's wait went, stage by stage. Optional
         #: because observability must never be a precondition for answering.
         self._tracer = tracer
@@ -230,6 +240,20 @@ class ConversationService:
                 run_id=outcome.run.run_id,
             )
 
+        # Rebuild spec 11, CORR-001. Before writing anything, check whether the
+        # USER just pushed back on something YUI herself claimed — and if she
+        # cannot back it up now, take it back (CORR-002) rather than hand the
+        # reply prompt an argument to make.
+        correction = CorrectionOutcome()
+        if self._common_ground is not None:
+            correction = await asyncio.to_thread(
+                self._common_ground.review_correction,
+                event.payload.text,
+                conversation_id=conversation.conversation_id,
+                context=grounding_context,
+                now=event.occurred_at,
+            )
+
         self._mark(trace, "reply_started_at")
         generation = await self._engine.draft_reply(
             trace=trace,
@@ -243,6 +267,12 @@ class ConversationService:
             event_id=event.event_id,
             tool_success_ids=tool_success_ids,
             grounding=grounding_context,
+            common_ground=(
+                self._common_ground.render(conversation.conversation_id)
+                if self._common_ground is not None
+                else ""
+            ),
+            correction=correction.render(),
         )
         self._mark(trace, "reply_ended_at")
 
@@ -264,6 +294,7 @@ class ConversationService:
             outcome=outcome,
             generation=generation,
             trace=trace,
+            grounding_context=grounding_context,
             outbound=OutboundMessage(
                 channel_id=message.channel_id,
                 text=generation.text,
@@ -319,6 +350,17 @@ class ConversationService:
             now=sent.occurred_at,
         )
         await asyncio.to_thread(self._project_sent, sent, conversation, result, message_id)
+        # Rebuild spec 11.1. Only now: a claim enters the common ground because
+        # it was *said*, and a suppressed draft was never said (GROUND-004).
+        if self._common_ground is not None:
+            await asyncio.to_thread(
+                self._common_ground.record_reply,
+                result.outbound.text,
+                conversation_id=conversation.conversation_id,
+                event_id=sent.event_id,
+                context=result.grounding_context,
+                now=sent.occurred_at,
+            )
         # 19.2: the moment the reply is actually visible in the next turn's
         # context, which is what the USER's wait was for.
         self._mark(result.trace, "outbound_projected_at")

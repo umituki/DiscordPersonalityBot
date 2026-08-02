@@ -1443,6 +1443,41 @@ _0018_REBUILD_EPOCHS = Migration(
 )
 
 
+_0019_COMMON_GROUND = Migration(
+    version=19,
+    name="common_ground",
+    statements=(
+        # Rebuild spec 11.1: a short-term read model of what this conversation
+        # is currently treating as true, and how well it is held.
+        #
+        # It is persisted rather than kept in memory for one reason: a claim
+        # YUI made before a restart is still a claim the USER heard. Losing it
+        # would mean 「違うよ」 after a restart lands on nothing, and CORR-001
+        # would silently do nothing at all.
+        """
+        CREATE TABLE common_ground_claims (
+            claim_id        TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            event_id        TEXT,
+            kind            TEXT NOT NULL,
+            statement       TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'provisional',
+            source          TEXT NOT NULL DEFAULT 'yui_inference',
+            confidence      TEXT NOT NULL DEFAULT 'low',
+            evidence_json   TEXT NOT NULL DEFAULT '[]',
+            asserted_at     TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            resolved_reason TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (conversation_id) REFERENCES conversations (conversation_id)
+        )
+        """,
+        "CREATE INDEX idx_common_ground_conversation "
+        "ON common_ground_claims (conversation_id, asserted_at DESC)",
+        "CREATE INDEX idx_common_ground_status ON common_ground_claims (status)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1462,6 +1497,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0016_CANDIDATE_HISTORY,
     _0017_CONVERSATION_TRACES,
     _0018_REBUILD_EPOCHS,
+    _0019_COMMON_GROUND,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

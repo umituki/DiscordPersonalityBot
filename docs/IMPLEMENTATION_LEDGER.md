@@ -67,9 +67,9 @@ epoch row says `genesis_status=pending`.
 | GROUND-002 | An unsupported claim gets one repair | `app/conversation/engine.py` (`_review_and_repair`) | `test_a_completed_activity_supports_the_claim` | `test_an_unsupported_claim_is_rewritten_once` | `test_an_unsupported_claim_is_rewritten_once` | `llm_calls` rows (`purpose='conversation_repair'`) | E2E_VERIFIED |
 | GROUND-003 | A failed repair suppresses the send | `app/conversation/engine.py`, `app/conversation/service.py` (`_suppress`) | `test_a_different_activity_does_not_support_it` | `test_a_failed_repair_suppresses_the_send` | `test_a_failed_repair_suppresses_the_send` | `YUI_REPLY_SUPPRESSED` events | E2E_VERIFIED |
 | GROUND-004 | An unsent draft is never encoded into memory | `app/conversation/service.py` (`_post_send_work` runs only from `confirm_sent`) | — | `test_a_suppressed_draft_leaves_no_trace` | `test_a_suppressed_draft_leaves_no_trace` | `episodic_memories` / `conversation_turns` | E2E_VERIFIED |
-| CORR-001 | A USER denial re-checks YUI's own previous claim | — | — | — | — | — | NOT_STARTED |
-| CORR-002 | Without evidence, retract rather than explain harder | — | — | — | — | — | NOT_STARTED |
-| CORR-003 | A retracted claim leaves Common Ground | — | — | — | — | — | NOT_STARTED |
+| CORR-001 | A USER denial re-checks YUI's own previous claim | `app/conversation/common_ground.py` (`detect_correction`, `review_correction`), `app/conversation/service.py` | `test_pushback_is_detected`, `test_ordinary_talk_is_not_pushback` | `test_a_challenge_re_checks_yuis_own_claim` | `test_a_challenged_unsupported_claim_is_retracted_not_defended` | `common_ground_claims` rows | E2E_VERIFIED |
+| CORR-002 | Without evidence, retract rather than explain harder | `app/conversation/common_ground.py` (`_still_supported`), `config/prompts/conversation_reply/v5.md` | `test_without_evidence_the_claim_is_retracted`, `test_with_evidence_the_claim_stands_but_is_contested` | `test_an_unverifiable_claim_leans_to_retraction` | `test_a_challenged_unsupported_claim_is_retracted_not_defended` | `common_ground_claims.resolved_reason` | E2E_VERIFIED |
+| CORR-003 | A retracted claim leaves Common Ground | `app/storage/repositories/common_ground.py` (`live`), migration 0019 | `test_a_retracted_claim_leaves_the_common_ground`, `test_a_second_challenge_does_not_re_retract_the_same_claim` | `test_claims_survive_a_restart` | `test_a_challenged_unsupported_claim_is_retracted_not_defended` | `common_ground_claims` (status) | E2E_VERIFIED |
 
 ---
 

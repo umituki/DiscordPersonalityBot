@@ -26,6 +26,7 @@ _EXPORTS: dict[str, str] = {
     "ValueRepository": "growth",
     "ConversationRepository": "conversations",
     "ConversationTraceRepository": "traces",
+    "CommonGroundRepository": "common_ground",
     "CoverageJobRepository": "knowledge",
     "DecisionRepository": "agency",
     "DeliveryDecision": "deliveries",
@@ -74,6 +75,7 @@ __all__ = [
     "ConsolidationRepository",
     "ConversationRepository",
     "ConversationTraceRepository",
+    "CommonGroundRepository",
     "CoverageJobRepository",
     "DecisionRepository",
     "DeliveryDecision",
@@ -142,6 +144,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     )
     from app.storage.repositories.conversations import ConversationRepository
     from app.storage.repositories.traces import ConversationTraceRepository
+    from app.storage.repositories.common_ground import CommonGroundRepository
     from app.storage.repositories.deliveries import DeliveryDecision, DeliveryRepository
     from app.storage.repositories.events import EventRepository
     from app.storage.repositories.failures import FailureRecord, FailureRepository

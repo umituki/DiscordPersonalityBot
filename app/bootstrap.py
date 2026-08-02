@@ -55,6 +55,7 @@ from app.jobs.scheduler import Scheduler
 from app.events.store import EventStore
 from app.consolidation.events import DEEP_CONSOLIDATION_REVIEW
 from app.conversation.engine import ConversationEngine
+from app.conversation.common_ground import CommonGroundTracker
 from app.conversation.guard import OutputGuard, OutputGuardPolicy
 from app.grounding.claims import ClaimExtractor, ClaimGroundingGuard
 from app.grounding.context import GroundingContextBuilder
@@ -122,6 +123,7 @@ from app.storage.repositories import (
     DecisionRepository,
     ConversationRepository,
     ConversationTraceRepository,
+    CommonGroundRepository,
     DriftRepository,
     MemoryAdminRepository,
     MemoryRepository,
@@ -309,6 +311,7 @@ class Application:
         manifest_repo = ManifestRepository(db)
         llm_call_repo = LLMCallRepository(db)
         conversation_repo = ConversationRepository(db)
+        common_ground_repo = CommonGroundRepository(db)
         memory_repo = MemoryRepository(db)
         belief_repo = BeliefRepository(db)
         self_repo = SelfRepository(db)
@@ -451,7 +454,8 @@ class Application:
         # Rebuild spec 15. The guard resolves claims; the builder assembles what
         # they are resolved against. Both are wired here so the reply path has
         # no way to run without them.
-        claim_guard = ClaimGroundingGuard(ClaimExtractor(grounding_policy))
+        claim_extractor = ClaimExtractor(grounding_policy)
+        claim_guard = ClaimGroundingGuard(claim_extractor)
         conversation_engine = ConversationEngine(
             identity=identity,
             prompts=prompts,
@@ -776,6 +780,11 @@ class Application:
                 appraisal=appraisal_engine,
                 event_store=event_store,
                 tools=tool_manager,
+                common_ground=CommonGroundTracker(
+                    common_ground_repo,
+                    extractor=claim_extractor,
+                    guard=claim_guard,
+                ),
                 grounding=GroundingContextBuilder(
                     events=event_store,
                     activities=activity_repo,

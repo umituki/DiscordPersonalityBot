@@ -73,6 +73,8 @@ REPAIR_PURPOSE = "conversation_repair"
 
 NO_HISTORY = "(まだ記録されたやりとりはない)"
 NO_MEMORIES = "(いま思い出せることはない)"
+NO_COMMON_GROUND = "(この会話でまだ前提になっていることはない)"
+NO_CORRECTION = "(訂正すべきことはない)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +154,8 @@ class ConversationEngine:
         event_id: str | None = None,
         tool_success_ids: Sequence[str] = (),
         grounding: GroundingContext | None = None,
+        common_ground: str = "",
+        correction: str = "",
         trace: "ConversationTrace | None" = None,
     ) -> ReplyGeneration:
         # Spec 16.1: decide what kind of response this is *before* writing it.
@@ -190,6 +194,10 @@ class ConversationEngine:
                 else NO_MEMORIES
             ),
             dialogue_acts=acts.render(),
+            # Rebuild spec 11. Empty is the honest reading when this
+            # conversation has not asserted anything yet.
+            common_ground=common_ground or NO_COMMON_GROUND,
+            correction=correction or NO_CORRECTION,
             current_time=to_iso(self._clock.now()),
         )
 
