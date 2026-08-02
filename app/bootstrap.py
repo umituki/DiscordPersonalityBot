@@ -22,6 +22,8 @@ import logging
 from dataclasses import dataclass
 
 from app.admin.control_plane import AdminControlPlane
+from app.admin.legacy import LegacyHealthScanner
+from app.admin.repair import RepairService
 from app.agency.decision import DecisionEngine
 from app.agency.goals import GoalEngine
 from app.agency.habits import HabitEngine
@@ -218,6 +220,8 @@ class Application:
     resources: ResourceManager
     backups: BackupService
     admin: AdminControlPlane
+    legacy: LegacyHealthScanner
+    repair: RepairService
     society_policy: SocietyPolicy
     society: SocietyService
     npc_relationships: NPCRelationshipEngine
@@ -708,6 +712,21 @@ class Application:
             backups=backup_service,
             clock=resolved_clock,
         )
+        # Patch spec 23. Both read-only until the owner asks for a rebuild, and
+        # neither can delete anything: a database that booted from a broken
+        # Genesis still holds real Discord history (23.1).
+        legacy_scanner = LegacyHealthScanner(
+            health=health_repo, simulations=simulation_repo
+        )
+        repair_service = RepairService(
+            db=db,
+            events=events_repo,
+            simulations=simulation_repo,
+            health=health_repo,
+            backups=backup_service,
+            shadow_dir=resolved_config.data_dir / "shadow",
+            clock=resolved_clock,
+        )
 
         # The conversation path exists only when the single USER is identified
         # (spec 1.2). Without it, YUI has no one to talk to and stays offline.
@@ -802,6 +821,8 @@ class Application:
             resources=resources,
             backups=backup_service,
             admin=admin_control_plane,
+            legacy=legacy_scanner,
+            repair=repair_service,
             society_policy=society_policy,
             society=society_service,
             npc_relationships=npc_relationship_engine,

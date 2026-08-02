@@ -16,6 +16,8 @@ import signal
 import sys
 from pathlib import Path
 
+from app.admin.repair import CONFIRMATION, RepairRefused
+from app.admin.shadow import rebuild_genesis, replay_real_history
 from app.bootstrap import Application, StartupError
 from app.config import AppConfig, ConfigError, load_config
 from app.interfaces.discord.gateway import DiscordGateway
@@ -35,6 +37,33 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status", help="print schema, manifest and store counters")
     backup = subparsers.add_parser("backup", help="take a verified backup (spec 32)")
     backup.add_argument("--reason", default="manual", help="why this backup was taken")
+
+    # Patch spec 23. Three separate commands on purpose: diagnosing, rebuilding
+    # and switching are three decisions, and only the last one touches the
+    # database the USER's history is in.
+    subparsers.add_parser(
+        "diagnose", help="report the health of the Genesis under this database (23.3)"
+    )
+    repair = subparsers.add_parser(
+        "repair", help="rebuild a broken Genesis in a shadow database (23.4)"
+    )
+    repair.add_argument(
+        "--apply",
+        action="store_true",
+        help="build the shadow and replay real history (without this, dry run only)",
+    )
+    repair.add_argument(
+        "--switch",
+        default="",
+        metavar="CONFIRMATION",
+        help=(
+            f"replace production with the verified shadow. Requires {CONFIRMATION!r}; "
+            "the old database is kept as the rollback"
+        ),
+    )
+    repair.add_argument(
+        "--max-blocks", type=int, default=None, help="cap the rebuilt simulation"
+    )
     return parser
 
 
@@ -143,6 +172,82 @@ def _backup(config_file: Path | None, reason: str) -> int:
         application.db.close()
 
 
+def _diagnose(config_file: Path | None) -> int:
+    """Patch spec 23.3: say what is wrong. Change nothing."""
+    config = load_config(config_file)
+    config.ensure_directories()
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        report = application.legacy.scan()
+        sys.stdout.write(
+            json.dumps(report.as_detail(), indent=2, ensure_ascii=False) + "\n"
+        )
+        return 0 if report.sound else 1
+    finally:
+        application.db.close()
+
+
+def _repair(
+    config_file: Path | None,
+    *,
+    apply: bool,
+    switch: str,
+    max_blocks: int | None,
+) -> int:
+    """Patch spec 23.4. Dry run unless asked; never switches unless confirmed."""
+    config = load_config(config_file)
+    config.ensure_directories()
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        plan = application.repair.dry_run()
+        if not apply:
+            sys.stdout.write(plan.render() + "\n")
+            return 0 if not plan.needed or plan.possible else 1
+        if not plan.possible:
+            sys.stdout.write(plan.render() + "\n")
+            return 1
+
+        async def rebuild(shadow_path, seed, scaffold):
+            return await rebuild_genesis(
+                config=config,
+                shadow_path=shadow_path,
+                seed=seed,
+                scaffold=scaffold,
+                clock=application.clock,
+                max_blocks=max_blocks,
+            )
+
+        async def replay(shadow_path, events):
+            report = await replay_real_history(
+                config=config,
+                shadow_path=shadow_path,
+                events=events,
+                clock=application.clock,
+            )
+            return report.processed
+
+        result = asyncio.run(
+            application.repair.rebuild(rebuild=rebuild, replay=replay, plan=plan)
+        )
+        payload = {
+            "plan": plan.as_detail(),
+            "backup": None if result.backup is None else str(result.backup.path),
+            "replayed": result.replayed,
+            "verification": result.verification.as_detail(),
+            "refusal": result.refusal,
+        }
+        if switch:
+            application.repair.switch(result, confirmation=switch)
+            payload["switched"] = result.switched
+            payload["rollback"] = str(result.rollback_path)
+        sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+        return 0 if result.ready_to_switch else 1
+    finally:
+        application.db.close()
+
+
 def _status(config_file: Path | None) -> int:
     config = load_config(config_file)
     config.ensure_directories()
@@ -243,6 +348,18 @@ def main(argv: list[str] | None = None) -> int:
             return _status(args.config)
         if args.command == "backup":
             return _backup(args.config, args.reason)
+        if args.command == "diagnose":
+            return _diagnose(args.config)
+        if args.command == "repair":
+            return _repair(
+                args.config,
+                apply=args.apply,
+                switch=args.switch,
+                max_blocks=args.max_blocks,
+            )
+    except RepairRefused as exc:
+        logging.getLogger("app.main").error("repair refused: %s", exc)
+        return 3
     except (ConfigError, StartupError) as exc:
         logging.getLogger("app.main").error("%s", exc)
         return 2

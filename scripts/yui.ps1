@@ -11,7 +11,7 @@
 # production writer is exactly one Windows host).
 
 param(
-    [ValidateSet("run", "migrate", "status", "backup")]
+    [ValidateSet("run", "migrate", "status", "backup", "diagnose", "repair")]
     [string]$Command = "run",
     [string]$OllamaUrl = "http://127.0.0.1:11434",
     [int]$OllamaTimeoutSeconds = 120
@@ -65,6 +65,16 @@ if ($LASTEXITCODE -ne 0) { throw "migration failed with exit code $LASTEXITCODE"
 # An automatic backup before every start, verified by the application itself.
 & $python -m app.main backup --reason "pre-start"
 if ($LASTEXITCODE -ne 0) { Write-Warning "pre-start backup could not be verified" }
+
+# Patch spec 23.3: say so when the Genesis under this database never produced a
+# person. A warning, not a refusal — the real Discord history in there is the
+# reason a repair is careful rather than automatic.
+if ($Command -eq "run") {
+    & $python -m app.main diagnose | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "this database booted from a Genesis that did not run; see docs/REPAIR.md"
+    }
+}
 
 & $python -m app.main $Command
 exit $LASTEXITCODE

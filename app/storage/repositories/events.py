@@ -10,6 +10,7 @@ import json
 import sqlite3
 from collections.abc import Iterable, Sequence
 from datetime import datetime
+from typing import Any
 
 from app.clock import from_iso, to_iso
 from app.events.model import Event, UnknownPayload, build_payload
@@ -109,6 +110,37 @@ class EventRepository:
             f"SELECT {_COLUMNS} FROM events WHERE event_type IN ({placeholders}) "
             "ORDER BY occurred_at, event_id LIMIT ?",
             (*event_types, limit),
+        )
+        return [self._to_event(row) for row in rows]
+
+    def list_by_origins(
+        self,
+        origins: Iterable[str],
+        *,
+        since: datetime | None = None,
+        limit: int = 100_000,
+    ) -> list[Event]:
+        """Events of the given origins, oldest first (patch spec 23.4 step 5).
+
+        Ordered by ``occurred_at`` because a replay has to put causes before
+        effects, and the limit is deliberately generous: this is the whole of a
+        real history, and silently truncating it would lose exactly what the
+        repair exists to preserve.
+        """
+        values = tuple(origins)
+        if not values:
+            return []
+        placeholders = ", ".join("?" for _ in values)
+        clauses = [f"origin IN ({placeholders})"]
+        params: list[Any] = list(values)
+        if since is not None:
+            clauses.append("occurred_at >= ?")
+            params.append(to_iso(since))
+        params.append(limit)
+        rows = self._db.query_all(
+            f"SELECT {_COLUMNS} FROM events WHERE {' AND '.join(clauses)} "
+            "ORDER BY occurred_at, event_id LIMIT ?",
+            tuple(params),
         )
         return [self._to_event(row) for row in rows]
 

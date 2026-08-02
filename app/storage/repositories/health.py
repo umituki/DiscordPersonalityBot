@@ -14,7 +14,10 @@ Reads only. SQL lives here because repositories are the SQL boundary
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Iterable
 
+from app.clock import to_iso
 from app.storage.database import Database
 
 SIMULATED_ORIGIN = "simulated_past"
@@ -211,6 +214,27 @@ class HealthRepository:
             retained=self._count(
                 "SELECT COUNT(*) FROM knowledge_acquisitions WHERE status = 'retained'"
             ),
+        )
+
+    # --- legacy scan (23.3) -------------------------------------------------
+    def events_by_origin(self, origins: Iterable[str]) -> int:
+        values = tuple(origins)
+        if not values:
+            return 0
+        placeholders = ", ".join("?" for _ in values)
+        return self._count(
+            f"SELECT COUNT(*) FROM events WHERE origin IN ({placeholders})", values
+        )
+
+    def events_after(self, moment: datetime, *, origins: Iterable[str]) -> int:
+        values = tuple(origins)
+        if not values:
+            return 0
+        placeholders = ", ".join("?" for _ in values)
+        return self._count(
+            f"SELECT COUNT(*) FROM events WHERE origin IN ({placeholders}) "
+            "AND occurred_at >= ?",
+            (*values, to_iso(moment)),
         )
 
     # --- blocks (18) --------------------------------------------------------

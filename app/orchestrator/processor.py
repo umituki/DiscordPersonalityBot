@@ -302,7 +302,10 @@ class EventProcessor:
         Monotonicity within a run is therefore structural: there is only one
         moment, and every engine sees it.
         """
-        if mode == "simulation":
+        # ``replay`` for the same reason as ``simulation`` (patch spec 23.4):
+        # a message answered in March is being reprocessed today, and its
+        # psychological effect belongs to March.
+        if mode in ("simulation", "replay"):
             return event.occurred_at
         return self._clock.now()
 

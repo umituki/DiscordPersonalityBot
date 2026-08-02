@@ -18,7 +18,20 @@ import yaml
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
-RuntimeMode = Literal["normal", "degraded", "minimal", "offline", "test", "simulation", "admin"]
+RuntimeMode = Literal[
+    "normal",
+    "degraded",
+    "minimal",
+    "offline",
+    "test",
+    "simulation",
+    "admin",
+    # Patch spec 23.4: re-processing real events that already happened,
+    # to rebuild their state consequences on a repaired past. Nothing is
+    # sent and no wording is regenerated — the events are replayed as the
+    # record of what was already said.
+    "replay",
+]
 
 DEFAULT_CONFIG_FILE = Path("config/settings.yaml")
 
