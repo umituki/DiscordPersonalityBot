@@ -1,0 +1,70 @@
+# Relationship / attachment policy (spec 13, 23.2, 40).
+#
+# 「たくさん話した」だけで関係が最大化しないこと、謝罪だけで信頼が全回復しない
+# ことは、この重み付けと gate で担保する (spec 34.2-6, 34.2-7)。
+policy_version: 1
+
+dimensions:
+  # 接触量そのもので上がってよいのは familiarity だけ (spec 13.1)
+  familiarity:
+    contact_gain: 0.010
+    max_per_event: 0.015
+    ceiling_pull: 0.6          # 上限に近いほど伸びが鈍る
+  trust:
+    # 信頼は「言ったとおりだった」経験からしか上がらない
+    evidence_gain: 0.012
+    max_per_event: 0.02
+    requires_evidence: true
+    # 高いところではさらに動きにくい (spec 23.2)
+    ceiling_pull: 0.75
+  emotional_closeness:
+    disclosure_gain: 0.015
+    positive_affect_gain: 0.008
+    max_per_event: 0.025
+  security:
+    consistency_gain: 0.008
+    unresolved_conflict_penalty: 0.020
+    max_per_event: 0.02
+  respect:
+    competence_gain: 0.010
+    max_per_event: 0.015
+  conflict_residue:
+    disagreement: 0.03
+    conflict: 0.12
+    transgression: 0.28
+    betrayal: 0.50
+    natural_decay_per_day: 0.02
+    max_per_event: 0.5
+  expectation:
+    adjust_rate: 0.05
+    max_per_event: 0.05
+
+repair:
+  # 謝罪は「感情の回復」には効くが、信頼の回復は別物 (spec 13.3)
+  apology:
+    conflict_residue_relief: 0.25
+    emotion_recovery: 0.40
+    trust_restoration: 0.0
+  # 信頼は、謝罪のあとの一貫した行動の積み重ねでしか戻らない
+  consistent_behaviour:
+    trust_restoration_per_event: 0.01
+    required_events: 5
+  # 重大な損傷は残る
+  severe_damage_threshold: 0.25
+  unresolved_hurt_floor: 0.05
+
+attachment:
+  # 一般傾向 (Layer 4) ではなく、この関係での活性化と感じられた安心 (Layer 3)
+  baseline_felt_security: 0.5
+  activation_from_conflict: 0.30
+  activation_from_separation_per_day: 0.05
+  activation_decay_per_hour: 0.08
+  felt_security_gain_per_positive: 0.010
+  felt_security_loss_per_conflict: 0.040
+  max_per_event: 0.10
+  # 親密になること = 依存が増えること、ではない (spec 13.2)
+  proximity_desire_from_activation: 0.50
+  reassurance_need_from_insecurity: 0.60
+  withdrawal_from_unresolved: 0.35
+  # security が高いほど分離に耐えられる
+  separation_tolerance_from_security: 0.70

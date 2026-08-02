@@ -102,7 +102,8 @@ async def test_a_strong_event_still_commits_only_immediate_state(
         assert outcome.interpretation.appraisal.source == "degraded"
 
         changed = {target.split(".")[0] for target in outcome.committed_targets}
-        assert changed <= {"emotion", "mood", "needs"}
+        assert changed <= {"emotion", "mood", "needs", "relationship", "attachment"}
+        assert changed & {"personality", "values", "narrative_identity"} == set()
         assert application.state.get("personality", "openness") is None
     finally:
         application.db.close()
@@ -131,8 +132,9 @@ async def test_emotion_state_survives_the_full_pipeline(
 
         domains = set(application.state.domains())
         assert "needs" in domains
-        # Mood and emotion only appear if something actually activated; needs
-        # always respond to contact. What must never happen is a deep domain.
-        assert domains <= {"emotion", "mood", "needs"}
+        # Emotion and mood only appear if something actually activated; needs
+        # and relationship always respond to contact. What must never happen is
+        # a deep domain.
+        assert domains <= {"emotion", "mood", "needs", "relationship", "attachment"}
     finally:
         application.db.close()

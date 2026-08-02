@@ -37,6 +37,7 @@ policies:
   conversation: conversation.yaml
   memory: memory.yaml
   psychology: psychology.yaml
+  relationship: relationship.yaml
 
 prompts:
   directory: config/prompts

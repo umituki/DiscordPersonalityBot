@@ -49,6 +49,8 @@ START = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
 class SignalPayload(EventPayload):
     label: str = "signal"
     strength: float = 1.0
+    #: Some engines read ``payload.text``; this keeps the fixture usable there.
+    text: str = ""
 
 
 @pytest.fixture
@@ -177,8 +179,11 @@ def make_event(clock: FixedClock):
         origin: str = "real_discord",
         actor_type: str = "user",
         payload: EventPayload | None = None,
+        text: str | None = None,
         **kwargs,
     ) -> Event:
+        if payload is None and text is not None:
+            payload = SignalPayload(text=text)
         return Event.create(
             event_type=event_type,
             category=category,  # type: ignore[arg-type]
@@ -235,7 +240,13 @@ def temp_config(tmp_path: Path) -> AppConfig:
     (tmp_path / "config" / "policies").mkdir(parents=True)
     shutil.copytree(REPO_ROOT / "config" / "prompts", tmp_path / "config" / "prompts")
     shutil.copytree(REPO_ROOT / "character", tmp_path / "character")
-    for policy in ("output_guard.yaml", "conversation.yaml", "memory.yaml", "psychology.yaml"):
+    for policy in (
+        "output_guard.yaml",
+        "conversation.yaml",
+        "memory.yaml",
+        "psychology.yaml",
+        "relationship.yaml",
+    ):
         shutil.copy(
             REPO_ROOT / "config" / "policies" / policy,
             tmp_path / "config" / "policies" / policy,

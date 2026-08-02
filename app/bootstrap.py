@@ -40,6 +40,9 @@ from app.psychology.emotion import EmotionEngine
 from app.psychology.mood import MoodEngine
 from app.psychology.needs import NeedEngine
 from app.psychology.policy import PsychologyPolicy
+from app.social.attachment import AttachmentEngine
+from app.social.policy import RelationshipPolicy
+from app.social.relationship import RelationshipEngine
 from app.llm.client import TracedLLMClient
 from app.llm.ollama import OllamaClient
 from app.llm.prompts import PromptRegistry
@@ -101,6 +104,9 @@ class Application:
     memory: MemoryEngine
     memory_policy: MemoryPolicy
     psychology_policy: PsychologyPolicy
+    relationship_policy: RelationshipPolicy
+    relationship: RelationshipEngine
+    attachment: AttachmentEngine
     appraisal: AppraisalEngine
     emotion: EmotionEngine
     mood: MoodEngine
@@ -186,6 +192,7 @@ class Application:
         conversation_policy = ConversationPolicy.load(resolved_config.conversation_policy_path)
         memory_policy = MemoryPolicy.load(resolved_config.memory_policy_path)
         psychology_policy = PsychologyPolicy.load(resolved_config.psychology_policy_path)
+        relationship_policy = RelationshipPolicy.load(resolved_config.relationship_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -201,6 +208,7 @@ class Application:
         components["conversation_policy_version"] = str(conversation_policy.policy_version)
         components["memory_policy_version"] = str(memory_policy.policy_version)
         components["psychology_policy_version"] = str(psychology_policy.policy_version)
+        components["relationship_policy_version"] = str(relationship_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -282,11 +290,19 @@ class Application:
         mood_engine = MoodEngine(psychology_policy.mood, clock=resolved_clock)
         need_engine = NeedEngine(psychology_policy.needs, clock=resolved_clock)
 
-        # Update order matters: emotion, then mood (which reads emotion from
-        # S0), then needs (spec 9.5).
+        # --- adaptive social state (spec 9.5 phase 6) ------------------------
+        relationship_engine = RelationshipEngine(relationship_policy, clock=resolved_clock)
+        attachment_engine = AttachmentEngine(
+            relationship_policy.attachment, clock=resolved_clock
+        )
+
+        # Update order follows the layers: immediate psychology first, then the
+        # adaptive layer that reads it (spec 9.1, 9.5).
         bus.register(emotion_engine, kind="psychology", order=20)
         bus.register(mood_engine, kind="psychology", order=30)
         bus.register(need_engine, kind="psychology", order=40)
+        bus.register(relationship_engine, kind="psychology", order=50)
+        bus.register(attachment_engine, kind="psychology", order=60)
 
         processor = EventProcessor(
             db=db,
@@ -358,6 +374,9 @@ class Application:
             memory=memory_engine,
             memory_policy=memory_policy,
             psychology_policy=psychology_policy,
+            relationship_policy=relationship_policy,
+            relationship=relationship_engine,
+            attachment=attachment_engine,
             appraisal=appraisal_engine,
             emotion=emotion_engine,
             mood=mood_engine,
