@@ -72,6 +72,48 @@ epoch row says `genesis_status=pending`.
 | CORR-003 | A retracted claim leaves Common Ground | `app/storage/repositories/common_ground.py` (`live`), migration 0019 | `test_a_retracted_claim_leaves_the_common_ground`, `test_a_second_challenge_does_not_re_retract_the_same_claim` | `test_claims_survive_a_restart` | `test_a_challenged_unsupported_claim_is_retracted_not_defended` | `common_ground_claims` (status) | E2E_VERIFIED |
 | GUARD-16 | The Output Guard is hard-only: leakage, CoT markers, JSON residue, impossible physical claims, secrets — and nothing about style | `app/conversation/guard.py`, `config/policies/output_guard.yaml` (v2) | `test_a_hard_violation_is_rejected`, `test_the_guard_has_no_style_rule` | `test_ordinary_and_awkward_replies_pass` | `test_case_a_the_doubled_greeting_is_never_sent` | `failures` rows (`component='conversation_service'`) | E2E_VERIFIED |
 
+
+### Phase 1 gate (spec 4.7)
+
+1. **Spec IDs implemented.** APP-001, APP-002, APP-003, GROUND-001..004,
+   CORR-001..003, GUARD-16. `APP-004` is not implemented — see 10.
+2. **Runtime trigger.** A USER Discord message: `DiscordGateway.handle_message`
+   → `ConversationService.handle_inbound`. Nothing here is driven by a test
+   harness alone.
+3. **Events produced.** `USER_MESSAGE_RECEIVED`, then `YUI_MESSAGE_SENT` on a
+   confirmed delivery or `YUI_REPLY_SUPPRESSED` when a claim survives repair.
+4. **Rows written.** `events`, `conversation_turns`, `conversation_traces`,
+   `common_ground_claims` (new, migration 0019), `failures`, `llm_calls`.
+5. **State change.** The appraisal now reaches emotion/mood/needs as mapped
+   category values rather than model-authored floats; committed targets are
+   unchanged in shape.
+6. **Debug.** `python -m app.main latency`; `config/policies/psychology.yaml`
+   for the scale; `common_ground_claims` for what the conversation is treating
+   as true and why anything was retracted; `failures.reason_code` for every
+   suppression.
+7. **Restart.** Common ground is a table, not memory:
+   `test_claims_survive_a_restart` reopens the tracker against the same
+   database and the retraction still fires. Grounding holds no state at all.
+8. **Unit tests.** 947 pass in total; 95 are new in this phase.
+9. **Integration / E2E.** `test_a_categorical_reading_drives_the_real_pipeline`,
+   `test_an_off_scale_number_never_reaches_state`,
+   `test_an_unsupported_claim_is_rewritten_once`,
+   `test_a_failed_repair_suppresses_the_send`,
+   `test_a_suppressed_draft_leaves_no_trace`,
+   `test_a_challenged_unsupported_claim_is_retracted_not_defended`,
+   `test_a_delivered_claim_enters_the_common_ground`.
+10. **Not done.** The phase gate — ``実 Ollama regression で既知 hallucination
+    ケース pass`` — and APP-004's 100-turn parse/failure measurement both need a
+    real Ollama host. This container has none, so neither has been run and
+    neither is claimed. Both must be executed on the owner's machine before
+    Phase 1 is called finished.
+
+Claim extraction is pattern-based (`config/policies/grounding.yaml`), so its
+recall is bounded by the phrasings named there. Only `hard` rules gate a send;
+phrasings that cannot be told apart from ordinary talk are `soft` and recorded
+without holding the reply. Measuring that boundary against real conversations is
+what the Ollama regression above is for.
+
 ---
 
 ## Phase 2 — Memory Retrieval v2
