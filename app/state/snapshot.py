@@ -8,6 +8,8 @@ Feedback loops cross event boundaries, not statements.
 
 from __future__ import annotations
 
+import hashlib
+
 from datetime import datetime
 from types import MappingProxyType
 from typing import Iterator, Mapping
@@ -86,6 +88,19 @@ class StateSnapshot:
         return MappingProxyType(
             {key: value for (dom, key), value in self._values.items() if dom == domain}
         )
+
+    def fingerprint(self) -> str:
+        """Hash of every key's version (patch spec 7.5).
+
+        Staleness is exactly a version disagreement, so the fingerprint is
+        built from versions rather than values: two snapshots with the same
+        fingerprint can be committed against interchangeably.
+        """
+        material = ";".join(
+            f"{domain}.{key}={value.version}"
+            for (domain, key), value in sorted(self._values.items())
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
     def domains(self) -> tuple[str, ...]:
         return tuple(sorted({domain for domain, _ in self._values}))

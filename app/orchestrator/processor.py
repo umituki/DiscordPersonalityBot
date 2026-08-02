@@ -35,12 +35,15 @@ from app.state.snapshot import SnapshotService, StateSnapshot
 from app.storage.database import Database
 from app.storage.repositories.failures import FailureRecord, FailureRepository
 from app.storage.repositories.runs import ProcessingRunRepository
+from app.storage.repositories.state import ConcurrentStateWriteError
 
 logger = logging.getLogger(__name__)
 
 COMPONENT = "event_processor"
 
-ProcessingStatus = Literal["committed", "rejected", "no_subscribers", "failed"]
+ProcessingStatus = Literal[
+    "committed", "rejected", "no_subscribers", "failed", "conflict"
+]
 
 
 class Interpreter(Protocol):
@@ -64,6 +67,14 @@ class ProcessingOutcome:
     #: same event must read this, not live state (spec 9.2).
     snapshot: StateSnapshot | None = None
     error: str | None = None
+    #: Patch spec 7.5 telemetry.
+    commit_attempt: int = 1
+    retry_of_run_id: str | None = None
+
+    @property
+    def conflicted(self) -> bool:
+        """The commit lost a version race and nothing was written."""
+        return self.status == "conflict"
 
     @property
     def committed_targets(self) -> tuple[str, ...]:
@@ -90,7 +101,10 @@ class EventProcessor:
         manifest_id: str | None = None,
         mode: RuntimeMode = "normal",
         clock: Clock | None = None,
+        max_commit_attempts: int = 2,
     ) -> None:
+        if max_commit_attempts < 1:
+            raise ValueError("max_commit_attempts must be at least 1")
         self._db = db
         self._events = event_store
         self._dispatcher = dispatcher
@@ -103,11 +117,59 @@ class EventProcessor:
         self._manifest_id = manifest_id
         self._mode = mode
         self._clock = clock or SystemClock()
+        #: Patch spec 7.2: bounded. One reprocess, never an unbounded loop.
+        self._max_commit_attempts = max_commit_attempts
 
     async def process(self, event: Event, *, mode: RuntimeMode | None = None) -> ProcessingOutcome:
+        """Process one event, reprocessing once if a commit lost a version race.
+
+        Patch spec 7.1-7.3. A ``ConcurrentStateWriteError`` used to end the run
+        as ``failed`` with zero state changes, which silently discarded the
+        psychological effect of a USER message because a background world tick
+        had moved on underneath it.
+
+        The retry is a *full* reprocess against a fresh snapshot, not a replay
+        of the old proposals: proposals derived from a stale snapshot are
+        exactly what must not be committed (7.3). Bounded to one retry (7.2).
+        """
+        retry_of: str | None = None
+        outcome: ProcessingOutcome | None = None
+
+        for attempt in range(1, self._max_commit_attempts + 1):
+            outcome = await self._process_once(
+                event, mode=mode, retry_of=retry_of, commit_attempt=attempt
+            )
+            if not outcome.conflicted:
+                return outcome
+            if attempt >= self._max_commit_attempts:
+                logger.error(
+                    "giving up after %d commit conflicts event_id=%s",
+                    attempt,
+                    event.event_id,
+                )
+                break
+            logger.warning(
+                "commit conflict; reprocessing against a fresh snapshot event_id=%s",
+                event.event_id,
+            )
+            retry_of = outcome.run.run_id
+
+        assert outcome is not None
+        return outcome
+
+    async def _process_once(
+        self,
+        event: Event,
+        *,
+        mode: RuntimeMode | None = None,
+        retry_of: str | None = None,
+        commit_attempt: int = 1,
+    ) -> ProcessingOutcome:
         run_mode = mode or self._mode
         newly_stored = await asyncio.to_thread(self._events.append, event)
-        run, snapshot = await asyncio.to_thread(self._open_run, event, run_mode)
+        run, snapshot = await asyncio.to_thread(
+            self._open_run, event, run_mode, retry_of, commit_attempt
+        )
 
         # Phase 1 of the update order: interpretation, before any psychology
         # reacts to it (spec 9.5). A failed interpretation degrades the run
@@ -153,6 +215,25 @@ class EventProcessor:
 
         try:
             commit = await asyncio.to_thread(self._commit, run, event, dispatch, arbitration)
+        except ConcurrentStateWriteError as exc:
+            # Patch spec 7.2: the snapshot went stale while this run was
+            # thinking. Nothing was committed, so nothing is inconsistent —
+            # the work simply has to be redone against what is true now.
+            await asyncio.to_thread(self._conflict_run, run, event, exc)
+            return ProcessingOutcome(
+                run=run,
+                event=event,
+                status="conflict",
+                newly_stored=newly_stored,
+                dispatch=dispatch,
+                arbitration=arbitration,
+                commit=None,
+                interpretation=interpretation,
+                snapshot=snapshot,
+                error=repr(exc),
+                commit_attempt=commit_attempt,
+                retry_of_run_id=retry_of,
+            )
         except Exception as exc:  # noqa: BLE001 - the transaction already rolled back
             logger.exception("commit failed run_id=%s event_id=%s", run.run_id, event.event_id)
             await asyncio.to_thread(self._fail_run, run, event, "commit_failed", repr(exc))
@@ -186,10 +267,18 @@ class EventProcessor:
             commit=commit,
             interpretation=interpretation,
             snapshot=snapshot,
+            commit_attempt=commit_attempt,
+            retry_of_run_id=retry_of,
         )
 
     # --- synchronous units of work ----------------------------------------
-    def _open_run(self, event: Event, mode: RuntimeMode) -> tuple[RunContext, StateSnapshot]:
+    def _open_run(
+        self,
+        event: Event,
+        mode: RuntimeMode,
+        retry_of: str | None = None,
+        commit_attempt: int = 1,
+    ) -> tuple[RunContext, StateSnapshot]:
         run_id = ids.new_id(ids.RUN)
         with self._db.transaction():
             snapshot = self._snapshots.capture(
@@ -212,6 +301,11 @@ class EventProcessor:
                 mode=mode,
                 priority=event.priority,
                 now=run.started_at,
+                # Patch spec 7.5: the retry chain and the snapshot this run
+                # was built against are both answerable afterwards.
+                retry_of_run_id=retry_of,
+                commit_attempt=commit_attempt,
+                snapshot_fingerprint=snapshot.fingerprint(),
             )
         return run, snapshot
 
@@ -232,6 +326,29 @@ class EventProcessor:
                 root_event_id=event.event_id,
                 result=arbitration,
                 delivery_ids=dispatch.delivery_ids,
+            )
+
+    def _conflict_run(
+        self, run: RunContext, event: Event, error: BaseException
+    ) -> None:
+        """Close a run that lost a version race (patch spec 7.2, 7.5)."""
+        now = self._clock.now()
+        with self._db.transaction():
+            self._runs.record_conflict(run.run_id)
+            self._failures.record(
+                FailureRecord(
+                    failure_type="state",
+                    component=COMPONENT,
+                    reason_code="commit_conflict",
+                    severity="warning",
+                    run_id=run.run_id,
+                    event_id=event.event_id,
+                    detail={"error": repr(error)[:1000]},
+                ),
+                now=now,
+            )
+            self._runs.finish(
+                run_id=run.run_id, status="conflicted", now=now, error=repr(error)[:500]
             )
 
     def _record_failure(

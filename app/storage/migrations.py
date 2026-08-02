@@ -1300,6 +1300,22 @@ _0014_LLM_TELEMETRY = Migration(
 )
 
 
+_0015_RUN_CONFLICTS = Migration(
+    version=15,
+    name="processing_run_conflicts",
+    statements=(
+        # Patch spec 7.5. The 2026-08-02 run failed with
+        # ConcurrentStateWriteError and left no way to see that a retry had
+        # happened, or against which snapshot the first attempt was built.
+        "ALTER TABLE processing_runs ADD COLUMN retry_of_run_id TEXT",
+        "ALTER TABLE processing_runs ADD COLUMN conflict_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE processing_runs ADD COLUMN commit_attempt INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE processing_runs ADD COLUMN snapshot_fingerprint TEXT",
+        "CREATE INDEX idx_runs_retry ON processing_runs (retry_of_run_id)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1315,6 +1331,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0012_SIMULATION,
     _0013_OPERATIONS,
     _0014_LLM_TELEMETRY,
+    _0015_RUN_CONFLICTS,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

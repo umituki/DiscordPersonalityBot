@@ -344,6 +344,7 @@ def service_factory(
         return ConversationService(
             processor=processor,
             engine=engine,
+            event_store=event_store,
             conversations=conversations,
             adapter=adapter,
             failures=failures,

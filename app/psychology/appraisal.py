@@ -37,6 +37,13 @@ NO_HISTORY = "(直近のやりとりはない)"
 #: Events worth appraising. Everything else passes through uninterpreted.
 APPRAISABLE_CATEGORIES = frozenset({"social", "world", "action", "knowledge"})
 
+#: Patch spec 5.3: YUI's own outbound message is not something that happened
+#: *to* her, and re-reading it through the appraisal prompt spends a model call
+#: on a foregone conclusion while the USER waits. The psychological effect of
+#: her own act belongs to the decision and to the USER's reaction, not to the
+#: text she just produced.
+SELF_AUTHORED_EVENT_TYPES = frozenset({"YUI_MESSAGE_SENT", "YUI_REPLY_SUPPRESSED"})
+
 
 class AppraisalEngine:
     """Produces the Layer 1 interpretation for a run."""
@@ -66,8 +73,15 @@ class AppraisalEngine:
     async def interpret(self, event: Event, snapshot: StateSnapshot) -> Interpretation:
         if event.category not in APPRAISABLE_CATEGORIES:
             return Interpretation()
+        if self.is_self_authored(event):
+            return Interpretation()
         appraisal = await self.appraise(event, snapshot)
         return Interpretation(appraisal=appraisal)
+
+    @staticmethod
+    def is_self_authored(event: Event) -> bool:
+        """Whether YUI is appraising her own outbound act (patch spec 5.3)."""
+        return event.actor_type == "yui" and event.event_type in SELF_AUTHORED_EVENT_TYPES
 
     async def appraise(self, event: Event, snapshot: StateSnapshot) -> Appraisal:
         situation = _describe(event)

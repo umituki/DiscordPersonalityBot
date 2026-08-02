@@ -72,6 +72,7 @@ def service_with_memory(
         service = ConversationService(
             processor=processor,
             engine=engine,
+            event_store=event_store,
             conversations=conversations,
             adapter=adapter,
             failures=failures,
@@ -101,10 +102,14 @@ async def test_a_conversation_becomes_a_memory_and_comes_back(
         inbound(clock, text="きのう海に行った話をしていい?", message_id="1")
     )
     await service.confirm_sent(first, message_id="10")
+    # Patch spec 5.4: encoding is background work now, so a test that asserts
+    # on its result has to wait for it explicitly.
+    await service.drain_background()
 
     clock.advance(seconds=60 * 60)
     second = await service.handle_inbound(inbound(clock, text="つかれた", message_id="2"))
     await service.confirm_sent(second, message_id="20")
+    await service.drain_background()
 
     # The first episode closed and was encoded during background maintenance.
     assert memories.memory_count() == 1
@@ -142,6 +147,9 @@ async def test_recall_reads_memory_not_the_transcript_archive(
         inbound(clock, text="ひみつの合言葉はカワセミ", message_id="1")
     )
     await service.confirm_sent(first, message_id="10")
+    # Patch spec 5.4: encoding is background work now, so a test that asserts
+    # on its result has to wait for it explicitly.
+    await service.drain_background()
 
     # The words are in the objective archive...
     assert any(
@@ -164,6 +172,7 @@ async def test_memory_maintenance_failure_does_not_break_the_reply(
 
     result = await service.handle_inbound(inbound(clock, text="ねえ"))
     sent = await service.confirm_sent(result, message_id="10")
+    await service.drain_background()
 
     assert result.should_send
     assert sent.event_type == "YUI_MESSAGE_SENT"

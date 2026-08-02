@@ -9,7 +9,12 @@ from typing import Literal
 from app.clock import to_iso
 from app.storage.database import Database
 
-RunStatus = Literal["running", "committed", "rejected", "failed", "interrupted"]
+#: ``conflicted`` is distinct from ``failed`` on purpose (patch spec 7.2): the
+#: run lost a version race and was reprocessed, which is not the same as the
+#: work having been lost.
+RunStatus = Literal[
+    "running", "committed", "rejected", "failed", "interrupted", "conflicted"
+]
 
 
 class ProcessingRunRepository:
@@ -26,15 +31,31 @@ class ProcessingRunRepository:
         mode: str,
         priority: str,
         now: datetime,
+        retry_of_run_id: str | None = None,
+        commit_attempt: int = 1,
+        snapshot_fingerprint: str | None = None,
     ) -> None:
+        """Open a run. Patch spec 7.5 keeps the retry chain traceable."""
         self._db.execute(
             """
             INSERT INTO processing_runs
                 (run_id, root_event_id, state_snapshot_id, runtime_manifest_id, mode,
-                 priority, status, started_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'running', ?)
+                 priority, status, started_at, retry_of_run_id, commit_attempt,
+                 snapshot_fingerprint)
+            VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
             """,
-            (run_id, root_event_id, snapshot_id, manifest_id, mode, priority, to_iso(now)),
+            (
+                run_id, root_event_id, snapshot_id, manifest_id, mode, priority,
+                to_iso(now), retry_of_run_id, commit_attempt, snapshot_fingerprint,
+            ),
+        )
+
+    def record_conflict(self, run_id: str) -> None:
+        """A commit lost a version race (patch spec 7.5)."""
+        self._db.execute(
+            "UPDATE processing_runs SET conflict_count = conflict_count + 1 "
+            "WHERE run_id = ?",
+            (run_id,),
         )
 
     def finish(

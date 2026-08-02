@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Awaitable
 from dataclasses import dataclass
 
 from app.clock import Clock, SystemClock
@@ -39,6 +40,7 @@ from app.conversation.policy import ConversationPolicy
 from app.events.model import Event
 from app.interfaces.discord.adapter import DiscordMessageAdapter, IgnoreReason
 from app.memory.engine import MemoryEngine
+from app.events.store import EventStore
 from app.psychology.appraisal import AppraisalEngine
 from app.tools.manager import ToolManager
 from app.interfaces.discord.dto import InboundMessage, OutboundMessage
@@ -47,6 +49,15 @@ from app.storage.repositories.conversations import ConversationRepository
 from app.storage.repositories.failures import FailureRecord, FailureRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _log_background_result(task: "asyncio.Task[None]") -> None:
+    """Post-send work failing must be visible, never silent (patch spec 5.4)."""
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error("post-send background work failed: %r", error)
 
 COMPONENT = "conversation_service"
 
@@ -79,6 +90,7 @@ class ConversationService:
         failures: FailureRepository,
         policy: ConversationPolicy,
         memory: MemoryEngine | None = None,
+        event_store: EventStore,
         appraisal: AppraisalEngine | None = None,
         tools: ToolManager | None = None,
         clock: Clock | None = None,
@@ -91,6 +103,13 @@ class ConversationService:
         self._policy = policy
         self._memory = memory
         self._appraisal = appraisal
+        #: Patch spec 5.1-5.2: turns are persisted and projected before any
+        #: expensive work, which needs a direct append rather than waiting for
+        #: a full processing run. Required, so no caller can end up with the
+        #: ordering that lost YUI's previous reply from the next turn.
+        self._events = event_store
+        #: In-flight post-send work (patch spec 5.4).
+        self._background: set[asyncio.Task[None]] = set()
         self._tools = tools
         self._clock = clock or SystemClock()
 
@@ -117,8 +136,11 @@ class ConversationService:
         if self._appraisal is not None:
             self._appraisal.set_recent_turns(recent)
 
-        outcome = await self._processor.process(event)
-
+        # Patch spec 5.1: the USER message is persisted and projected before
+        # the reply is generated, so a crash mid-reply leaves it recorded
+        # rather than lost. Both writes are idempotent on the event id, and
+        # the processor's own append below is then a no-op.
+        await asyncio.to_thread(self._events.append, event)
         await asyncio.to_thread(
             self._conversations.record_turn,
             conversation_id=conversation.conversation_id,
@@ -129,6 +151,8 @@ class ConversationService:
             occurred_at=event.occurred_at,
             message_ref=str(message.message_id),
         )
+
+        outcome = await self._processor.process(event)
 
         memories = ()
         if self._memory is not None:
@@ -221,16 +245,64 @@ class ConversationService:
                 generation_attempts=generation.outcome.attempts if generation else 1,
             ),
         )
-        await self._processor.process(sent)
-
+        # Patch spec 5.2. The objective event and the turn projection come
+        # first, and nothing expensive is allowed between them. The 2026-08-02
+        # run lost YUI's previous reply from the next USER turn's context
+        # because a full processing run sat in this gap: if USER2 arrives now,
+        # `recent_turns` must already contain YUI's reply.
         conversation = await asyncio.to_thread(
             self._conversations.ensure_conversation,
             channel_id=result.outbound.channel_id,
             channel_type=channel_type,
             now=sent.occurred_at,
         )
+        await asyncio.to_thread(self._project_sent, sent, conversation, result, message_id)
+
+        # Only now the psychology of having spoken. This is a full run, and it
+        # is deliberately behind the projection above.
+        await self._processor.process(sent)
+
+        # Patch spec 5.4 and prohibition 7: memory maintenance, reflection and
+        # consolidation are background work at P3 or below. They must never sit
+        # between a delivered reply and the next USER message.
+        self.schedule_background(self._post_send_work(sent, conversation))
+        return sent
+
+    async def _post_send_work(self, sent: Event, conversation) -> None:
+        if self._memory is None:
+            return
         await asyncio.to_thread(
-            self._conversations.record_turn,
+            self._memory.observe, sent, conversation_id=conversation.conversation_id
+        )
+        await self.run_memory_maintenance()
+
+    # --- background work (patch spec 5.4) ----------------------------------
+    def schedule_background(self, work: Awaitable[None]) -> None:
+        """Run post-send work without making the next USER turn wait.
+
+        Exceptions are logged rather than lost: a background failure degrades
+        memory, and silence about it would be worse than the failure.
+        """
+        task = asyncio.ensure_future(work)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+        task.add_done_callback(_log_background_result)
+
+    async def drain_background(self) -> None:
+        """Wait for scheduled post-send work. For shutdown and for tests."""
+        while self._background:
+            await asyncio.gather(*tuple(self._background), return_exceptions=True)
+
+    def _project_sent(self, sent, conversation, result, message_id: str) -> None:
+        """Idempotent projection of one delivered YUI turn (patch spec 5.2).
+
+        The event row has to exist before the turn row can reference it, and
+        both have to exist before the psychology run starts — otherwise a USER
+        message arriving during that run sees a conversation without the reply
+        it is answering.
+        """
+        self._events.append(sent)
+        self._conversations.record_turn(
             conversation_id=conversation.conversation_id,
             event_id=sent.event_id,
             speaker="yui",
@@ -239,13 +311,6 @@ class ConversationService:
             occurred_at=sent.occurred_at,
             message_ref=str(message_id),
         )
-
-        if self._memory is not None:
-            await asyncio.to_thread(
-                self._memory.observe, sent, conversation_id=conversation.conversation_id
-            )
-            await self.run_memory_maintenance()
-        return sent
 
     async def run_memory_maintenance(self) -> None:
         """Close finished episodes and encode them.

@@ -685,6 +685,7 @@ class Application:
                 policy=conversation_policy,
                 memory=memory_engine,
                 appraisal=appraisal_engine,
+                event_store=event_store,
                 tools=tool_manager,
                 clock=resolved_clock,
             )
