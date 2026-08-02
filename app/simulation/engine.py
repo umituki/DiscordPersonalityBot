@@ -64,6 +64,8 @@ from app.storage.repositories.simulation import SimulationRepository
 
 if TYPE_CHECKING:  # pragma: no cover - the job imports this module's siblings
     from app.consolidation.job import ConsolidationJob
+    from app.knowledge.coverage import CoveragePlanner
+    from app.memory.engine import MemoryEngine
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,16 @@ class SimulationProgress:
     #: Patch spec 12: appraisals the experiences actually produced, by source.
     appraisals: int = 0
     appraisals_by_source: dict[str, int] = field(default_factory=dict)
+    #: Patch spec 16: what the period's knowledge layer was planned as.
+    knowledge_requests: int = 0
+    knowledge_candidates: int = 0
+    knowledge_classes: list[str] = field(default_factory=list)
+    knowledge_missing_classes: list[str] = field(default_factory=list)
+    #: Patch spec 15: what the memory pipeline was offered and what it kept.
+    episode_events: int = 0
+    encoding_attempts: int = 0
+    memories_encoded: int = 0
+    encoding_refusals: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +140,8 @@ class PastSimulationEngine:
         prompts: PromptRegistry,
         policy: SimulationPolicy,
         consolidation: "ConsolidationJob | None" = None,
+        memory: "MemoryEngine | None" = None,
+        coverage: "CoveragePlanner | None" = None,
         clock: Clock | None = None,
         rng: Random | None = None,
     ) -> None:
@@ -142,6 +156,13 @@ class PastSimulationEngine:
         #: but a Genesis run without it produces no growth — which is what the
         #: FIRST BOOT audits are there to refuse.
         self._consolidation = consolidation
+        #: Patch spec 15.1. Optional for the same reason, and audited for the
+        #: same reason: a life nobody remembers any of is not a life.
+        self._memory = memory
+        #: Patch spec 16.3. Without it the period has no knowledge to offer,
+        #: the exposure funnel has nothing to run on, and the knowledge health
+        #: audit refuses the boot (16.1).
+        self._coverage = coverage
         self._clock = clock or SystemClock()
         self._rng = rng or Random(20260101)
         self._sampler = ExperienceSampler(policy.experience, rng=self._rng)
@@ -205,6 +226,10 @@ class PastSimulationEngine:
             now=self._clock.now(),
         )
         progress = SimulationProgress()
+        # Patch spec 16.3: what the world knew during this period is planned
+        # and stored *before* the life is lived, so there is something for the
+        # exposure funnel to offer her as she goes.
+        self._plan_knowledge(scaffold, seed, progress)
         budget = ExperienceBudget(years=scaffold.years)
         limit = min(max_blocks or self._policy.blocks.max_blocks, self._policy.blocks.max_blocks)
 
@@ -243,9 +268,14 @@ class PastSimulationEngine:
                 first_block=ordinal == 1,
             )
             previous_phase_id = phase_id
-            if trigger is not None and await self._consolidate(moment, trigger, progress):
-                last_consolidated_at = moment
+            if trigger is not None:
+                # Memory before consolidation: consolidation reads what is
+                # remembered, so encoding has to have happened by then.
+                await self._encode_due_memories(moment, progress)
+                if await self._consolidate(moment, trigger, progress):
+                    last_consolidated_at = moment
 
+        await self._encode_due_memories(moment, progress)
         if self._policy.genesis.final_consolidation:
             await self._consolidate(moment, "final", progress)
 
@@ -268,6 +298,14 @@ class PastSimulationEngine:
                 "appraisals_by_source": progress.appraisals_by_source,
                 "consolidations": progress.consolidations,
                 "consolidation_triggers": progress.consolidation_triggers,
+                "episode_events": progress.episode_events,
+                "encoding_attempts": progress.encoding_attempts,
+                "memories_encoded": progress.memories_encoded,
+                "encoding_refusals": progress.encoding_refusals,
+                "knowledge_requests": progress.knowledge_requests,
+                "knowledge_candidates": progress.knowledge_candidates,
+                "knowledge_classes": progress.knowledge_classes,
+                "knowledge_missing_classes": progress.knowledge_missing_classes,
             },
             now=self._clock.now(),
         )
@@ -338,6 +376,10 @@ class PastSimulationEngine:
         )
         outcome = await self._processor.process(event, mode="simulation")
         self._record_appraisal(outcome, progress)
+        # Patch spec 15.1: the experience becomes episode material and goes
+        # through segmentation and the Encoding Gate like anything else. It is
+        # never written straight into the memory table (prohibition 3).
+        self._remember(event, progress)
         progress.experiences += 1
         progress.recent_summaries.append(narration.summary)
         self._repository.set_block_summary(block.block_id, narration.summary)
@@ -377,6 +419,71 @@ class PastSimulationEngine:
         progress.appraisals += 1
         source = getattr(appraisal, "source", "unknown")
         progress.appraisals_by_source[source] = progress.appraisals_by_source.get(source, 0) + 1
+
+    # --- period knowledge (patch spec 16) -----------------------------------
+    def _plan_knowledge(
+        self, scaffold: LifeScaffold, seed: TemperamentSeed, progress: SimulationProgress
+    ) -> None:
+        """Fill the external-knowledge layer for the simulated period.
+
+        This says nothing about what YUI knows — only what was public and when.
+        Whether any of it reached her is the exposure funnel's decision, one
+        item at a time (patch spec 16.4).
+        """
+        if self._coverage is None:
+            return
+        try:
+            report = self._coverage.run(
+                period_start=scaffold.period_start,
+                period_end=scaffold.period_end,
+                topics=tuple(seed.interests),
+            )
+        except Exception:  # noqa: BLE001 - recorded; the audits refuse an empty layer
+            logger.exception("knowledge coverage failed for %s", scaffold.scaffold_id)
+            return
+        progress.knowledge_requests = report.requests
+        progress.knowledge_candidates = report.candidates_stored
+        progress.knowledge_classes = list(report.classes_covered)
+        progress.knowledge_missing_classes = list(report.missing_classes)
+
+    # --- memory during the life (patch spec 15) -----------------------------
+    def _remember(self, event: Event, progress: SimulationProgress) -> None:
+        """Offer one experience to the memory pipeline. It may refuse it."""
+        if self._memory is None:
+            return
+        try:
+            self._memory.observe(event, conversation_id=None, now=event.occurred_at)
+        except Exception:  # noqa: BLE001 - recorded, then the life continues
+            logger.exception("memory observation failed at %s", event.occurred_at.isoformat())
+            return
+        progress.episode_events += 1
+
+    async def _encode_due_memories(
+        self, moment: datetime, progress: SimulationProgress
+    ) -> None:
+        """Close finished stretches, encode what the gate accepts, forget the rest.
+
+        Patch spec 15.3: ``19年間すべてを同じaccessibilityで保持しない``. Forgetting
+        runs on simulated time, so a memory from the first year has had years
+        of decay by the last one — which is what makes what survives a
+        selection rather than a complete record.
+        """
+        if self._memory is None:
+            return
+        try:
+            self._memory.close_due_episodes(now=moment)
+            results = await self._memory.encode_pending(limit=20, now=moment)
+            self._memory.apply_forgetting(now=moment)
+        except Exception:  # noqa: BLE001 - recorded, then the life continues
+            logger.exception("memory maintenance failed at %s", moment.isoformat())
+            return
+        progress.encoding_attempts += len(results)
+        progress.memories_encoded += sum(1 for result in results if result.encoded)
+        for result in results:
+            if not result.encoded:
+                progress.encoding_refusals[result.reason] = (
+                    progress.encoding_refusals.get(result.reason, 0) + 1
+                )
 
     # --- consolidation during the life (patch spec 14) ----------------------
     def _consolidation_trigger(

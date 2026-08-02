@@ -7,7 +7,7 @@ import pytest
 from app.conversation.service import ConversationService
 from app.llm.structured import StructuredGenerator
 from app.memory.engine import MemoryEngine
-from app.memory.transcripts import ConversationTranscriptSource
+from app.memory.material import ConversationEpisodeSource
 from app.orchestrator.processor import EventProcessor
 from tests.unit.test_conversation import (  # noqa: F401 - pytest fixtures are reused
     CHANNEL,
@@ -44,7 +44,7 @@ def service_with_memory(
             policy=memory_policy,
             structured=generator,
             prompts=prompt_registry,
-            transcripts=ConversationTranscriptSource(conversations, yui_label=identity.name),
+            material=ConversationEpisodeSource(conversations, yui_label=identity.name),
             clock=clock,
         )
         processor = EventProcessor(

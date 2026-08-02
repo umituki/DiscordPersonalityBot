@@ -191,7 +191,9 @@ async def test_memories_keep_the_origin_of_their_experience(
         event = make_event(origin="simulated_past", actor_type="npc")
         event_store.append(event)
         engine.observe(event, conversation_id=None)
-    clock.advance(seconds=3600)
+    # A simulated stretch is bounded in simulated time (patch spec 15.1), so an
+    # hour of silence does not end one — a hundred days does.
+    clock.advance(seconds=100 * 86400)
     engine.close_due_episodes()
     memory = (await engine.encode_pending())[0].memory
 

@@ -42,6 +42,8 @@ class PathsSection(_Section):
     backups_dir: Path = Path("backups")
     policies_dir: Path = Path("config/policies")
     character_dir: Path = Path("character")
+    #: Owner-supplied historical knowledge bundles (patch spec 16.2).
+    knowledge_dir: Path = Path("config/knowledge")
 
 
 class DatabaseSection(_Section):
@@ -179,6 +181,10 @@ class AppConfig(_Section):
     @property
     def character_dir(self) -> Path:
         return self._resolve(self.paths.character_dir)
+
+    @property
+    def knowledge_dir(self) -> Path:
+        return self._resolve(self.paths.knowledge_dir)
 
     @property
     def output_guard_policy_path(self) -> Path:

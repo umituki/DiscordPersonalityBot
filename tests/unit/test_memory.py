@@ -18,7 +18,7 @@ from app.memory.engine import MemoryEngine
 from app.memory.policy import MemoryPolicy
 from app.memory.retrieval import MemoryRetriever, build_match_query
 from app.memory.segmentation import EpisodeSegmenter
-from app.memory.transcripts import StaticTranscriptSource, Transcript
+from app.memory.material import EpisodeMaterial, StaticMaterialSource
 from app.llm.structured import StructuredGenerator
 from app.storage.repositories.memory import MemoryRepository
 from tests.unit.test_llm_structured import ScriptedClient
@@ -45,9 +45,9 @@ def build_engine(memories, memory_policy, prompt_registry, clock, script, transc
         policy=memory_policy,
         structured=generator,
         prompts=prompt_registry,
-        transcripts=StaticTranscriptSource(
+        material=StaticMaterialSource(
             transcript
-            or Transcript(text="USER: 海に行った話\nYUI: いいね", turn_count=2, user_turn_count=1)
+            or EpisodeMaterial(text="USER: 海に行った話\nYUI: いいね", turn_count=2, user_turn_count=1)
         ),
         clock=clock,
     )

@@ -1,0 +1,146 @@
+# Starter knowledge bundle — an example of the format, not a real dataset.
+#
+# Entries here are deliberately generic and long-running, so they are safe to
+# ship and useless as a substitute for the real bundle for whatever period you
+# are simulating. See README.md.
+#
+# `available_from` is when the thing became publicly knowable. That is what the
+# temporal leakage guard checks against a simulated moment; it is not the date
+# the source was written.
+knowledge:
+  # --- foundational: how the ordinary world works ---------------------------
+  - statement: 水は0度で凍り、100度で沸騰する
+    coverage_class: foundational
+    available_from: "1900-01-01"
+    topic: 自然
+    stability: STABLE
+    complexity: 0.1
+    salience: 0.8
+
+  - statement: 一年は十二か月あり、季節はめぐる
+    coverage_class: foundational
+    available_from: "1900-01-01"
+    topic: 自然
+    stability: STABLE
+    complexity: 0.1
+    salience: 0.9
+
+  - statement: お金を出して物やサービスを買う
+    coverage_class: foundational
+    available_from: "1900-01-01"
+    topic: 社会
+    stability: STABLE
+    complexity: 0.2
+    salience: 0.8
+
+  - statement: 学校には学年があり、年度ごとに進級する
+    coverage_class: foundational
+    available_from: "1900-01-01"
+    topic: 社会
+    geography: jp
+    stability: STABLE
+    complexity: 0.2
+    salience: 0.7
+
+  # --- environmental: what daily life was like ------------------------------
+  - statement: 家庭の電話は固定電話で、家族が共有していた
+    coverage_class: environmental
+    available_from: "1960-01-01"
+    available_until: "2010-01-01"
+    topic: 通信
+    geography: jp
+    stability: CHANGEABLE
+    complexity: 0.2
+    salience: 0.6
+
+  - statement: 携帯電話でメールをやりとりするのが一般的になっていた
+    coverage_class: environmental
+    available_from: "2001-01-01"
+    available_until: "2014-01-01"
+    topic: 通信
+    geography: jp
+    stability: CHANGEABLE
+    complexity: 0.3
+    salience: 0.7
+
+  - statement: 家庭のインターネット接続が電話回線から常時接続へ移っていった
+    coverage_class: environmental
+    available_from: "2001-01-01"
+    available_until: "2010-01-01"
+    topic: 通信
+    geography: jp
+    stability: CHANGEABLE
+    complexity: 0.4
+    salience: 0.5
+
+  - statement: 音楽はCDで買って聴くのが普通だった
+    coverage_class: environmental
+    available_from: "1990-01-01"
+    available_until: "2012-01-01"
+    topic: 音楽
+    geography: jp
+    stability: CHANGEABLE
+    complexity: 0.2
+    salience: 0.6
+
+  # --- historical / cultural: what people were talking about ----------------
+  - statement: 学校が週五日制になり、土曜日が休みになった
+    coverage_class: historical_cultural
+    available_from: "2002-04-01"
+    topic: 社会
+    geography: jp
+    stability: STABLE
+    complexity: 0.3
+    salience: 0.6
+
+  - statement: 夏に大きな花火大会があり、多くの人が浴衣で出かける
+    coverage_class: historical_cultural
+    available_from: "1900-01-01"
+    topic: 行事
+    geography: jp
+    stability: STABLE
+    complexity: 0.2
+    salience: 0.7
+
+  - statement: 年末に一年をふり返る番組がいくつも放送される
+    coverage_class: historical_cultural
+    available_from: "1960-01-01"
+    topic: 行事
+    geography: jp
+    stability: STABLE
+    complexity: 0.2
+    salience: 0.5
+
+  # --- interest-driven: things a particular person would seek out -----------
+  - statement: ピアノは独学でも始められるが、はじめは指の形で苦労する
+    coverage_class: interest_driven
+    available_from: "1900-01-01"
+    topic: 音楽
+    stability: STABLE
+    complexity: 0.5
+    salience: 0.3
+
+  - statement: 図書館では本を借りるのに利用者カードがいる
+    coverage_class: interest_driven
+    available_from: "1950-01-01"
+    topic: 読書
+    geography: jp
+    stability: STABLE
+    complexity: 0.2
+    salience: 0.4
+
+  - statement: 星座は季節によって見える位置が変わる
+    coverage_class: interest_driven
+    available_from: "1900-01-01"
+    topic: 星
+    stability: STABLE
+    complexity: 0.4
+    salience: 0.3
+
+  - statement: 散歩は距離より続けることのほうが難しい
+    coverage_class: interest_driven
+    available_from: "1900-01-01"
+    topic: 散歩
+    stability: STABLE
+    complexity: 0.2
+    salience: 0.2

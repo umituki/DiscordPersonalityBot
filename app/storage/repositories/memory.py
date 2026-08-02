@@ -107,11 +107,28 @@ class MemoryRepository:
         row = self._db.query_one("SELECT * FROM episodes WHERE episode_id = ?", (episode_id,))
         return None if row is None else _to_episode(row)
 
-    def open_episode_for(self, conversation_id: str | None) -> Episode | None:
+    def open_episode_for(
+        self, conversation_id: str | None, *, origin: str | None = None
+    ) -> Episode | None:
+        """The open episode of one stream.
+
+        ``origin`` matters when ``conversation_id`` is NULL: a simulated life
+        and a virtual-life day both have no conversation, and without the
+        origin they would be appended to each other's episode (patch spec 15).
+        """
+        if origin is None:
+            return self._first_open(
+                "status = 'open' AND conversation_id IS ?", (conversation_id,)
+            )
+        return self._first_open(
+            "status = 'open' AND conversation_id IS ? AND origin = ?",
+            (conversation_id, origin),
+        )
+
+    def _first_open(self, where: str, params: tuple) -> Episode | None:
         row = self._db.query_one(
-            "SELECT * FROM episodes WHERE status = 'open' AND conversation_id IS ? "
-            "ORDER BY started_at DESC LIMIT 1",
-            (conversation_id,),
+            f"SELECT * FROM episodes WHERE {where} ORDER BY started_at DESC LIMIT 1",
+            params,
         )
         return None if row is None else _to_episode(row)
 

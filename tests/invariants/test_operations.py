@@ -45,7 +45,7 @@ def admin(db, backups, clock, tmp_path) -> AdminControlPlane:
     from app.llm.structured import StructuredGenerator
     from app.memory.engine import MemoryEngine
     from app.memory.policy import MemoryPolicy
-    from app.memory.transcripts import StaticTranscriptSource, Transcript
+    from app.memory.material import EpisodeMaterial, StaticMaterialSource
     from app.llm.prompts import PromptRegistry
     from app.storage.repositories.memory import MemoryRepository
     from tests.unit.test_llm_structured import ScriptedClient
@@ -59,7 +59,9 @@ def admin(db, backups, clock, tmp_path) -> AdminControlPlane:
             ScriptedClient([]), prompts=prompts, clock=clock, max_attempts=1
         ),
         prompts=prompts,
-        transcripts=StaticTranscriptSource(Transcript(text="", turn_count=0, user_turn_count=0)),
+        material=StaticMaterialSource(
+            EpisodeMaterial(text="", turn_count=0, user_turn_count=0)
+        ),
         clock=clock,
     )
     return AdminControlPlane(

@@ -39,6 +39,8 @@ from app.events.dispatcher import EventDispatcher
 from app.events.model import Event, SystemStartedPayload, SystemStoppedPayload
 from app.epistemics.actions import EpistemicActionSelector
 from app.knowledge.builder import KnowledgeBuilder
+from app.knowledge.coverage import CoveragePlanner
+from app.knowledge.providers import BundleProvider, ProviderRegistry
 from app.knowledge.policy import KnowledgePolicy
 from app.knowledge.service import KnowledgeService
 from app.simulation.engine import PastSimulationEngine
@@ -56,7 +58,12 @@ from app.conversation.service import ConversationService
 from app.interfaces.discord.adapter import DiscordMessageAdapter
 from app.memory.engine import MemoryEngine
 from app.memory.policy import MemoryPolicy
-from app.memory.transcripts import ConversationTranscriptSource
+from app.memory.material import (
+    CompositeMaterialSource,
+    ConversationEpisodeSource,
+    SimulationEpisodeSource,
+    VirtualLifeEpisodeSource,
+)
 from app.psychology.appraisal import AppraisalEngine
 from app.psychology.emotion import EmotionEngine
 from app.psychology.mood import MoodEngine
@@ -200,6 +207,8 @@ class Application:
     llm_policy: LLMPolicy
     knowledge_policy: KnowledgePolicy
     knowledge_builder: KnowledgeBuilder
+    knowledge_providers: ProviderRegistry
+    coverage: CoveragePlanner
     knowledge: KnowledgeService
     simulation_policy: SimulationPolicy
     seed_builder: SeedBuilder
@@ -432,8 +441,15 @@ class Application:
             policy=memory_policy,
             structured=structured,
             prompts=prompts,
-            transcripts=ConversationTranscriptSource(
-                conversation_repo, yui_label=identity.name
+            # Patch spec 15.2: one source per kind of life. Without the
+            # simulated one, every simulated episode read as empty and was
+            # discarded, so nineteen years produced no memories at all.
+            material=CompositeMaterialSource(
+                (
+                    ConversationEpisodeSource(conversation_repo, yui_label=identity.name),
+                    SimulationEpisodeSource(event_store),
+                    VirtualLifeEpisodeSource(event_store),
+                )
             ),
             clock=resolved_clock,
         )
@@ -555,6 +571,19 @@ class Application:
             memory=memory_engine,
             clock=resolved_clock,
         )
+        # Patch spec 16.2: the authority is an external source, never what a
+        # model happens to know. Bundles the owner curated are the source that
+        # ships; a lookup tool can be registered here too, and its results go
+        # through the Tool Manager so a claim has provenance.
+        knowledge_providers = ProviderRegistry(builder=knowledge_builder)
+        knowledge_providers.register(BundleProvider(config.knowledge_dir))
+        # Patch spec 16.3: coverage is planned per period per class. A window
+        # nothing was found for is recorded as a gap, not passed silently.
+        coverage_planner = CoveragePlanner(
+            builder=knowledge_builder,
+            providers=knowledge_providers,
+            clock=resolved_clock,
+        )
 
         # Update order follows the layers: immediate psychology first, then the
         # adaptive layer that reads it (spec 9.1, 9.5).
@@ -635,6 +664,11 @@ class Application:
             # not once at the end, so the Deep Gate sees several separated
             # evidence windows instead of one.
             consolidation=consolidation_job,
+            # Patch spec 15.1: experiences reach the ordinary memory pipeline
+            # — segmentation, the Encoding Gate, forgetting — and are never
+            # written into the memory table directly.
+            memory=memory_engine,
+            coverage=coverage_planner,
             clock=resolved_clock,
         )
         genesis_service = GenesisService(
@@ -753,6 +787,8 @@ class Application:
             llm_policy=llm_policy,
             knowledge_policy=knowledge_policy,
             knowledge_builder=knowledge_builder,
+            knowledge_providers=knowledge_providers,
+            coverage=coverage_planner,
             knowledge=knowledge_service,
             simulation_policy=simulation_policy,
             seed_builder=seed_builder,

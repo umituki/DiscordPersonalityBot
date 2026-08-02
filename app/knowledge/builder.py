@@ -172,6 +172,10 @@ class KnowledgeBuilder:
     def register_all(self, candidates: Iterable[Candidate]) -> list[KnowledgeItem]:
         return [self.register(candidate) for candidate in candidates]
 
+    def knows(self, statement: str) -> bool:
+        """Whether this claim is already in the external-knowledge layer."""
+        return self._knowledge.by_statement(statement) is not None
+
     def revise(
         self,
         knowledge_id: str,
@@ -229,10 +233,19 @@ class KnowledgeBuilder:
                 f"{len(candidates)} candidates exceeds the per-job limit of {limit}"
             )
 
+        # Only the future direction is a leak. Knowledge that was already
+        # public before the window is ordinary background — most of what a
+        # person knows predates the period they are living through — but
+        # something not yet available by the end of the window is hindsight,
+        # and that is rejected rather than clipped.
         outside = [
             candidate.statement
             for candidate in candidates
-            if not (job.period_start <= candidate.available_from < job.period_end)
+            if candidate.available_from >= job.period_end
+            or (
+                candidate.available_until is not None
+                and candidate.available_until <= job.period_start
+            )
         ]
         if outside:
             self._jobs.complete(
@@ -243,8 +256,8 @@ class KnowledgeBuilder:
                 status="failed",
             )
             raise KnowledgeError(
-                f"{len(outside)} candidate(s) fall outside the job period "
-                f"{job.period_start.date()}..{job.period_end.date()}"
+                f"{len(outside)} candidate(s) were not available during the job "
+                f"period {job.period_start.date()}..{job.period_end.date()}"
             )
 
         stored = self.register_all(candidates)

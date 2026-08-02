@@ -20,7 +20,17 @@ import pytest
 from app.consolidation.growth import GrowthEngine
 from app.consolidation.policy import GrowthPolicy
 from app.knowledge.policy import KnowledgePolicy
+from app.knowledge.builder import KnowledgeBuilder
+from app.knowledge.coverage import CoveragePlanner
+from app.knowledge.providers import BundleProvider, ProviderRegistry
 from app.knowledge.service import KnowledgeService
+from app.memory.engine import MemoryEngine
+from app.memory.material import (
+    CompositeMaterialSource,
+    SimulationEpisodeSource,
+    VirtualLifeEpisodeSource,
+)
+from app.memory.policy import MemoryPolicy
 from app.llm.structured import StructuredGenerator
 from app.orchestrator.processor import EventProcessor
 from app.psychology.appraisal import AppraisalEngine
@@ -109,7 +119,13 @@ def simulation(
 ):
     """A full simulated life on the real pipeline."""
 
-    def build(*, consolidation=None, narration_script: list | None = None):
+    def build(
+        *,
+        consolidation=None,
+        narration_script: list | None = None,
+        memory=True,
+        knowledge=True,
+    ):
         identity = load_identity(REPO_ROOT / "character")
         # No script for appraisal: routine and minor are read in Python, and
         # anything that does reach the model falls back to policy defaults.
@@ -141,6 +157,40 @@ def simulation(
             mode="simulation",
             clock=clock,
         )
+        coverage_planner = None
+        if knowledge:
+            from app.storage.repositories.knowledge import CoverageJobRepository
+
+            knowledge_builder = KnowledgeBuilder(
+                knowledge=KnowledgeRepository(db),
+                jobs=CoverageJobRepository(db),
+                policy=KnowledgePolicy.load(
+                    REPO_ROOT / "config" / "policies" / "knowledge.yaml"
+                ),
+                clock=clock,
+            )
+            providers = ProviderRegistry(builder=knowledge_builder)
+            providers.register(BundleProvider(REPO_ROOT / "config" / "knowledge"))
+            coverage_planner = CoveragePlanner(
+                builder=knowledge_builder, providers=providers, clock=clock
+            )
+
+        memory_engine = None
+        if memory:
+            from app.storage.repositories.memory import MemoryRepository
+
+            memory_engine = MemoryEngine(
+                repository=MemoryRepository(db),
+                policy=MemoryPolicy.load(
+                    REPO_ROOT / "config" / "policies" / "memory.yaml"
+                ),
+                structured=structured,
+                prompts=prompt_registry,
+                material=CompositeMaterialSource(
+                    (SimulationEpisodeSource(event_store), VirtualLifeEpisodeSource(event_store))
+                ),
+                clock=clock,
+            )
         candidates = CandidateRepository(db)
         engine = PastSimulationEngine(
             processor=processor,
@@ -165,6 +215,8 @@ def simulation(
             prompts=prompt_registry,
             policy=simulation_policy,
             consolidation=consolidation,
+            memory=memory_engine,
+            coverage=coverage_planner,
             clock=clock,
         )
         seed = SeedBuilder(simulation_policy.seed, clock=clock).build(
@@ -369,3 +421,78 @@ async def test_a_block_records_how_many_events_it_produced(simulation, db) -> No
         "an experience, its knowledge exposures and the block event all count"
     )
     assert len({block.event_count for block in blocks}) >= 1
+
+
+# --- 15 the life is remembered, selectively ---------------------------------
+async def test_a_simulated_life_offers_its_experiences_to_memory(simulation) -> None:
+    """Patch spec 15.1: the pipeline runs; it is not bypassed and not skipped."""
+    engine, scaffold = simulation()
+    result = await engine.run(scaffold, max_blocks=24)
+
+    assert result.progress.episode_events == result.progress.experiences
+    assert result.progress.encoding_attempts > 0, (
+        "nineteen years used to reach the Encoding Gate zero times"
+    )
+
+
+async def test_not_everything_is_remembered(simulation, db) -> None:
+    """Patch spec 15.1: ``全Event記憶化は禁止``.
+
+    What the gate does with any particular stretch depends on what the stretch
+    was like — that is tested directly in ``test_simulation_memory.py``. What
+    is asserted here is that a life does not come out as one memory per
+    experience: the experiences are grouped, and the group is what is judged.
+    """
+    from app.storage.repositories.memory import MemoryRepository
+
+    engine, scaffold = simulation()
+    result = await engine.run(scaffold, max_blocks=24)
+
+    encoded = MemoryRepository(db).memory_count()
+    assert 0 < encoded < result.progress.experiences
+    assert encoded == result.progress.memories_encoded
+
+
+async def test_a_life_without_a_memory_engine_still_runs(simulation) -> None:
+    engine, scaffold = simulation(memory=False)
+    result = await engine.run(scaffold, max_blocks=6)
+
+    assert result.completed
+    assert result.progress.encoding_attempts == 0
+
+
+# --- 16 the period has knowledge in it --------------------------------------
+async def test_a_simulated_life_has_a_knowledge_layer(simulation, db) -> None:
+    """Patch spec 16.1: ``source/candidate/exposure pipelineが0件`` is a failure."""
+    engine, scaffold = simulation()
+    result = await engine.run(scaffold, max_blocks=12)
+
+    assert result.progress.knowledge_requests > 0
+    assert result.progress.knowledge_candidates > 0
+    assert KnowledgeRepository(db).count() == result.progress.knowledge_candidates
+
+
+async def test_the_period_knowledge_is_offered_to_her(simulation) -> None:
+    """Patch spec 16.4: existing is not knowing; the funnel still decides."""
+    engine, scaffold = simulation()
+    result = await engine.run(scaffold, max_blocks=12)
+
+    assert result.progress.knowledge_exposures > 0
+    assert result.progress.knowledge_acquired <= result.progress.knowledge_exposures
+
+
+async def test_nothing_from_after_the_simulated_moment_leaks_in(simulation) -> None:
+    """Patch spec 16.3: the temporal fields are kept, so the guard can work."""
+    engine, scaffold = simulation()
+    result = await engine.run(scaffold, max_blocks=12)
+
+    assert result.progress.leakage_attempts == 0
+
+
+async def test_a_life_without_a_coverage_planner_has_an_empty_layer(simulation, db) -> None:
+    """The regression, kept visible: this is what the health audit refuses."""
+    engine, scaffold = simulation(knowledge=False)
+    result = await engine.run(scaffold, max_blocks=6)
+
+    assert result.progress.knowledge_candidates == 0
+    assert KnowledgeRepository(db).count() == 0

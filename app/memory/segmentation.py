@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from app.memory.models import Episode
-from app.memory.policy import SegmentationPolicy
+from app.memory.policy import SegmentationPolicy, SegmentationRules
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,26 +44,33 @@ class EpisodeSegmenter:
         if shutting_down:
             return BoundaryDecision(True, "shutdown")
 
+        # Patch spec 15.1: what counts as one continuous stretch depends on
+        # the kind of life the episode belongs to.
+        rules = self.rules_for(episode)
+
         last_activity = episode.ended_at or episode.started_at
         reference = next_event_at or now
         gap = reference - last_activity
-        if gap >= timedelta(minutes=self._policy.max_gap_minutes):
+        if gap >= timedelta(minutes=rules.max_gap_minutes):
             return BoundaryDecision(True, "silence_gap")
 
         if next_conversation_id is not None and episode.conversation_id is not None:
             if next_conversation_id != episode.conversation_id:
                 return BoundaryDecision(True, "conversation_changed")
 
-        if episode.event_count >= self._policy.max_events:
+        if episode.event_count >= rules.max_events:
             return BoundaryDecision(True, "max_events")
 
         if reference - episode.started_at >= timedelta(
-            minutes=self._policy.max_duration_minutes
+            minutes=rules.max_duration_minutes
         ):
             return BoundaryDecision(True, "max_duration")
 
         return BoundaryDecision.keep_open()
 
+    def rules_for(self, episode: Episode) -> SegmentationRules:
+        return self._policy.for_origin(episode.origin)
+
     def is_encodable(self, episode: Episode) -> bool:
         """Too small an episode is not worth remembering as an episode."""
-        return episode.event_count >= self._policy.min_events_to_encode
+        return episode.event_count >= self.rules_for(episode).min_events_to_encode

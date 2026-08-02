@@ -17,11 +17,37 @@ class _Frozen(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class SegmentationPolicy(_Frozen):
+class SegmentationRules(_Frozen):
     max_gap_minutes: float = Field(default=30.0, gt=0)
     max_events: int = Field(default=40, gt=0)
     max_duration_minutes: float = Field(default=180.0, gt=0)
     min_events_to_encode: int = Field(default=2, ge=1)
+
+
+class SegmentationPolicy(SegmentationRules):
+    """Boundaries, with per-origin overrides (patch spec 15.1).
+
+    A silence of thirty minutes ends a conversation. It does not end a stretch
+    of a simulated life, where consecutive experiences are a month apart by
+    construction — under the conversation rules every simulated experience
+    became its own one-event episode, every one of them fell under
+    ``min_events_to_encode``, and nineteen years produced nothing.
+
+    The rules are the same rules; only the scale of "one continuous stretch"
+    differs between kinds of life.
+    """
+
+    by_origin: dict[str, SegmentationRules] = Field(default_factory=dict)
+
+    def for_origin(self, origin: str | None) -> SegmentationRules:
+        if origin is not None and origin in self.by_origin:
+            return self.by_origin[origin]
+        return SegmentationRules(
+            max_gap_minutes=self.max_gap_minutes,
+            max_events=self.max_events,
+            max_duration_minutes=self.max_duration_minutes,
+            min_events_to_encode=self.min_events_to_encode,
+        )
 
 
 class EncodingWeights(_Frozen):

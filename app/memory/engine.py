@@ -46,7 +46,7 @@ from app.memory.models import Episode, EpisodicMemory, RetrievalCandidate, Seman
 from app.memory.policy import MemoryPolicy
 from app.memory.retrieval import MemoryRetriever
 from app.memory.segmentation import EpisodeSegmenter
-from app.memory.transcripts import Transcript, TranscriptSource
+from app.memory.material import EpisodeMaterial, EpisodeMaterialSource
 from app.storage.repositories.memory import MemoryRepository
 
 logger = logging.getLogger(__name__)
@@ -76,14 +76,14 @@ class MemoryEngine:
         policy: MemoryPolicy,
         structured: StructuredGenerator,
         prompts: PromptRegistry,
-        transcripts: TranscriptSource,
+        material: EpisodeMaterialSource,
         clock: Clock | None = None,
     ) -> None:
         self._repository = repository
         self._policy = policy
         self._structured = structured
         self._prompts = prompts
-        self._transcripts = transcripts
+        self._material = material
         self._clock = clock or SystemClock()
         self._segmenter = EpisodeSegmenter(policy.segmentation)
         self._gate = EncodingGate(policy.encoding)
@@ -94,13 +94,25 @@ class MemoryEngine:
         return self._retriever
 
     # --- segmentation ------------------------------------------------------
-    def observe(self, event: Event, *, conversation_id: str | None = None) -> Episode:
-        """Place an event into the current episode, opening one if needed."""
-        current = self._repository.open_episode_for(conversation_id)
+    def observe(
+        self,
+        event: Event,
+        *,
+        conversation_id: str | None = None,
+        now: datetime | None = None,
+    ) -> Episode:
+        """Place an event into the current episode, opening one if needed.
+
+        ``now`` is the effective time (patch spec 13). During a simulation it
+        is the simulated moment, so a boundary is measured in the life's own
+        time rather than in the seconds the machine spent on it.
+        """
+        moment = now or self._clock.now()
+        current = self._repository.open_episode_for(conversation_id, origin=event.origin)
         if current is not None:
             decision = self._segmenter.decide(
                 current,
-                now=self._clock.now(),
+                now=moment,
                 next_event_at=event.occurred_at,
                 next_conversation_id=conversation_id,
             )
@@ -145,10 +157,12 @@ class MemoryEngine:
         return closed
 
     # --- encoding ----------------------------------------------------------
-    async def encode_pending(self, *, limit: int = 10) -> list[EncodingResult]:
+    async def encode_pending(
+        self, *, limit: int = 10, now: datetime | None = None
+    ) -> list[EncodingResult]:
         results = []
         for episode in self._repository.episodes_with_status("closed", limit=limit):
-            results.append(await self.encode_episode(episode))
+            results.append(await self.encode_episode(episode, now=now))
         return results
 
     async def encode_episode(
@@ -159,6 +173,7 @@ class MemoryEngine:
         prediction_error: float = 0.0,
         run_id: str | None = None,
         event_id: str | None = None,
+        now: datetime | None = None,
     ) -> EncodingResult:
         """Run one closed episode through the Encoding Gate."""
         existing = self._repository.memory_for_episode(episode.episode_id)
@@ -169,7 +184,7 @@ class MemoryEngine:
             self._repository.mark_episode(episode.episode_id, "discarded")
             return EncodingResult(episode, None, None, "too_small")
 
-        transcript = self._transcripts.transcript_for(episode)
+        transcript = self._material.material_for(episode)
         if transcript.is_empty:
             self._repository.mark_episode(episode.episode_id, "discarded")
             return EncodingResult(episode, None, None, "no_transcript")
@@ -198,7 +213,10 @@ class MemoryEngine:
             )
             return EncodingResult(episode, None, decision, "below_threshold")
 
-        now = self._clock.now()
+        # Patch spec 15.3: a memory formed in a simulated 2003 was created
+        # then, and starts decaying from then. Stamping it with wall-clock now
+        # would leave nineteen years of memories all equally fresh.
+        moment = now or self._clock.now()
         encoding = self._policy.encoding
         memory = EpisodicMemory(
             memory_id=ids.new_id(ids.MEMORY),
@@ -215,9 +233,9 @@ class MemoryEngine:
             novelty=signals.clamped().novelty,
             prediction_error=signals.clamped().prediction_error,
             occurred_at=episode.started_at,
-            created_at=now,
-            updated_at=now,
-            last_decayed_at=now,
+            created_at=moment,
+            updated_at=moment,
+            last_decayed_at=moment,
             source_event_ids=episode.event_ids,
         )
         stored = self._repository.insert_memory(memory)
@@ -240,7 +258,7 @@ class MemoryEngine:
 
     async def _summarise(
         self,
-        transcript: Transcript,
+        transcript: EpisodeMaterial,
         episode: Episode,
         *,
         run_id: str | None,

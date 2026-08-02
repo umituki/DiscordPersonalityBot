@@ -10,6 +10,22 @@ segmentation:
   max_events: 40
   max_duration_minutes: 180
   min_events_to_encode: 2
+  # patch spec 15.1: 「ひと続き」の尺度は人生の種類ごとに違う。
+  # 会話の 30 分の沈黙と、simulated past の 30 日は同じ意味ではない。
+  by_origin:
+    simulated_past:
+      # 90 simulated 日。これより離れた出来事はひと続きではない。
+      max_gap_minutes: 129600
+      max_events: 12
+      # 1 simulated 年でいったん区切る。
+      max_duration_minutes: 525600
+      min_events_to_encode: 2
+    virtual_life:
+      # 12 時間空いたら別の一日。
+      max_gap_minutes: 720
+      max_events: 20
+      max_duration_minutes: 1440
+      min_events_to_encode: 2
 
 encoding:
   # spec 10.4: メッセージ単位では長期記憶化しない。エピソード単位で判定する。
