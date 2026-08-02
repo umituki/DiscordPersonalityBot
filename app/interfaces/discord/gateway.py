@@ -26,6 +26,12 @@ else:  # discord.py is imported only where it is actually needed
 logger = logging.getLogger(__name__)
 
 
+def _mark(trace, stage: str) -> None:
+    """Patch spec 19.2. A missing timestamp must never cost a reply."""
+    if trace is not None:
+        trace.mark(stage)
+
+
 class DiscordGatewayError(RuntimeError):
     """Raised when the gateway cannot be started."""
 
@@ -107,20 +113,30 @@ class DiscordGateway:
         if not self._service.intends_to_reply(inbound):
             return await self._service.handle_inbound(inbound)
 
+        # Patch spec 19.2: the trace starts here, before the indicator, so the
+        # USER's wait is measured from when the message arrived rather than
+        # from when the service got round to it.
+        trace = self._service.start_trace(inbound)
+
         async with self._typing(message):
-            result = await self._service.handle_inbound(inbound)
+            _mark(trace, "typing_started_at")
+            result = await self._service.handle_inbound(inbound, trace=trace)
             if not result.should_send or result.outbound is None:
                 return result
 
+            _mark(trace, "discord_send_started_at")
             try:
                 sent = await self._send(message, result.outbound.text)
             except Exception as exc:  # noqa: BLE001 - the send is the fragile part
+                _mark(trace, "discord_send_ended_at")
                 logger.exception("failed to send reply channel=%s", result.outbound.channel_id)
                 await self._service.record_send_failure(result, repr(exc))
                 return result
+            _mark(trace, "discord_send_ended_at")
 
         # Outside the indicator: the reply is already delivered, and the
         # post-send run must not keep "typing" on screen after it.
+        _mark(trace, "typing_stopped_at")
         await self._service.confirm_sent(
             result,
             message_id=str(getattr(sent, "id", "unknown")),

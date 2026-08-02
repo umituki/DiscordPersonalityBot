@@ -32,10 +32,18 @@ from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator, StructuredOutcome
 from app.llm.types import LLMMessage
 from app.llm.validation import Stage, ValidationContext, ValidationFailure, ValidationPipeline
+from app.observability.trace import ConversationTrace
 from app.resources.identity import Identity
 from app.state.snapshot import StateSnapshot
 
 logger = logging.getLogger(__name__)
+
+
+def _mark(trace, stage: str) -> None:
+    """Patch spec 19.2. Timing must never be able to break a reply."""
+    if trace is not None:
+        trace.mark(stage)
+
 
 PROMPT_ID = "conversation_reply"
 PURPOSE = "conversation_reply"
@@ -116,8 +124,10 @@ class ConversationEngine:
         run_id: str | None = None,
         event_id: str | None = None,
         tool_success_ids: Sequence[str] = (),
+        trace: "ConversationTrace | None" = None,
     ) -> ReplyGeneration:
         # Spec 16.1: decide what kind of response this is *before* writing it.
+        _mark(trace, "dialogue_started_at")
         acts, acts_source = await self._choose_acts(
             user_text=user_text,
             recent_turns=recent_turns,
@@ -125,6 +135,7 @@ class ConversationEngine:
             run_id=run_id,
             event_id=event_id,
         )
+        _mark(trace, "dialogue_ended_at")
 
         # Patch spec 9: the reply expresses the state the event produced, in
         # qualitative bands. Never a dump of the state table.

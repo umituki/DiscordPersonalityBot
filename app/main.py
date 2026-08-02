@@ -24,6 +24,7 @@ from app.interfaces.discord.gateway import DiscordGateway
 from app.observability.logging import configure_logging
 from app.storage.database import Database
 from app.storage.migrations import LATEST_VERSION, migrate, schema_version
+from app.storage.repositories.traces import ConversationTraceRepository
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,12 @@ def _parser() -> argparse.ArgumentParser:
     # database the USER's history is in.
     subparsers.add_parser(
         "diagnose", help="report the health of the Genesis under this database (23.3)"
+    )
+    latency = subparsers.add_parser(
+        "latency", help="reply-latency percentiles from the conversation traces (19.2)"
+    )
+    latency.add_argument(
+        "--limit", type=int, default=200, help="how many recent turns to read"
     )
     repair = subparsers.add_parser(
         "repair", help="rebuild a broken Genesis in a shadow database (23.4)"
@@ -170,6 +177,46 @@ def _backup(config_file: Path | None, reason: str) -> int:
         return 0 if record.usable else 1
     finally:
         application.db.close()
+
+
+def _latency(config_file: Path | None, limit: int) -> int:
+    """Patch spec 19.2 / 20: what the USER's wait actually looks like.
+
+    Reported from recorded turns only. With nothing recorded it says so rather
+    than printing a zero that reads like a passing measurement.
+    """
+    config = load_config(config_file)
+    config.ensure_directories()
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        traces = ConversationTraceRepository(application.db)
+        samples = sorted(traces.latencies(limit=limit))
+        if not samples:
+            sys.stdout.write(
+                json.dumps({"turns": 0, "note": "no conversation turns recorded yet"})
+                + "\n"
+            )
+            return 1
+        report = {
+            "turns": len(samples),
+            "median_ms": _percentile(samples, 0.50),
+            "p95_ms": _percentile(samples, 0.95),
+            "max_ms": samples[-1],
+            # Spec 26: warm short DM median <= 15s, p95 <= 30s.
+            "meets_median_target": _percentile(samples, 0.50) <= 15_000,
+            "meets_p95_target": _percentile(samples, 0.95) <= 30_000,
+        }
+        sys.stdout.write(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+        return 0 if report["meets_median_target"] and report["meets_p95_target"] else 1
+    finally:
+        application.db.close()
+
+
+def _percentile(sorted_samples: list[int], fraction: float) -> int:
+    """Nearest-rank, so a small sample reports a value that really happened."""
+    index = max(0, min(len(sorted_samples) - 1, round(fraction * len(sorted_samples)) - 1))
+    return sorted_samples[index]
 
 
 def _diagnose(config_file: Path | None) -> int:
@@ -350,6 +397,8 @@ def main(argv: list[str] | None = None) -> int:
             return _backup(args.config, args.reason)
         if args.command == "diagnose":
             return _diagnose(args.config)
+        if args.command == "latency":
+            return _latency(args.config, args.limit)
         if args.command == "repair":
             return _repair(
                 args.config,

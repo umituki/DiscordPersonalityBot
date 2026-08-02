@@ -232,7 +232,7 @@ async def test_typing_stops_when_generation_raises(service_factory, clock) -> No
         channel=channel, author=FakeAuthor(), content="やっほー", created_at=clock.now()
     )
 
-    async def explode(_inbound):
+    async def explode(_inbound, **kwargs):
         raise RuntimeError("the model is gone")
 
     service.handle_inbound = explode  # type: ignore[method-assign]

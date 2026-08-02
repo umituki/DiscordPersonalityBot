@@ -77,18 +77,33 @@ class AppraisalEngine:
         self._policy = policy
         self._clock = clock or SystemClock()
         self._recent_turns: tuple[ConversationTurn, ...] = ()
+        #: Patch spec 19.2: the turn's trace, supplied by the conversation path
+        #: so the appraisal stage is visible separately in the timeline.
+        self._trace = None
 
     def set_recent_turns(self, turns: Sequence[ConversationTurn]) -> None:
         """Context for the next appraisal, supplied by the conversation path."""
         self._recent_turns = tuple(turns)
+
+    def set_trace(self, trace) -> None:
+        """The trace to mark, or ``None`` to stop marking."""
+        self._trace = trace
 
     async def interpret(self, event: Event, snapshot: StateSnapshot) -> Interpretation:
         if not self.is_appraisable(event):
             return Interpretation()
         if self.is_self_authored(event):
             return Interpretation()
-        appraisal = await self.appraise(event, snapshot)
+        self._mark("appraisal_started_at")
+        try:
+            appraisal = await self.appraise(event, snapshot)
+        finally:
+            self._mark("appraisal_ended_at")
         return Interpretation(appraisal=appraisal)
+
+    def _mark(self, stage: str) -> None:
+        if self._trace is not None:
+            self._trace.mark(stage)
 
     @staticmethod
     def is_appraisable(event: Event) -> bool:

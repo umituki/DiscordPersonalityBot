@@ -38,6 +38,7 @@ from app.conversation.events import (
 )
 from app.conversation.policy import ConversationPolicy
 from app.events.model import Event
+from app.observability.trace import ConversationTrace, ConversationTracer
 from app.interfaces.discord.adapter import DiscordMessageAdapter, IgnoreReason
 from app.memory.engine import MemoryEngine
 from app.events.store import EventStore
@@ -73,6 +74,9 @@ class ConversationResult:
     generation: ReplyGeneration | None = None
     outbound: OutboundMessage | None = None
     suppressed: bool = False
+    #: Patch spec 19.2. Carried back so the interface can add the marks only it
+    #: knows — when typing started, when Discord actually took the message.
+    trace: ConversationTrace | None = None
 
     @property
     def should_send(self) -> bool:
@@ -93,6 +97,7 @@ class ConversationService:
         event_store: EventStore,
         appraisal: AppraisalEngine | None = None,
         tools: ToolManager | None = None,
+        tracer: ConversationTracer | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._processor = processor
@@ -111,6 +116,9 @@ class ConversationService:
         #: In-flight post-send work (patch spec 5.4).
         self._background: set[asyncio.Task[None]] = set()
         self._tools = tools
+        #: Patch spec 19.2: where the USER's wait went, stage by stage. Optional
+        #: because observability must never be a precondition for answering.
+        self._tracer = tracer
         self._clock = clock or SystemClock()
 
     # --- inbound -----------------------------------------------------------
@@ -124,12 +132,23 @@ class ConversationService:
         """
         return self._adapter.rejection_reason(message) is None
 
-    async def handle_inbound(self, message: InboundMessage) -> ConversationResult:
+    async def handle_inbound(
+        self, message: InboundMessage, *, trace: ConversationTrace | None = None
+    ) -> ConversationResult:
+        # Patch spec 19.2. The interface may have started the trace already —
+        # the typing indicator goes up before this call — so one is adopted
+        # when offered and started here otherwise.
+        trace = trace or self._start_trace(message)
         decision = self._adapter.admit(message)
         if not decision.accepted or decision.event is None:
+            self._mark(trace, "admitted_at")
+            self._finish(trace, outcome=f"ignored:{decision.reason.value if decision.reason else 'unknown'}")
             return ConversationResult(accepted=False, ignored_reason=decision.reason)
 
         event = decision.event
+        self._mark(trace, "admitted_at")
+        if trace is not None:
+            trace.event_id = event.event_id
         conversation = await asyncio.to_thread(
             self._conversations.ensure_conversation,
             channel_id=message.channel_id,
@@ -145,6 +164,7 @@ class ConversationService:
         )
         if self._appraisal is not None:
             self._appraisal.set_recent_turns(recent)
+            self._appraisal.set_trace(trace)
 
         # Patch spec 5.1: the USER message is persisted and projected before
         # the reply is generated, so a crash mid-reply leaves it recorded
@@ -162,10 +182,15 @@ class ConversationService:
             message_ref=str(message.message_id),
         )
 
+        self._mark(trace, "state_commit_started_at")
         outcome = await self._processor.process(event)
+        self._mark(trace, "state_commit_ended_at")
+        if trace is not None:
+            trace.run_id = outcome.run.run_id
 
         memories = ()
         if self._memory is not None:
+            self._mark(trace, "memory_recall_started_at")
             await asyncio.to_thread(
                 self._memory.observe, event, conversation_id=conversation.conversation_id
             )
@@ -177,6 +202,7 @@ class ConversationService:
                 run_id=outcome.run.run_id,
                 event_id=event.event_id,
             )
+            self._mark(trace, "memory_recall_ended_at")
 
         # Spec 26: only the Tool Manager's record makes a tool claim sayable.
         tool_success_ids: tuple[str, ...] = ()
@@ -187,7 +213,9 @@ class ConversationService:
                 )
             )
 
+        self._mark(trace, "reply_started_at")
         generation = await self._engine.draft_reply(
+            trace=trace,
             user_text=event.payload.text,
             recent_turns=recent,
             memories=memories,
@@ -198,9 +226,11 @@ class ConversationService:
             event_id=event.event_id,
             tool_success_ids=tool_success_ids,
         )
+        self._mark(trace, "reply_ended_at")
 
         if not generation.accepted or generation.text is None:
             await self._suppress(event, generation, outcome)
+            self._finish(trace, outcome="suppressed")
             return ConversationResult(
                 accepted=True,
                 event=event,
@@ -214,6 +244,7 @@ class ConversationService:
             event=event,
             outcome=outcome,
             generation=generation,
+            trace=trace,
             outbound=OutboundMessage(
                 channel_id=message.channel_id,
                 text=generation.text,
@@ -269,6 +300,10 @@ class ConversationService:
             now=sent.occurred_at,
         )
         await asyncio.to_thread(self._project_sent, sent, conversation, result, message_id)
+        # 19.2: the moment the reply is actually visible in the next turn's
+        # context, which is what the USER's wait was for.
+        self._mark(result.trace, "outbound_projected_at")
+        self._finish(result.trace, outcome="sent")
 
         # Only now the psychology of having spoken. This is a full run, and it
         # is deliberately behind the projection above.
@@ -287,6 +322,24 @@ class ConversationService:
             self._memory.observe, sent, conversation_id=conversation.conversation_id
         )
         await self.run_memory_maintenance()
+
+    # --- tracing (patch spec 19.2) -----------------------------------------
+    def start_trace(self, message: InboundMessage) -> ConversationTrace | None:
+        """Begin a trace before any work, for an interface that shows typing."""
+        return self._start_trace(message)
+
+    def _start_trace(self, message: InboundMessage) -> ConversationTrace | None:
+        if self._tracer is None:
+            return None
+        return self._tracer.start(channel_id=str(message.channel_id))
+
+    def _mark(self, trace: ConversationTrace | None, stage: str) -> None:
+        if self._tracer is not None:
+            self._tracer.mark(trace, stage)
+
+    def _finish(self, trace: ConversationTrace | None, *, outcome: str) -> None:
+        if self._tracer is not None:
+            self._tracer.finish(trace, outcome=outcome)
 
     # --- background work (patch spec 5.4) ----------------------------------
     def schedule_background(self, work: Awaitable[None]) -> None:
@@ -353,6 +406,7 @@ class ConversationService:
 
     async def record_send_failure(self, result: ConversationResult, error: str) -> None:
         """A reply that could not be delivered is not an utterance."""
+        self._finish(result.trace, outcome="send_failed")
         if result.event is None:
             return
         await asyncio.to_thread(

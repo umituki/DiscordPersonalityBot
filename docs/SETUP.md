@@ -246,3 +246,39 @@ python scripts/run_genesis.py
 - 期間の知識を仕込みたい場合は、実行前に `app.knowledge_builder.register(...)`
   で候補を登録しておく。`available_from` がその時点より後のものは、
   temporal guard が例外で弾く（仕様 21.4）。
+
+---
+
+## 追加（実機検証パッチ以降）
+
+### 期間の知識を用意する
+
+`config/knowledge/` に bundle を置く。何も置かないと knowledge health 監査が
+落ちて FIRST BOOT されない（patch spec 16.1 / 17.3）。書式は
+[`config/knowledge/README.md`](../config/knowledge/README.md) を参照。
+`starter.yaml` は書式の例であって、実際にシミュレートする年代の代わりには
+ならない。
+
+### 応答の待ち時間を測る
+
+```bash
+python -m app.main latency
+```
+
+会話 1 turn ごとに記録された trace から、median / p95 と、仕様 26 の目標
+（warm short DM: median <= 15 秒, p95 <= 30 秒）を満たしているかを出す。
+1 turn も記録がなければ 0 ではなく「まだ記録がない」と言う。
+
+段階ごとの内訳は `conversation_traces` テーブルに入っている。queue 待ちと
+推論時間は分けて記録してあるので、「モデルが遅い」のか「順番待ちだった」のか
+を取り違えずに済む。
+
+### 既存 DB の健全性を見る
+
+```bash
+python -m app.main diagnose
+```
+
+`genesis_health` が `needs_rebuild` / `legacy_invalid` なら、そのデータベースの
+Genesis は心理を何も生んでいない。修復手順は
+[`docs/REPAIR.md`](REPAIR.md)。**自動では何も消さない。**

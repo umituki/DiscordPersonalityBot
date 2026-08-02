@@ -94,6 +94,7 @@ from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator
 from app.llm.tracing import DatabaseTracer
 from app.observability.logging import configure_logging
+from app.observability.trace import ConversationTracer
 from app.reliability.resources import ResourceManager
 from app.storage.backup import BackupService, looks_cloud_synced
 from app.resources.identity import Identity, load_identity
@@ -116,6 +117,7 @@ from app.storage.repositories import (
     CoverageJobRepository,
     DecisionRepository,
     ConversationRepository,
+    ConversationTraceRepository,
     DriftRepository,
     MemoryAdminRepository,
     MemoryRepository,
@@ -180,6 +182,7 @@ class Application:
     failures: FailureRepository
     llm_calls: LLMCallRepository
     conversations: ConversationRepository
+    tracer: ConversationTracer
     memories: MemoryRepository
     memory: MemoryEngine
     memory_policy: MemoryPolicy
@@ -333,6 +336,11 @@ class Application:
         coverage_job_repo = CoverageJobRepository(db)
         simulation_repo = SimulationRepository(db)
         health_repo = HealthRepository(db)
+        # Patch spec 19.2: one row per turn, so the USER's wait can be read
+        # stage by stage instead of guessed at.
+        conversation_tracer = ConversationTracer(
+            ConversationTraceRepository(db), clock=resolved_clock
+        )
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
@@ -749,6 +757,7 @@ class Application:
                 appraisal=appraisal_engine,
                 event_store=event_store,
                 tools=tool_manager,
+                tracer=conversation_tracer,
                 clock=resolved_clock,
             )
         else:
@@ -781,6 +790,7 @@ class Application:
             failures=failures,
             llm_calls=llm_call_repo,
             conversations=conversation_repo,
+            tracer=conversation_tracer,
             memories=memory_repo,
             memory=memory_engine,
             memory_policy=memory_policy,
