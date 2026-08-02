@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from app.memory.engine import MemoryEngine
+from app.memory.recall_mode import RecallMode
 from app.memory.retrieval import MemoryRetriever
 from tests.unit.test_memory import (  # noqa: F401 - shared fixtures
     SUMMARY,
@@ -69,7 +70,7 @@ async def test_unencoded_events_are_not_recallable(
 
     assert event_store.count() == 1
     assert memories.memory_count() == 0
-    assert engine.recall("なにか", now=clock.now()) == ()
+    assert (await engine.recall("なにか", now=clock.now())).selected == ()
 
 
 async def test_suppressed_memory_disappears_from_recall_but_not_from_disk(
@@ -79,11 +80,16 @@ async def test_suppressed_memory_disappears_from_recall_but_not_from_disk(
     engine = build_engine(memories, memory_policy, prompt_registry, clock, [SUMMARY])
     memory = await encode_one(engine, event_store, make_event, clock)
 
-    assert engine.recall("海に行った話", now=clock.now())
+    assert (await engine.recall("海に行った話", now=clock.now())).selected
 
     engine.suppress(memory.memory_id)
 
-    assert engine.recall("海に行った話", now=clock.now()) == ()
+    # Test 13: suppressed memories are unreachable in *every* mode, not only
+    # the one the conversation happens to use.
+    for mode in RecallMode:
+        report = await engine.recall("海に行った話", mode=mode, now=clock.now())
+        assert report.selected == (), mode
+        assert report.candidates == (), mode
     stored = memories.get_memory(memory.memory_id)
     assert stored is not None
     assert stored.status == "suppressed"
@@ -97,7 +103,7 @@ async def test_restoring_a_suppressed_memory_brings_it_back(
     memory = await encode_one(engine, event_store, make_event, clock)
     engine.suppress(memory.memory_id)
     engine.restore(memory.memory_id)
-    assert engine.recall("海に行った話", now=clock.now())
+    assert (await engine.recall("海に行った話", now=clock.now())).selected
 
 
 # --- forgetting -------------------------------------------------------------
@@ -138,22 +144,32 @@ async def test_accessibility_and_importance_are_independent(
 async def test_rumination_cannot_pin_a_memory_at_the_ceiling(
     memories, memory_policy, prompt_registry, clock, make_event, event_store
 ) -> None:
-    """Spec 10.5: strengthening by repetition has diminishing returns."""
+    """Spec 10.5, Phase 2 §2L and §2M: repetition has diminishing returns, and
+    a ceiling below perfect recall.
+
+    Five days rather than thirty: after thirty the memory is faded past the
+    availability bar and is not recalled at all, which is Stage 3 working and
+    would make this test about something else.
+    """
     engine = build_engine(memories, memory_policy, prompt_registry, clock, [SUMMARY])
     memory = await encode_one(engine, event_store, make_event, clock)
-    engine.apply_forgetting(now=clock.now() + timedelta(days=30))
+    later = clock.now() + timedelta(days=5)
+    engine.apply_forgetting(now=later)
     start = memories.get_memory(memory.memory_id).accessibility
 
     gains = []
     for _ in range(4):
         before = memories.get_memory(memory.memory_id).accessibility
-        engine.recall("海に行った話", now=clock.now() + timedelta(days=30))
+        await engine.recall("海に行った話", mode=RecallMode.REFLECTIVE, now=later)
         after = memories.get_memory(memory.memory_id).accessibility
         gains.append(after - before)
 
     assert gains[0] > gains[-1]
-    assert memories.get_memory(memory.memory_id).accessibility <= 1.0
     assert memories.get_memory(memory.memory_id).accessibility > start
+    # §2M: rehearsing something forever does not make it perfectly recallable.
+    ceiling = memory_policy.practice.max_accessibility
+    assert ceiling < 1.0
+    assert memories.get_memory(memory.memory_id).accessibility <= ceiling
 
 
 # --- reconstruction ---------------------------------------------------------
@@ -199,10 +215,11 @@ async def test_memories_keep_the_origin_of_their_experience(
 
     assert memory.origin == "simulated_past"
     assert not memory.is_from_real_history
-    real_only = engine.recall(
+    real_only = await engine.recall(
         "海に行った話", now=clock.now(), origins=("real_discord",)
     )
-    assert real_only == ()
+    assert real_only.selected == ()
+    assert real_only.candidates == ()
 
 
 async def test_encoding_survives_a_restart(

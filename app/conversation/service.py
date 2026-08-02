@@ -84,6 +84,10 @@ class ConversationResult:
     #: evidence they were checked against — not against a context rebuilt
     #: later, which would have moved on.
     grounding_context: object | None = None
+    #: Phase 2 §2J. Carried so Stage 4 can mark, after delivery, which recalled
+    #: memories the sent reply actually rests on. A memory that sat in context
+    #: and left no mark on the sentence was available, not used.
+    retrieval: object | None = None
 
     @property
     def should_send(self) -> bool:
@@ -204,19 +208,21 @@ class ConversationService:
             trace.run_id = outcome.run.run_id
 
         memories = ()
+        retrieval = None
         if self._memory is not None:
             self._mark(trace, "memory_recall_started_at")
             await asyncio.to_thread(
                 self._memory.observe, event, conversation_id=conversation.conversation_id
             )
-            # Recall reads subjective memory only — never the archive (spec 10.1).
-            memories = await asyncio.to_thread(
-                self._memory.recall,
+            # Recall reads subjective memory only — never the archive
+            # (spec 10.1, Phase 2 §2H). Recalling nothing is a normal result.
+            retrieval = await self._memory.recall(
                 event.payload.text,
                 now=event.occurred_at,
                 run_id=outcome.run.run_id,
                 event_id=event.event_id,
             )
+            memories = retrieval.selected
             self._mark(trace, "memory_recall_ended_at")
 
         # Spec 26: only the Tool Manager's record makes a tool claim sayable.
@@ -286,6 +292,7 @@ class ConversationService:
                 generation=generation,
                 suppressed=True,
                 trace=trace,
+                retrieval=retrieval,
             )
 
         return ConversationResult(
@@ -295,6 +302,7 @@ class ConversationService:
             generation=generation,
             trace=trace,
             grounding_context=grounding_context,
+            retrieval=retrieval,
             outbound=OutboundMessage(
                 channel_id=message.channel_id,
                 text=generation.text,
@@ -365,6 +373,17 @@ class ConversationService:
         # context, which is what the USER's wait was for.
         self._mark(result.trace, "outbound_projected_at")
         self._finish(result.trace, outcome="sent")
+
+        # Phase 2 Stage 4 (§2J, §2K). The reply is out; now — and only now —
+        # can it be said which recalled memories it actually rests on, and only
+        # those practise. Being in context was availability, not use.
+        if self._memory is not None and result.retrieval is not None:
+            await asyncio.to_thread(
+                self._memory.mark_used_in_reply,
+                result.retrieval,
+                result.outbound.text,
+                now=sent.occurred_at,
+            )
 
         # Only now the psychology of having spoken. This is a full run, and it
         # is deliberately behind the projection above.

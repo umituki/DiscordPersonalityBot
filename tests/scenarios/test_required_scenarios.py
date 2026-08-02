@@ -205,11 +205,11 @@ async def test_a_suppressed_memory_is_unreachable_but_the_archive_remains(
                 source_event_ids=(outcome.event.event_id,),
             )
         )
-        assert application.memory.recall("海")
+        assert (await application.memory.recall("海")).selected
 
         application.admin.from_conversation(memory_id, actor="owner")
 
-        assert application.memory.recall("海") == ()
+        assert (await application.memory.recall("海")).selected == ()
         # The events that made it are still in the archive, untouched.
         assert application.event_store.count() > 0
     finally:

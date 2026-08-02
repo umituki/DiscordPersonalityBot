@@ -223,6 +223,81 @@ class MemoryRepository:
             params = [*params, limit]
         return [_to_memory(row) for row in self._db.query_all(sql, params)]
 
+    def by_topics(
+        self,
+        topics: Sequence[str],
+        *,
+        limit: int,
+        origins: Sequence[str] | None = None,
+        status: str = "active",
+    ) -> list[EpisodicMemory]:
+        """Memories tagged with any of these topics (Phase 2 §2B, §2G).
+
+        Topics are stored as a JSON array, so this is a LIKE over the encoded
+        form. It is a candidate-generation read: imprecision here costs an
+        extra candidate for Stage 2 to reject, never a false recall.
+        """
+        wanted = [topic.strip() for topic in topics if topic and topic.strip()]
+        if not wanted:
+            return []
+        where = ["m.status = ?"]
+        params: list[object] = [status]
+        if origins:
+            where.append(f"m.origin IN ({', '.join('?' for _ in origins)})")
+            params.extend(origins)
+        clauses = " OR ".join("m.topics_json LIKE ?" for _ in wanted)
+        params.extend(f"%{topic}%" for topic in wanted)
+        sql = (
+            f"SELECT {_memory_columns('m')} FROM episodic_memories m "
+            f"WHERE {' AND '.join(where)} AND ({clauses}) "
+            "ORDER BY m.importance DESC, m.occurred_at DESC LIMIT ?"
+        )
+        params.append(limit)
+        return [_to_memory(row) for row in self._db.query_all(sql, params)]
+
+    def occurred_between(
+        self,
+        *,
+        start: datetime,
+        end: datetime,
+        limit: int,
+        origins: Sequence[str] | None = None,
+        status: str = "active",
+    ) -> list[EpisodicMemory]:
+        """Memories from a stretch of time (Phase 2 §2B time hints)."""
+        where = ["m.status = ?", "m.occurred_at >= ?", "m.occurred_at <= ?"]
+        params: list[object] = [status, to_iso(start), to_iso(end)]
+        if origins:
+            where.append(f"m.origin IN ({', '.join('?' for _ in origins)})")
+            params.extend(origins)
+        sql = (
+            f"SELECT {_memory_columns('m')} FROM episodic_memories m "
+            f"WHERE {' AND '.join(where)} ORDER BY m.occurred_at DESC LIMIT ?"
+        )
+        params.append(limit)
+        return [_to_memory(row) for row in self._db.query_all(sql, params)]
+
+    def most_important(
+        self,
+        *,
+        limit: int,
+        origins: Sequence[str] | None = None,
+        min_importance: float = 0.0,
+        status: str = "active",
+    ) -> list[EpisodicMemory]:
+        """The memories that mattered most (Phase 2 §2B, reflective modes)."""
+        where = ["m.status = ?", "m.importance >= ?"]
+        params: list[object] = [status, min_importance]
+        if origins:
+            where.append(f"m.origin IN ({', '.join('?' for _ in origins)})")
+            params.extend(origins)
+        sql = (
+            f"SELECT {_memory_columns('m')} FROM episodic_memories m "
+            f"WHERE {' AND '.join(where)} ORDER BY m.importance DESC LIMIT ?"
+        )
+        params.append(limit)
+        return [_to_memory(row) for row in self._db.query_all(sql, params)]
+
     def recent_memories(self, *, limit: int = 20, status: str = "active") -> list[EpisodicMemory]:
         rows = self._db.query_all(
             f"SELECT {_MEMORY_COLUMNS} FROM episodic_memories WHERE status = ? "
@@ -337,17 +412,93 @@ class MemoryRepository:
         used: bool,
         run_id: str | None = None,
         event_id: str | None = None,
-    ) -> None:
+        group_id: str = "",
+        mode: str = "CONVERSATIONAL",
+        state: str = "candidate",
+        relevance: str = "",
+        relevance_source: str = "",
+        relevance_reason: str = "",
+        reject_stage: str = "",
+        reject_reason: str = "",
+        accessibility_at: float | None = None,
+        availability: float | None = None,
+        candidate_reasons: Sequence[str] = (),
+        used_in_reply: bool = False,
+        practice_applied: bool = False,
+        llm_call_id: str | None = None,
+    ) -> str:
+        """One row per candidate per retrieval (Phase 2 §2J, observability).
+
+        ``used`` is kept for the old readers and means what it now says
+        everywhere: the memory reached the reply context. It is no longer set
+        merely because a search returned the row.
+        """
+        retrieval_id = ids.new_id(ids.RETRIEVAL)
         self._db.execute(
             """
             INSERT INTO memory_retrievals
-                (retrieval_id, memory_id, run_id, event_id, query, score, rank, used, retrieved_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (retrieval_id, memory_id, run_id, event_id, query, score, rank, used,
+                 retrieved_at, group_id, mode, state, relevance, relevance_source,
+                 relevance_reason, reject_stage, reject_reason, accessibility_at,
+                 availability, candidate_reasons, used_in_reply, practice_applied,
+                 llm_call_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                ids.new_id(ids.RETRIEVAL), memory_id, run_id, event_id, query[:500], score, rank,
-                1 if used else 0, to_iso(now),
+                retrieval_id, memory_id, run_id, event_id, query[:500], score, rank,
+                1 if used else 0, to_iso(now), group_id, mode, state, relevance,
+                relevance_source, relevance_reason[:200], reject_stage,
+                reject_reason[:200], accessibility_at, availability,
+                ",".join(candidate_reasons)[:200], 1 if used_in_reply else 0,
+                1 if practice_applied else 0, llm_call_id,
             ),
+        )
+        return retrieval_id
+
+    def promote_retrieval(
+        self,
+        *,
+        group_id: str,
+        memory_id: str,
+        state: str,
+        used_in_reply: bool = False,
+        practice_applied: bool = False,
+    ) -> int:
+        """Move one memory further along the retrieval states (§2J).
+
+        States only ever advance, so a later stage cannot quietly demote what an
+        earlier one recorded.
+        """
+        cursor = self._db.execute(
+            "UPDATE memory_retrievals SET state = ?, "
+            "used_in_reply = MAX(used_in_reply, ?), "
+            "practice_applied = MAX(practice_applied, ?) "
+            "WHERE group_id = ? AND memory_id = ?",
+            (state, 1 if used_in_reply else 0, 1 if practice_applied else 0,
+             group_id, memory_id),
+        )
+        return cursor.rowcount if cursor is not None else 0
+
+    def retrievals_in_group(self, group_id: str) -> list[sqlite3.Row]:
+        return self._db.query_all(
+            "SELECT * FROM memory_retrievals WHERE group_id = ? ORDER BY rank",
+            (group_id,),
+        )
+
+    def practices_since(self, memory_id: str, moment: datetime) -> int:
+        """How often this memory was actually practised lately (§2L).
+
+        Counts ``practice_applied``, never candidate lookups: repeating a
+        search is not repeating a memory, and counting it was half of what
+        drove accessibility to saturation.
+        """
+        return int(
+            self._db.scalar(
+                "SELECT COUNT(*) FROM memory_retrievals WHERE memory_id = ? "
+                "AND practice_applied = 1 AND retrieved_at >= ?",
+                (memory_id, to_iso(moment)),
+            )
+            or 0
         )
 
     def retrievals_since(self, memory_id: str, moment: datetime) -> int:

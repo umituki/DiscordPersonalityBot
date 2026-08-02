@@ -35,6 +35,11 @@ ANSWERS: dict[str, str] = {
         '"question_need": "none"}'
     ),
     "ReplyDraft": '{"text": "うん。"}',
+    # Phase 2 §2E. A batch with no judgements means every candidate was left
+    # unjudged, and an unjudged candidate does not pass the gate — so the
+    # offline default recalls nothing. That is the conservative direction, and
+    # a test that wants recalls has to say so (see ``RelevanceClient``).
+    "MemoryRelevanceBatch": '{"judgements": []}',
     "EpisodeSummary": (
         '{"summary": "その時期のこと。よく歩いていた。", "topics": ["散歩"], '
         '"novelty": 0.7, "felt_significance": 0.6}'
@@ -90,4 +95,64 @@ def use_offline_model(
     return client
 
 
-__all__ = ["ANSWERS", "OfflineModelClient", "use_offline_model"]
+class PassingReranker:
+    """A Stage 2 double that judges every candidate relevant.
+
+    For tests whose subject is *not* relevance — suppression, origin filtering,
+    forgetting, practice. Holding relevance constant is what makes those tests
+    about the thing they claim to be about. Tests that are about the gate use
+    the real :class:`~app.memory.relevance.SemanticReranker` with a scripted
+    model, or a stub with the labels they need.
+    """
+
+    def __init__(self, label: str = "relevant") -> None:
+        self.label = label
+        self.calls: list[tuple[str, int]] = []
+
+    async def judge(self, query_text, candidates, *, mode, batch_size=16, run_id=None, event_id=None):
+        from app.memory.recall_models import RelevanceJudgement
+
+        self.calls.append((query_text, len(candidates)))
+        return (
+            tuple(
+                RelevanceJudgement(
+                    memory_id=candidate.memory_id,
+                    relevance=self.label,  # type: ignore[arg-type]
+                    reason="test double",
+                    source="llm",
+                )
+                for candidate in candidates
+            ),
+            "call_test",
+            "llm",
+        )
+
+
+def relevance_answer(prompt: str, label: str = "strong") -> str:
+    """Build a Stage 2 answer for whatever candidates a prompt actually lists.
+
+    Lets a scripted model exercise the real reranker — prompt rendering, schema
+    validation, id matching — rather than bypassing it.
+    """
+    import json
+    import re
+
+    ids = re.findall(r"memory_id: (\S+)", prompt)
+    return json.dumps(
+        {
+            "judgements": [
+                {"memory_id": memory_id, "relevance": label, "reason": "テスト"}
+                for memory_id in ids
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+
+__all__ = [
+    "ANSWERS",
+    "OfflineModelClient",
+    "PassingReranker",
+    "relevance_answer",
+    "use_offline_model",
+]

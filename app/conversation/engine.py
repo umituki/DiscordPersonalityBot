@@ -28,7 +28,7 @@ from app.conversation.quality import ConversationQualityGuard, QualityVerdict
 from app.conversation.text import looks_like_question
 from app.grounding.claims import ClaimGroundingGuard, GroundingVerdict
 from app.grounding.models import GroundingContext
-from app.memory.models import RetrievalCandidate
+from app.memory.recall_models import RecalledMemory
 from app.conversation.policy import ConversationPolicy
 from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator, StructuredOutcome
@@ -148,7 +148,7 @@ class ConversationEngine:
         *,
         user_text: str,
         recent_turns: Sequence[ConversationTurn] = (),
-        memories: Sequence[RetrievalCandidate] = (),
+        memories: Sequence[RecalledMemory] = (),
         snapshot: StateSnapshot | None = None,
         run_id: str | None = None,
         event_id: str | None = None,
@@ -478,7 +478,7 @@ class ConversationEngine:
         self,
         user_text: str,
         recent_turns: Sequence[ConversationTurn],
-        memories: Sequence[RetrievalCandidate] = (),
+        memories: Sequence[RecalledMemory] = (),
         acts: DialogueAct | None = None,
         expression: ExpressionContext | None = None,
     ) -> BuiltContext:

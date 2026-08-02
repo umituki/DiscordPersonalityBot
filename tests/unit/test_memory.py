@@ -21,6 +21,7 @@ from app.memory.segmentation import EpisodeSegmenter
 from app.memory.material import EpisodeMaterial, StaticMaterialSource
 from app.llm.structured import StructuredGenerator
 from app.storage.repositories.memory import MemoryRepository
+from tests.support import PassingReranker
 from tests.unit.test_llm_structured import ScriptedClient
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -36,7 +37,17 @@ def memories(db) -> MemoryRepository:
     return MemoryRepository(db)
 
 
-def build_engine(memories, memory_policy, prompt_registry, clock, script, transcript=None):
+def build_engine(
+    memories, memory_policy, prompt_registry, clock, script, transcript=None,
+    reranker=None,
+):
+    """An engine with Stage 2 held constant.
+
+    These tests are about encoding, suppression, origin and practice, so the
+    relevance judgement is a double that passes everything (Phase 2 §2E). The
+    gate itself is tested in tests/invariants/test_memory_retrieval.py, against
+    the real reranker.
+    """
     generator = StructuredGenerator(
         ScriptedClient(script), prompts=prompt_registry, clock=clock, max_attempts=1
     )
@@ -49,6 +60,7 @@ def build_engine(memories, memory_policy, prompt_registry, clock, script, transc
             transcript
             or EpisodeMaterial(text="USER: 海に行った話\nYUI: いいね", turn_count=2, user_turn_count=1)
         ),
+        reranker=PassingReranker() if reranker is None else reranker,
         clock=clock,
     )
 
@@ -299,13 +311,13 @@ async def test_retrieval_finds_a_related_memory(
     engine.close_due_episodes()
     await engine.encode_pending()
 
-    found = engine.recall("海に行った話のつづき", now=clock.now())
+    report = await engine.recall("海に行った話のつづき", now=clock.now())
 
-    assert len(found) == 1
-    assert "海" in found[0].memory.summary
-    # It was found by content, not merely by being recent.
-    assert found[0].relevance > 0
-    assert found[0].components["relevance"] > 0
+    assert len(report.selected) == 1
+    assert "海" in report.selected[0].memory.summary
+    # It was found by content, not merely by being recent (§2B).
+    assert "fts" in report.selected[0].reasons
+    assert report.selected[0].relevance in ("relevant", "strong")
 
 
 async def test_recall_strengthens_and_counts(
@@ -324,7 +336,14 @@ async def test_recall_strengthens_and_counts(
     engine.apply_forgetting(now=clock.now() + timedelta(days=10))
     faded = memories.get_memory(memory_id).accessibility
 
-    engine.recall("海", now=clock.now() + timedelta(days=10))
+    # Phase 2 §2K: being selected into context is not remembering. A
+    # deliberate lookup is, so this asks in the mode that means she is
+    # actually trying to remember.
+    from app.memory.recall_mode import RecallMode
+
+    await engine.recall(
+        "海", mode=RecallMode.REFLECTIVE, now=clock.now() + timedelta(days=10)
+    )
     refreshed = memories.get_memory(memory_id)
 
     assert refreshed.accessibility > faded
@@ -332,9 +351,11 @@ async def test_recall_strengthens_and_counts(
     assert refreshed.last_recalled_at is not None
 
 
-def test_retriever_reads_only_active_memories(memories, memory_policy, clock) -> None:
+async def test_retriever_reads_only_active_memories(memories, memory_policy, clock) -> None:
     retriever = MemoryRetriever(memories, memory_policy.retrieval, clock=clock)
-    assert retriever.retrieve("なんでもいい", now=clock.now()) == ()
+    report = await retriever.retrieve("なんでもいい", now=clock.now())
+    assert report.selected == ()
+    assert report.candidates == ()
 
 
 # --- reconstruction and semantic memory -------------------------------------

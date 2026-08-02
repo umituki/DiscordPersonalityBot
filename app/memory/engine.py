@@ -18,6 +18,7 @@ Boundaries this engine keeps:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -42,8 +43,11 @@ from app.memory.encoding import (
     substance_of,
     user_directed_ratio,
 )
-from app.memory.models import Episode, EpisodicMemory, RetrievalCandidate, SemanticMemory
+from app.memory.models import Episode, EpisodicMemory, SemanticMemory
 from app.memory.policy import MemoryPolicy
+from app.memory.recall_mode import RecallMode, classify
+from app.memory.recall_models import RetrievalReport
+from app.memory.relevance import SemanticReranker
 from app.memory.retrieval import MemoryRetriever
 from app.memory.segmentation import EpisodeSegmenter
 from app.memory.material import EpisodeMaterial, EpisodeMaterialSource
@@ -77,6 +81,7 @@ class MemoryEngine:
         structured: StructuredGenerator,
         prompts: PromptRegistry,
         material: EpisodeMaterialSource,
+        reranker: SemanticReranker | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._repository = repository
@@ -87,7 +92,16 @@ class MemoryEngine:
         self._clock = clock or SystemClock()
         self._segmenter = EpisodeSegmenter(policy.segmentation)
         self._gate = EncodingGate(policy.encoding)
-        self._retriever = MemoryRetriever(repository, policy.retrieval, clock=self._clock)
+        self._retriever = MemoryRetriever(
+            repository,
+            policy.retrieval,
+            # Stage 2 needs the model. Without it the retriever falls back to
+            # the conservative lexical check rather than passing candidates
+            # through unjudged (§2E failure policy).
+            reranker=reranker
+            or SemanticReranker(structured=structured, prompts=prompts),
+            clock=self._clock,
+        )
 
     @property
     def retriever(self) -> MemoryRetriever:
@@ -305,44 +319,173 @@ class MemoryEngine:
                 changed += 1
         return changed
 
-    # --- recall ------------------------------------------------------------
-    def recall(
+    # --- recall (Stages 1-3, then Stage 4) ---------------------------------
+    async def recall(
         self,
         query_text: str,
+        *,
+        mode: RecallMode | None = None,
+        now: datetime | None = None,
+        run_id: str | None = None,
+        event_id: str | None = None,
+        origins: Sequence[str] | None = None,
+        cues: Sequence[str] = (),
+    ) -> RetrievalReport:
+        """Run the four stages, and record every one of them (spec 17.3, 17.5).
+
+        Practice does **not** happen here. Being selected into context is not
+        remembering: for a deliberate mode she is genuinely recollecting, and
+        that practises; for ordinary conversation the memory has only been put
+        within reach, and whether it was used is decided after the reply exists
+        (:meth:`mark_used_in_reply`).
+        """
+        moment = now or self._clock.now()
+        resolved = mode or classify(query_text)
+        report = await self._retriever.retrieve(
+            query_text,
+            mode=resolved,
+            now=moment,
+            origins=origins,
+            cues=cues,
+            run_id=run_id,
+            event_id=event_id,
+        )
+        self._record(report, run_id=run_id, event_id=event_id, now=moment)
+
+        if not resolved.is_deliberate or not report.selected:
+            return report
+
+        # §2K: she was trying to remember, and this is what came. That is a
+        # conscious recall, and conscious recall is one of the two things that
+        # practise.
+        practised = []
+        for item in report.selected:
+            self._repository.promote_retrieval(
+                group_id=report.group_id,
+                memory_id=item.memory_id,
+                state="consciously_recalled",
+                practice_applied=True,
+            )
+            self._practise(item.memory, moment)
+            practised.append(item.memory_id)
+        return dataclasses.replace(report, practised=tuple(practised))
+
+    def associate(
+        self,
+        cues: Sequence[str],
         *,
         now: datetime | None = None,
         run_id: str | None = None,
         event_id: str | None = None,
-        limit: int | None = None,
         origins: Sequence[str] | None = None,
-        practise: bool = True,
-    ) -> tuple[RetrievalCandidate, ...]:
-        """Retrieve memories and strengthen the ones actually used (spec 10.5)."""
-        moment = now or self._clock.now()
-        candidates = self._retriever.retrieve(
-            query_text, now=moment, origins=origins, limit=limit
+    ):
+        """Recall from cues rather than from a question (spec 17.6, §2N).
+
+        The Autonomous Runtime will hand this the current activity, mood,
+        recent topics, an NPC, a place, an anniversary. Nothing drives it yet —
+        the API exists so that when something does, it goes through the same
+        four stages as everything else rather than growing a second, simpler
+        retrieval path beside them.
+        """
+        return self.recall(
+            " ".join(cue for cue in cues if cue),
+            mode=RecallMode.ASSOCIATIVE,
+            now=now,
+            run_id=run_id,
+            event_id=event_id,
+            origins=origins,
+            cues=cues,
         )
-        for rank, candidate in enumerate(candidates):
+
+    def mark_used_in_reply(
+        self,
+        report: RetrievalReport,
+        reply_text: str,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[str, ...]:
+        """Stage 4 (§2J, §2K). Practise what the reply actually rests on.
+
+        Called after a reply has been *delivered*. A memory that sat in the
+        context and left no mark on the sentence was available, not used, and
+        availability is not something to strengthen — that was the old bug.
+        """
+        if not report.selected or not reply_text.strip():
+            return ()
+        moment = now or self._clock.now()
+        already = set(report.practised)
+        used: list[str] = []
+        reply_tokens = _content_tokens(reply_text)
+        for item in report.selected:
+            if not (reply_tokens & _content_tokens(item.memory.summary)):
+                continue
+            self._repository.promote_retrieval(
+                group_id=report.group_id,
+                memory_id=item.memory_id,
+                state="used_in_reply",
+                used_in_reply=True,
+                practice_applied=True,
+            )
+            used.append(item.memory_id)
+            if item.memory_id not in already:
+                self._practise(item.memory, moment)
+        return tuple(used)
+
+    def _record(
+        self,
+        report: RetrievalReport,
+        *,
+        run_id: str | None,
+        event_id: str | None,
+        now: datetime,
+    ) -> None:
+        """One row per candidate, whatever became of it (observability)."""
+        selected = {item.memory_id: item for item in report.selected}
+        rejected = {item.memory_id: item for item in report.rejected}
+        for rank, candidate in enumerate(report.candidates):
+            judgement = report.judgement_for(candidate.memory_id)
+            chosen = selected.get(candidate.memory_id)
+            refusal = rejected.get(candidate.memory_id)
+            if chosen is not None:
+                state = "selected"
+            elif judgement is not None and judgement.passed:
+                state = "relevance_passed"
+            else:
+                state = "candidate"
             self._repository.record_retrieval(
                 memory_id=candidate.memory_id,
-                query=query_text,
-                score=candidate.score,
+                query=report.query,
+                score=chosen.availability if chosen else 0.0,
                 rank=rank,
-                now=moment,
-                used=True,
+                now=now,
+                used=chosen is not None,
                 run_id=run_id,
                 event_id=event_id,
+                group_id=report.group_id,
+                mode=report.mode.value,
+                state=state,
+                relevance=judgement.relevance if judgement else "",
+                relevance_source=judgement.source if judgement else report.relevance_source,
+                relevance_reason=judgement.reason if judgement else "",
+                reject_stage=refusal.stage if refusal else "",
+                reject_reason=refusal.reason if refusal else "",
+                accessibility_at=candidate.memory.accessibility,
+                availability=chosen.availability if chosen else (
+                    refusal.availability if refusal else None
+                ),
+                candidate_reasons=candidate.reasons,
+                llm_call_id=report.llm_call_id,
             )
-            if practise:
-                self._practise(candidate.memory, moment)
-        return candidates
 
     def _practise(self, memory: EpisodicMemory, now: datetime) -> None:
         window_start = now - timedelta(hours=self._policy.practice.window_hours)
-        recent = max(0, self._repository.retrievals_since(memory.memory_id, window_start) - 1)
+        # §2L: only prior *practice* counts as repetition. Candidate lookups do
+        # not, which is why this reads ``practices_since`` and not the old
+        # ``retrievals_since``.
+        recent = self._repository.practices_since(memory.memory_id, window_start)
         updated = practised_accessibility(
             accessibility=memory.accessibility,
-            recent_practice_count=recent,
+            recent_practice_count=max(0, recent - 1),
             policy=self._policy.practice,
         )
         self._repository.update_accessibility(
@@ -421,3 +564,16 @@ class MemoryEngine:
     def _touch(self, episode: Episode, moment: datetime) -> Episode:
         """Keep ``ended_at`` as the episode's last activity while it is open."""
         return self._repository.touch_episode(episode.episode_id, moment)
+
+
+#: Grammatical scaffolding, dropped before comparing what a reply and a memory
+#: have in common. Japanese has no spaces, so overlap is measured on bigrams of
+#: what is left.
+_PARTICLES = frozenset("はがをにでとへもやのねよなかだですますましたたるらしいうくっ、。！？!?　 ")
+
+
+def _content_tokens(text: str) -> frozenset[str]:
+    kept = [char for char in (text or "") if char not in _PARTICLES]
+    if len(kept) < 2:
+        return frozenset(kept)
+    return frozenset("".join(kept[i : i + 2]) for i in range(len(kept) - 1))

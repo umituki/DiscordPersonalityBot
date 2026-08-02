@@ -1478,6 +1478,38 @@ _0019_COMMON_GROUND = Migration(
 )
 
 
+_0020_RETRIEVAL_STAGES = Migration(
+    version=20,
+    name="retrieval_stages",
+    statements=(
+        # Rebuild spec 17.5, Phase 2 §2J. ``memory_retrievals`` had one boolean
+        # called ``used``, set on every row the search returned — so being found
+        # and being remembered were the same fact, and practice followed from
+        # the search. These columns are the five states pulled apart, plus
+        # enough of the decision to answer "why that memory and not another".
+        "ALTER TABLE memory_retrievals ADD COLUMN group_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE memory_retrievals ADD COLUMN mode TEXT NOT NULL DEFAULT 'CONVERSATIONAL'",
+        "ALTER TABLE memory_retrievals ADD COLUMN state TEXT NOT NULL DEFAULT 'candidate'",
+        "ALTER TABLE memory_retrievals ADD COLUMN relevance TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE memory_retrievals ADD COLUMN relevance_source TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE memory_retrievals ADD COLUMN relevance_reason TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE memory_retrievals ADD COLUMN reject_stage TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE memory_retrievals ADD COLUMN reject_reason TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE memory_retrievals ADD COLUMN accessibility_at REAL",
+        "ALTER TABLE memory_retrievals ADD COLUMN availability REAL",
+        "ALTER TABLE memory_retrievals ADD COLUMN candidate_reasons TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE memory_retrievals ADD COLUMN used_in_reply INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_retrievals ADD COLUMN practice_applied INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_retrievals ADD COLUMN llm_call_id TEXT",
+        "CREATE INDEX idx_retrievals_group ON memory_retrievals (group_id)",
+        # ``retrievals_since`` counts practice, and it must count practice
+        # only: a candidate lookup is not a repetition (§2L).
+        "CREATE INDEX idx_retrievals_practice "
+        "ON memory_retrievals (memory_id, practice_applied, retrieved_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1498,6 +1530,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0017_CONVERSATION_TRACES,
     _0018_REBUILD_EPOCHS,
     _0019_COMMON_GROUND,
+    _0020_RETRIEVAL_STAGES,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

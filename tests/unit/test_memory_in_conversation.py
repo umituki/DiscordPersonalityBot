@@ -157,7 +157,7 @@ async def test_recall_reads_memory_not_the_transcript_archive(
     )
     # ...but nothing has been encoded, so nothing can be recalled.
     assert memories.memory_count() == 0
-    assert memory_engine.recall("ひみつの合言葉", now=clock.now()) == ()
+    assert (await memory_engine.recall("ひみつの合言葉", now=clock.now())).selected == ()
 
 
 async def test_memory_maintenance_failure_does_not_break_the_reply(

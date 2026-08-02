@@ -57,20 +57,99 @@ practice:
   boost: 0.15
   diminishing_factor: 0.5
   window_hours: 24
-  max_accessibility: 1.0
+  # Phase 2 §2M。想起を繰り返すだけで永久に 100% 想起可能にはならない。
+  # 実 DB では 1.0 に張り付いた記憶があり、それが「関係ない記憶が毎回出る」
+  # 正のフィードバックの片側だった。数値は調整対象、上限があること自体は違う。
+  max_accessibility: 0.90
 
+# Retrieval は 4 段階に分かれている (rebuild spec 17.3, Phase 2)。
+#   Stage 1 Candidate Generation   ここに accessibility は出てこない
+#   Stage 2 Semantic Relevance     LLM が意味カテゴリで判定する hard gate
+#   Stage 3 Recall Availability    ここで初めて accessibility を使う
+#   Stage 4 Use / Practice         実際に使われたものだけ
+# 「関係あるか」と「思い出せるか」を混ぜないことが要点である。
 retrieval:
   limit: 4
-  min_score: 0.18
-  candidate_pool: 40
   min_query_chars: 3
   recency_half_life_days: 14
+  # strong は relevant より手がかりとして強い。
+  strong_relevance_bonus: 0.15
+  rerank_batch: 16
+
+  # Stage 1。accessibility による候補入りをさせない (§2B)。
+  candidates:
+    min_query_chars: 3
+    min_importance: 0.45
+    default:
+      pool: 20
+      max_candidates: 16
+      include_recent: false
+      include_important: false
+    by_mode:
+      # 自分の人生についての質問。自伝 bridge と重要な記憶を広めに集める。
+      AUTOBIOGRAPHICAL_FACT:
+        pool: 30
+        max_candidates: 20
+        include_recent: false
+        include_important: true
+      # 「一番印象に残っているのは」は importance そのものへの質問である。
+      REFLECTIVE:
+        pool: 30
+        max_candidates: 20
+        include_recent: true
+        include_important: true
+      # cue から連想する。query が無いこともある。
+      ASSOCIATIVE:
+        pool: 24
+        max_candidates: 16
+        include_recent: true
+        include_important: false
+      DIARY_READING:
+        pool: 30
+        max_candidates: 20
+        include_recent: true
+        include_important: false
+      # 自分の直前の主張を確かめるだけ。広く探さない。
+      CORRECTION_CHECK:
+        pool: 12
+        max_candidates: 8
+        include_recent: false
+        include_important: false
+
+  # Stage 3。ここで accessibility を使う。
   weights:
-    relevance: 0.40
-    accessibility: 0.20
+    accessibility: 0.45
+    emotional_salience: 0.20
+    importance: 0.20
     recency: 0.15
-    emotional_salience: 0.15
-    importance: 0.10
+
+  # Stage 2 の閾値と Stage 3 の件数上限。0 件は常に正常な結果である (§2I)。
+  default_relevance:
+    accept_weak: false
+    max_recalled: 3
+    min_availability: 0.35
+  by_mode:
+    # 年齢を訊かれている。曖昧な記憶でも黙るより答えるほうがよい。
+    AUTOBIOGRAPHICAL_FACT:
+      accept_weak: true
+      max_recalled: 3
+      min_availability: 0.20
+    REFLECTIVE:
+      accept_weak: false
+      max_recalled: 3
+      min_availability: 0.30
+    ASSOCIATIVE:
+      accept_weak: false
+      max_recalled: 2
+      min_availability: 0.45
+    DIARY_READING:
+      accept_weak: true
+      max_recalled: 5
+      min_availability: 0.10
+    CORRECTION_CHECK:
+      accept_weak: false
+      max_recalled: 2
+      min_availability: 0.25
 
 semantic:
   # 同じ内容が繰り返し現れたときに意味記憶へ昇格する
