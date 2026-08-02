@@ -64,6 +64,7 @@ from app.conversation.policy import ConversationPolicy
 from app.conversation.service import ConversationService
 from app.interfaces.discord.adapter import DiscordMessageAdapter
 from app.memory.engine import MemoryEngine
+from app.memory.inspector import MemoryInspector
 from app.memory.policy import MemoryPolicy
 from app.memory.material import (
     CompositeMaterialSource,
@@ -191,6 +192,7 @@ class Application:
     tracer: ConversationTracer
     memories: MemoryRepository
     memory: MemoryEngine
+    memory_inspector: MemoryInspector
     memory_policy: MemoryPolicy
     psychology_policy: PsychologyPolicy
     relationship_policy: RelationshipPolicy
@@ -832,6 +834,11 @@ class Application:
             tracer=conversation_tracer,
             memories=memory_repo,
             memory=memory_engine,
+            # Phase 2 §2Q: a separate object with no writer, so a debug search
+            # cannot practise a memory however ``recall`` later changes.
+            memory_inspector=MemoryInspector(
+                memory_engine.retriever, clock=resolved_clock
+            ),
             memory_policy=memory_policy,
             psychology_policy=psychology_policy,
             relationship_policy=relationship_policy,

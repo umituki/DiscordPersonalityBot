@@ -44,6 +44,9 @@ _NON_WORD = re.compile(r"[^\w\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]+")
 
 MAX_MATCH_TERMS = 12
 
+#: Grammatical scaffolding, dropped before a query is turned into topic probes.
+_PARTICLES = frozenset("はがをにでとへもやのねよなかだですますましたたるらしいうくっ、。！？!?　 ")
+
 #: Query shapes that point at facts about her own life, and the topics that
 #: hold them. Kept from the conceptual-bridge fix (§2G).
 AUTOBIOGRAPHICAL_BRIDGE: dict[str, tuple[str, ...]] = {
@@ -122,10 +125,15 @@ def query_topic_probes(text: str, *, max_probes: int = 8) -> tuple[str, ...]:
     if not cleaned:
         return ()
     probes = [cleaned] if len(cleaned) <= 6 else []
-    if _CJK.search(cleaned):
-        probes.extend(
-            cleaned[index : index + 2] for index in range(max(0, len(cleaned) - 1))
-        )
+    # Topics are single words — 「海」「花火」 — so the probes have to be words
+    # too. Dropping the grammatical scaffolding first is what turns 「海の話」
+    # into 「海」 and 「話」 rather than into a phrase that matches no topic at
+    # all. Over-matching is cheap here: Stage 2 still has to pass it.
+    content = [char for char in cleaned if char not in _PARTICLES]
+    probes.extend(char for char in content if _CJK.match(char))
+    probes.extend(
+        "".join(content[index : index + 2]) for index in range(max(0, len(content) - 1))
+    )
     return tuple(dict.fromkeys(probe for probe in probes if probe))[:max_probes]
 
 

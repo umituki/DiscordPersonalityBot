@@ -120,10 +120,57 @@ what the Ollama regression above is for.
 
 | Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
 |---|---|---|---|---|---|---|---|
-| MEM-001 | Accessibility must not create relevance | — | — | — | — | — | NOT_STARTED |
-| MEM-002 | A high-accessibility irrelevant memory cannot dominate recall | — | — | — | — | — | NOT_STARTED |
-| MEM-17.5 | Retrieval is not recall; practice only on conscious recall or use | — | — | — | — | — | NOT_STARTED |
-| MEM-17.6 | Spontaneous recall produces a real event | — | — | — | — | — | NOT_STARTED |
+| MEM-001 | Accessibility must not create relevance | `app/memory/candidates.py`, `app/memory/selection.py` | `test_becoming_a_candidate_does_not_touch_accessibility` | `test_the_mode_changes_how_wide_stage_one_looks` | `test_the_whole_retrieval_path_fires_on_a_real_turn` | `python -m app.main memory-find` | E2E_VERIFIED |
+| MEM-002 | A high-accessibility irrelevant memory cannot dominate recall | `app/memory/relevance.py`, `app/memory/selection.py` (hard gate) | `test_a_high_accessibility_irrelevant_memory_is_not_recalled` | `test_a_failed_rerank_does_not_fall_back_to_accessibility` | `test_the_whole_retrieval_path_fires_on_a_real_turn` | `memory_retrievals.reject_stage` | E2E_VERIFIED |
+| MEM-17.3 | Retrieval is candidate generation → relevance gate → availability | `app/memory/retrieval.py` and the three stage modules | `test_a_relevant_but_faded_memory_can_fail_to_come_to_mind` | `test_zero_recalls_is_a_normal_result` | `test_the_whole_retrieval_path_fires_on_a_real_turn` | `python -m app.main memory-find` | E2E_VERIFIED |
+| MEM-17.4 | Recall modes are a closed set and shape the search | `app/memory/recall_mode.py`, `config/policies/memory.yaml` | `test_modes_are_classified_from_the_question` | `test_the_mode_changes_how_wide_stage_one_looks` | `test_an_age_question_reaches_the_birth_memory` | `--mode` on `memory-find` | E2E_VERIFIED |
+| MEM-17.5 | Retrieval is not recall; practice only on conscious recall or use | `app/memory/engine.py` (`mark_used_in_reply`), migration 0020 | `test_only_a_recalled_memory_practises`, `test_a_memory_the_reply_ignored_does_not_practise` | `test_a_candidate_lookup_is_not_a_repetition` | `test_the_whole_retrieval_path_fires_on_a_real_turn` | `memory_retrievals.state` | E2E_VERIFIED |
+| MEM-2M | Practice alone cannot pin a memory at perfect recall | `config/policies/memory.yaml` (`practice.max_accessibility`) | `test_rumination_cannot_pin_a_memory_at_the_ceiling` | `test_repeated_practice_diminishes` | `test_the_whole_retrieval_path_fires_on_a_real_turn` | `episodic_memories.accessibility` | E2E_VERIFIED |
+| MEM-2Q | A debug preview never changes memory state | `app/memory/inspector.py`, `app/main.py` | `test_the_inspector_holds_no_writer`, `test_ten_debug_searches_leave_accessibility_untouched` | `test_a_debug_preview_changes_nothing` | `test_the_inspector_sees_the_same_decision_without_changing_it` | `python -m app.main memory-find` | E2E_VERIFIED |
+| MEM-17.6 | Spontaneous recall produces a real event | `app/memory/engine.py` (`associate`) | `test_associate_recalls_from_cues` | — | — | — | CODE_ONLY (the API exists; nothing drives it until the Autonomous Runtime in Phase 6, and no `MEMORY_SPONTANEOUSLY_RECALLED` event is emitted yet) |
+
+
+### Phase 2 gate (spec 4.7)
+
+1. **Spec IDs implemented.** MEM-001, MEM-002, MEM-17.3, MEM-17.4, MEM-17.5,
+   MEM-2M, MEM-2Q. MEM-17.6's API exists and nothing drives it — `CODE_ONLY`,
+   deliberately.
+2. **Runtime trigger.** A USER Discord message, through
+   `ConversationService.handle_inbound`; and `python -m app.main memory-find`
+   for the debug path.
+3. **Events produced.** Unchanged for this phase — retrieval writes rows, not
+   events. `MEMORY_SPONTANEOUSLY_RECALLED` arrives with the Autonomous Runtime.
+4. **Rows written.** `memory_retrievals` (one row per candidate, with mode,
+   relevance, source, reject stage, accessibility at the time, availability and
+   how it was found), and `episodic_memories` accessibility/recall_count for
+   what actually practised.
+5. **State change.** Only memories the reply rests on, or that a deliberate
+   lookup recalled, gain accessibility — capped at 0.90.
+6. **Debug.** `python -m app.main memory-find 海 [--mode ...]` prints each
+   candidate with its relevance, accessibility, whether it was selected and
+   why not, and confirms `practice applied: no`.
+7. **Restart.** `test_the_retrieval_record_survives_a_restart` reopens the
+   repository and finds the state and practice flags intact.
+8. **Unit tests.** 987 pass in total; 40 are new in this phase.
+9. **Integration / E2E.** `test_the_whole_retrieval_path_fires_on_a_real_turn`
+   drives one inbound message through candidate generation, the LLM relevance
+   call, the hard gate, availability selection, the reply prompt, delivery,
+   used-memory marking, practice and the database — and asserts candidates > 0,
+   judgements > 0, selected > 0, practice rows > 0, rejected-as-irrelevant > 0.
+   Plus `test_the_inspector_sees_the_same_decision_without_changing_it` and
+   `test_a_turn_that_reminds_her_of_nothing_still_replies`.
+10. **Not done.** The Phase 2 real-Ollama gate — the fixed question set, and
+    the 100-200 turn run checking that no single memory saturates — has not
+    been run: this container has no Ollama host. Phase 1's gate is outstanding
+    for the same reason, and both should be run together before Phase 3.
+
+Two limits worth stating plainly. Recall-mode classification is pattern-based,
+so a question phrased unusually falls back to `CONVERSATIONAL` — which narrows
+the search rather than fabricating, but does narrow it. And `used_in_reply` is
+decided by content overlap between the sent reply and the memory summary: a
+reply that draws on a memory without echoing any of its words will not be
+counted as using it, so practice under-counts rather than over-counts. Both are
+the safe direction, and both are what the real-Ollama gate would measure.
 
 ---
 

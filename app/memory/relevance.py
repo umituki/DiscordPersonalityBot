@@ -108,18 +108,22 @@ class SemanticReranker:
             mode=mode.value,
             candidates=_render(batch),
         )
-        outcome = await self._structured.generate(
-            MemoryRelevanceBatch,
-            (LLMMessage(role="user", content=content),),
-            purpose=PURPOSE,
-            run_id=run_id,
-            event_id=event_id,
-            # Behind the reply itself: the USER is waiting on the sentence, and
-            # this is the work that decides what goes into it.
-            priority="P1",
-            prompt_id=PROMPT_ID,
-            prompt_version=template.prompt_version,
-        )
+        try:
+            outcome = await self._structured.generate(
+                MemoryRelevanceBatch,
+                (LLMMessage(role="user", content=content),),
+                purpose=PURPOSE,
+                run_id=run_id,
+                event_id=event_id,
+                # Behind the reply itself: the USER is waiting on the sentence,
+                # and this is the work that decides what goes into it.
+                priority="P1",
+                prompt_id=PROMPT_ID,
+                prompt_version=template.prompt_version,
+            )
+        except Exception:  # noqa: BLE001 - a memory lookup must not lose the turn
+            logger.exception("memory rerank raised; falling back")
+            return fallback_judgements(query_text, batch), None, "fallback"
         call_id = outcome.call_ids[-1] if outcome.call_ids else None
 
         if not outcome.accepted or outcome.value is None:

@@ -21,6 +21,7 @@ from app.admin.rebuild import RebuildRefused
 from app.admin.repair import CONFIRMATION, RepairRefused
 from app.admin.shadow import rebuild_genesis, replay_real_history
 from app.bootstrap import Application, StartupError
+from app.memory.recall_mode import RecallMode
 from app.config import AppConfig, ConfigError, load_config
 from app.interfaces.discord.gateway import DiscordGateway
 from app.observability.logging import configure_logging
@@ -76,6 +77,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     latency.add_argument(
         "--limit", type=int, default=200, help="how many recent turns to read"
+    )
+    memory_find = subparsers.add_parser(
+        "memory-find",
+        help="why a memory would or would not be recalled (Phase 2 debug inspector)",
+    )
+    memory_find.add_argument("query", help="what to search for")
+    memory_find.add_argument(
+        "--mode",
+        default=None,
+        choices=[mode.value for mode in RecallMode],
+        help="force a recall mode instead of inferring one from the query",
     )
     repair = subparsers.add_parser(
         "repair", help="rebuild a broken Genesis in a shadow database (23.4)"
@@ -489,6 +501,31 @@ def _status(config_file: Path | None, root: Path | None = None) -> int:
     return 0
 
 
+def _memory_find(
+    config_file: Path | None, query: str, mode: str | None, root: Path | None = None
+) -> int:
+    """Phase 2 debug inspector. Reads only — this cannot change memory state.
+
+    It goes through :class:`MemoryInspector`, which holds no writer at all, so
+    running it a hundred times leaves accessibility and recall_count exactly
+    where they were.
+    """
+    config = load_config(config_file, root_dir=root)
+    config.ensure_directories()
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        report = asyncio.run(
+            application.memory_inspector.describe(
+                query, mode=RecallMode(mode) if mode else None
+            )
+        )
+        sys.stdout.write(report + "\n")
+        return 0
+    finally:
+        application.db.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -512,6 +549,8 @@ def main(argv: list[str] | None = None) -> int:
             return _rebuild_reset(
                 args.config, confirm=args.confirm, reason=args.reason, root=args.root
             )
+        if args.command == "memory-find":
+            return _memory_find(args.config, args.query, args.mode, args.root)
         if args.command == "repair":
             return _repair(
                 args.config,
