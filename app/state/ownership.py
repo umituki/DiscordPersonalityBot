@@ -47,6 +47,11 @@ _OWNERSHIP: Mapping[str, DomainOwnership] = MappingProxyType(
             DomainOwnership(
                 "user_model_counters", "social_cognition_engine", "spec 14 bookkeeping"
             ),
+            # Spec 12.2 / 23.2: domain-specific adaptation changes before the
+            # general trait does, so it is its own writer at its own layer.
+            DomainOwnership(
+                "characteristic_adaptations", "adaptation_engine", "spec 12.2 / 23.2"
+            ),
             DomainOwnership("goals", "goal_engine", "spec 9.3 / 15.2"),
             DomainOwnership("habits", "habit_engine", "spec 9.3 / 15.3"),
             DomainOwnership("personality", "growth_engine", "spec 9.3 / 12.1"),

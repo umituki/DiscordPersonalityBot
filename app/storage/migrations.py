@@ -735,6 +735,164 @@ _0008_VIRTUAL_LIFE = Migration(
 )
 
 
+_0009_GROWTH = Migration(
+    version=9,
+    name="growth_consolidation",
+    statements=(
+        # Spec 12.2 / 31.7: adaptations sit between traits and expression and
+        # are allowed to move faster than traits. ``baseline`` keeps the
+        # separation demanded by spec 23.2 (baseline / adaptation / expression).
+        """
+        CREATE TABLE characteristic_adaptations (
+            adaptation_id     TEXT PRIMARY KEY,
+            name              TEXT NOT NULL UNIQUE,
+            value             REAL NOT NULL,
+            baseline          REAL NOT NULL,
+            pending_evidence  REAL NOT NULL DEFAULT 0.0,
+            supporting_count  INTEGER NOT NULL DEFAULT 0,
+            contradicting_count INTEGER NOT NULL DEFAULT 0,
+            contexts_json     TEXT NOT NULL DEFAULT '[]',
+            evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            first_evidence_at TEXT,
+            last_evidence_at  TEXT,
+            created_at        TEXT NOT NULL,
+            updated_at        TEXT NOT NULL
+        )
+        """,
+        # Spec 12.1 / 23.2: the trait baseline is a separate, very slow thing
+        # from the currently expressed value, and it is not a permanent
+        # constant either — it follows, far behind, what keeps being true.
+        """
+        CREATE TABLE personality_traits (
+            trait_id         TEXT PRIMARY KEY,
+            name             TEXT NOT NULL UNIQUE,
+            baseline         REAL NOT NULL,
+            initial_baseline REAL NOT NULL,
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        )
+        """,
+        # Spec 31.7: every deep change keeps why it happened.
+        """
+        CREATE TABLE personality_history (
+            entry_id      TEXT PRIMARY KEY,
+            trait         TEXT NOT NULL,
+            previous_value REAL,
+            new_value     REAL NOT NULL,
+            baseline_after REAL NOT NULL,
+            reason_code   TEXT NOT NULL,
+            candidate_id  TEXT,
+            run_id        TEXT,
+            recorded_at   TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_personality_history ON personality_history (trait, recorded_at)",
+        # Spec 12.5: values are a *relative* priority ordering, so the table
+        # holds priorities that are renormalised together, never independent
+        # scores that can all rise at once. (``values`` is SQL syntax, hence
+        # ``value_priorities``.)
+        """
+        CREATE TABLE value_priorities (
+            value_id     TEXT PRIMARY KEY,
+            name         TEXT NOT NULL UNIQUE,
+            priority     REAL NOT NULL,
+            initial_priority REAL NOT NULL,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE value_history (
+            entry_id      TEXT PRIMARY KEY,
+            value_name    TEXT NOT NULL,
+            previous_priority REAL,
+            new_priority  REAL NOT NULL,
+            reason_code   TEXT NOT NULL,
+            candidate_id  TEXT,
+            run_id        TEXT,
+            recorded_at   TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_value_history ON value_history (value_name, recorded_at)",
+        # Spec 12.3: a deep update is a *candidate* until repetition, temporal
+        # persistence, cross-context evidence, a meaningful outcome and
+        # mood-independence have all accumulated. This table is that waiting
+        # room; nothing bypasses it.
+        """
+        CREATE TABLE deep_update_candidates (
+            candidate_id   TEXT PRIMARY KEY,
+            target_domain  TEXT NOT NULL,
+            target_key     TEXT NOT NULL,
+            direction      INTEGER NOT NULL,
+            pattern_count  INTEGER NOT NULL DEFAULT 0,
+            contexts_json  TEXT NOT NULL DEFAULT '[]',
+            evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            outcome_weight REAL NOT NULL DEFAULT 0.0,
+            mood_independent_count INTEGER NOT NULL DEFAULT 0,
+            magnitude      REAL NOT NULL DEFAULT 0.0,
+            source_adaptation TEXT,
+            first_seen_at  TEXT NOT NULL,
+            last_seen_at   TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'accumulating',
+            resolved_at    TEXT,
+            blocked_reason TEXT NOT NULL DEFAULT '',
+            UNIQUE (target_domain, target_key, direction, status)
+        )
+        """,
+        "CREATE INDEX idx_candidates_status ON deep_update_candidates (status, last_seen_at)",
+        # Spec 12.4 / 31.7: recurring themes YUI tells about herself. Slower
+        # than behaviour and independent of whether they are accurate.
+        """
+        CREATE TABLE narrative_identity (
+            theme_id      TEXT PRIMARY KEY,
+            theme         TEXT NOT NULL UNIQUE,
+            statement     TEXT NOT NULL DEFAULT '',
+            strength      REAL NOT NULL DEFAULT 0.0,
+            supporting_memory_count INTEGER NOT NULL DEFAULT 0,
+            supporting_memory_ids_json TEXT NOT NULL DEFAULT '[]',
+            first_seen_at TEXT NOT NULL,
+            last_updated_at TEXT NOT NULL,
+            status        TEXT NOT NULL DEFAULT 'emerging'
+        )
+        """,
+        # Spec 23.3: the monitor observes and classifies. Only INVALID is a
+        # rollback candidate, and nothing here clamps ordinary life change.
+        """
+        CREATE TABLE drift_observations (
+            observation_id TEXT PRIMARY KEY,
+            metric         TEXT NOT NULL,
+            window_start   TEXT NOT NULL,
+            window_end     TEXT NOT NULL,
+            value          REAL NOT NULL,
+            expected_max   REAL NOT NULL,
+            classification TEXT NOT NULL,
+            detail_json    TEXT NOT NULL DEFAULT '{}',
+            recorded_at    TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_drift_metric ON drift_observations (metric, recorded_at)",
+        # Spec 9.5: deep state is processed by a consolidation job, separately
+        # from the per-event run. This is that job's own ledger.
+        """
+        CREATE TABLE consolidation_runs (
+            consolidation_id TEXT PRIMARY KEY,
+            started_at     TEXT NOT NULL,
+            ended_at       TEXT,
+            kind           TEXT NOT NULL DEFAULT 'routine',
+            changes_read   INTEGER NOT NULL DEFAULT 0,
+            adaptations_moved INTEGER NOT NULL DEFAULT 0,
+            candidates_raised INTEGER NOT NULL DEFAULT 0,
+            deep_updates   INTEGER NOT NULL DEFAULT 0,
+            semantic_facts INTEGER NOT NULL DEFAULT 0,
+            status         TEXT NOT NULL DEFAULT 'running',
+            detail_json    TEXT NOT NULL DEFAULT '{}'
+        )
+        """,
+        "CREATE INDEX idx_consolidation_started ON consolidation_runs (started_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -744,6 +902,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0006_TOOLS,
     _0007_AGENCY,
     _0008_VIRTUAL_LIFE,
+    _0009_GROWTH,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

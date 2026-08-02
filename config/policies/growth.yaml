@@ -1,0 +1,158 @@
+# Growth / consolidation tuning values (spec 12, 23, 40).
+#
+# Everything here is a tuning value, not a scientific constant. The structural
+# rules (a single event may never move a trait; values are relative; the drift
+# monitor never clamps) live in code and are protected by invariant tests.
+policy_version: 1
+
+consolidation:
+  # Consolidation is deep work; it does not run on every event (spec 9.5).
+  min_hours_between_runs: 6.0
+  # How far back a run looks for committed changes it has not yet consolidated.
+  lookback_days: 30.0
+  max_changes_per_run: 500
+  # A topic must recur across this many episodic memories before it is worth
+  # stating as a general fact.
+  semantic_min_supporting_memories: 3
+  max_semantic_per_run: 5
+
+adaptation:
+  initial_value: 0.5
+  # Evidence accumulates before anything moves (spec 23.2: adaptations lag).
+  evidence_before_change: 3.0
+  step: 0.04
+  max_change_per_run: 0.05
+  # Spec 23.2: the more extreme a state already is, the less an additional
+  # same-direction observation adds. Opposite evidence is not damped.
+  extremity_damping: 0.80
+  # A change smaller than this in the source state is noise, not evidence.
+  min_source_delta: 0.005
+  # domain.key -> which adaptation it is evidence about, and with what sign.
+  # A negative weight means the state moving up is evidence that the adaptation
+  # is moving down. "*" matches any key in the domain.
+  #
+  # Every adaptation is deliberately fed from more than one domain: the context
+  # of a piece of evidence is where it came from, and spec 12.3 requires
+  # cross-context agreement before anything deep may move. A trait that only
+  # one subsystem could ever vouch for would never be allowed to change.
+  sources:
+    relationship.trust: [social_confidence, 1.0]
+    attachment.separation_security: [social_confidence, 0.5]
+
+    relationship.emotional_closeness: [emotional_openness, 1.0]
+    attachment.proximity_desire: [emotional_openness, 0.5]
+
+    relationship.conflict_residue: [conflict_avoidance, 1.0]
+    attachment.withdrawal_tendency: [conflict_avoidance, 0.5]
+
+    attachment.felt_security: [self_esteem, 1.0]
+    self_schema.*: [self_esteem, 0.5]
+
+    needs.relatedness_satisfaction: [optimism, 1.0]
+    emotion.joy: [optimism, 0.5]
+
+    emotion.interest: [curiosity, 1.0]
+    goals.*: [curiosity, 0.5]
+
+    needs.solitude_desire: [independence, 1.0]
+    attachment.reassurance_need: [independence, -0.5]
+
+    habits.*: [cautiousness, 1.0]
+    emotion.fear: [cautiousness, 0.5]
+
+deep_gate:
+  # Spec 12.3. All five conditions must hold; none of them alone is enough.
+  min_pattern_count: 4
+  min_persistence_days: 14.0
+  min_contexts: 2
+  min_outcome_weight: 1.0
+  min_mood_independent: 2
+  # Mood counts as "not unusual" inside this band around its baseline.
+  mood_neutral_band: 0.25
+  # A candidate that stops recurring stops being evidence of anything.
+  candidate_expiry_days: 120.0
+
+personality:
+  # Spec 12.1 states these are examples, not fixed initial values. They seed
+  # the trait baselines on first consolidation and drift from there.
+  temperament:
+    extraversion: 0.30
+    openness: 0.75
+    agreeableness: 0.65
+    conscientiousness: 0.55
+    emotional_stability: 0.45
+    assertiveness: 0.35
+  max_step: 0.01
+  extremity_damping: 0.80
+  # Spec 23.2: the initial baseline is not a permanent constant. It follows the
+  # expressed value, but only by a fraction of the distance, and only when a
+  # deep update actually promotes.
+  baseline_follow_rate: 0.20
+  # Which adaptation is evidence about which trait, and with what sign.
+  adaptation_to_trait:
+    social_confidence: [extraversion, 1.0]
+    emotional_openness: [agreeableness, 1.0]
+    curiosity: [openness, 1.0]
+    cautiousness: [conscientiousness, 1.0]
+    optimism: [emotional_stability, 1.0]
+    self_esteem: [emotional_stability, 0.5]
+    independence: [assertiveness, 1.0]
+    conflict_avoidance: [assertiveness, -1.0]
+
+values:
+  # Schwartz-style relative priorities (spec 12.5). They are renormalised on
+  # every change, so one value can only rise at the expense of the others.
+  priorities:
+    self_direction: 0.10
+    stimulation: 0.10
+    hedonism: 0.10
+    achievement: 0.10
+    power: 0.10
+    security: 0.10
+    conformity: 0.10
+    tradition: 0.10
+    benevolence: 0.10
+    universalism: 0.10
+  max_step: 0.01
+  adaptation_to_value:
+    curiosity: [self_direction, 1.0]
+    independence: [self_direction, 0.5]
+    emotional_openness: [benevolence, 1.0]
+    cautiousness: [security, 1.0]
+    conflict_avoidance: [conformity, 1.0]
+    self_esteem: [achievement, 1.0]
+    optimism: [stimulation, 0.5]
+
+disposition:
+  # Spec 13.2: the general attachment tendency, kept apart from the current
+  # activation the attachment engine owns. It only moves through consolidation.
+  max_step: 0.01
+  extremity_damping: 0.80
+  adaptation_to_disposition:
+    self_esteem: [felt_security_baseline, 1.0]
+    independence: [self_reliance, 1.0]
+    emotional_openness: [proximity_comfort, 1.0]
+
+narrative:
+  min_supporting_memories: 3
+  strength_step: 0.05
+  max_strength: 0.95
+  max_themes: 12
+  # A theme is only "established" once it has been retold this often.
+  established_strength: 0.50
+
+drift:
+  window_days: 30.0
+  # Expected magnitude of change per window, per metric. Above the suspicious
+  # multiple it is worth looking at; above the invalid multiple it is a
+  # rollback candidate. Nothing here clamps state (spec 23.3).
+  expected_per_window:
+    trait_velocity: 0.03
+    value_velocity: 0.03
+    relationship_velocity: 0.20
+    adaptation_velocity: 0.15
+    state_acceleration: 0.40
+    memory_growth: 400.0
+    proactive_frequency: 30.0
+  suspicious_multiplier: 2.0
+  invalid_multiplier: 4.0

@@ -13,7 +13,14 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 _EXPORTS: dict[str, str] = {
+    "AdaptationRepository": "growth",
     "BeliefRepository": "social",
+    "CandidateRepository": "growth",
+    "ConsolidationRepository": "growth",
+    "DriftRepository": "growth",
+    "NarrativeRepository": "growth",
+    "PersonalityRepository": "growth",
+    "ValueRepository": "growth",
     "ConversationRepository": "conversations",
     "DecisionRepository": "agency",
     "DeliveryDecision": "deliveries",
@@ -41,11 +48,15 @@ _EXPORTS: dict[str, str] = {
 
 __all__ = [
     "ActivityRepository",
+    "AdaptationRepository",
     "BeliefRepository",
+    "CandidateRepository",
+    "ConsolidationRepository",
     "ConversationRepository",
     "DecisionRepository",
     "DeliveryDecision",
     "DeliveryRepository",
+    "DriftRepository",
     "EventRepository",
     "FailureRecord",
     "FailureRepository",
@@ -55,6 +66,8 @@ __all__ = [
     "LLMCallRepository",
     "ManifestRepository",
     "MemoryRepository",
+    "NarrativeRepository",
+    "PersonalityRepository",
     "PlanRepository",
     "ProactiveRepository",
     "ProcessingRunRepository",
@@ -63,6 +76,7 @@ __all__ = [
     "SnapshotRepository",
     "StateRepository",
     "ToolCallRepository",
+    "ValueRepository",
     "WorldHistoryRepository",
 ]
 
@@ -91,6 +105,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.storage.repositories.deliveries import DeliveryDecision, DeliveryRepository
     from app.storage.repositories.events import EventRepository
     from app.storage.repositories.failures import FailureRecord, FailureRepository
+    from app.storage.repositories.growth import (
+        AdaptationRepository,
+        CandidateRepository,
+        ConsolidationRepository,
+        DriftRepository,
+        NarrativeRepository,
+        PersonalityRepository,
+        ValueRepository,
+    )
     from app.storage.repositories.llm_calls import LLMCallRepository
     from app.storage.repositories.manifests import ManifestRepository
     from app.storage.repositories.memory import MemoryRepository

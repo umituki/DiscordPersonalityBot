@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
+from typing import Sequence
 
 from app.clock import from_iso, to_iso
 from app.state.value import JSONValue, StateValue, value_type_of
@@ -169,6 +170,30 @@ class StateRepository:
             "SELECT * FROM state_changes WHERE domain = ? AND key = ? "
             "ORDER BY committed_at DESC, change_id DESC LIMIT ?",
             (domain, key, limit),
+        )
+
+    def changes_since(
+        self, since: datetime | None, *, limit: int = 500, domains: Sequence[str] | None = None
+    ) -> list[sqlite3.Row]:
+        """Committed changes in commit order, for consolidation (spec 9.5).
+
+        Consolidation is retrospective: it reads what has *already* been
+        committed, with its provenance, rather than reacting to live events.
+        """
+        clauses = []
+        params: list[object] = []
+        if since is not None:
+            clauses.append("committed_at > ?")
+            params.append(to_iso(since))
+        if domains:
+            placeholders = ", ".join("?" for _ in domains)
+            clauses.append(f"domain IN ({placeholders})")
+            params.extend(domains)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        return self._db.query_all(
+            f"SELECT * FROM state_changes {where} ORDER BY committed_at, change_id LIMIT ?",
+            tuple(params),
         )
 
     def change_count(self) -> int:

@@ -27,6 +27,12 @@ from app.agency.habits import HabitEngine
 from app.agency.policy import AgencyPolicy
 from app.clock import Clock, SystemClock
 from app.config import AppConfig, load_config
+from app.consolidation.adaptations import AdaptationEngine
+from app.consolidation.drift import DriftMonitor
+from app.consolidation.growth import GrowthEngine
+from app.consolidation.job import ConsolidationJob
+from app.consolidation.policy import GrowthPolicy
+from app.consolidation.values import ValueEngine
 from app.events.bus import EventBus
 from app.events.dispatcher import EventDispatcher
 from app.events.model import Event, SystemStartedPayload, SystemStoppedPayload
@@ -34,6 +40,7 @@ from app.epistemics.actions import EpistemicActionSelector
 from app.jobs.proactive import ProactiveEngine
 from app.jobs.scheduler import Scheduler
 from app.events.store import EventStore
+from app.consolidation.events import DEEP_CONSOLIDATION_REVIEW
 from app.conversation.engine import ConversationEngine
 from app.conversation.guard import OutputGuard, OutputGuardPolicy
 from app.conversation.policy import ConversationPolicy
@@ -75,9 +82,13 @@ from app.storage.database import Database
 from app.storage.migrations import LATEST_VERSION, migrate, schema_version, verify_schema
 from app.storage.repositories import (
     ActivityRepository,
+    AdaptationRepository,
     BeliefRepository,
+    CandidateRepository,
+    ConsolidationRepository,
     DecisionRepository,
     ConversationRepository,
+    DriftRepository,
     MemoryRepository,
     DeliveryRepository,
     EventRepository,
@@ -87,6 +98,8 @@ from app.storage.repositories import (
     HabitRepository,
     LLMCallRepository,
     ManifestRepository,
+    NarrativeRepository,
+    PersonalityRepository,
     PlanRepository,
     ProactiveRepository,
     ProcessingRunRepository,
@@ -95,6 +108,7 @@ from app.storage.repositories import (
     SnapshotRepository,
     StateRepository,
     ToolCallRepository,
+    ValueRepository,
     WorldHistoryRepository,
 )
 from app.versioning.manifest import RuntimeManifest, ManifestService, base_components, detect_commit_hash
@@ -148,6 +162,12 @@ class Application:
     world: WorldService
     scheduler: Scheduler
     proactive: ProactiveEngine
+    growth_policy: GrowthPolicy
+    adaptations: AdaptationEngine
+    growth: GrowthEngine
+    values: ValueEngine
+    drift: DriftMonitor
+    consolidation: ConsolidationJob
     appraisal: AppraisalEngine
     emotion: EmotionEngine
     mood: MoodEngine
@@ -233,6 +253,13 @@ class Application:
         world_history_repo = WorldHistoryRepository(db)
         job_repo = JobRepository(db)
         proactive_repo = ProactiveRepository(db)
+        adaptation_repo = AdaptationRepository(db)
+        trait_repo = PersonalityRepository(db)
+        value_repo = ValueRepository(db)
+        candidate_repo = CandidateRepository(db)
+        narrative_repo = NarrativeRepository(db)
+        drift_repo = DriftRepository(db)
+        consolidation_repo = ConsolidationRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
@@ -249,6 +276,7 @@ class Application:
         belief_self_policy = BeliefSelfPolicy.load(resolved_config.belief_self_policy_path)
         agency_policy = AgencyPolicy.load(resolved_config.agency_policy_path)
         world_policy = WorldPolicy.load(resolved_config.world_policy_path)
+        growth_policy = GrowthPolicy.load(resolved_config.growth_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -268,6 +296,7 @@ class Application:
         components["belief_self_policy_version"] = str(belief_self_policy.policy_version)
         components["agency_policy_version"] = str(agency_policy.policy_version)
         components["world_policy_version"] = str(world_policy.policy_version)
+        components["growth_policy_version"] = str(growth_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -391,6 +420,30 @@ class Application:
         belief_engine = BeliefEngine(belief_repo, belief_self_policy.belief, clock=resolved_clock)
         self_engine = SelfEngine(self_repo, belief_self_policy.self_schema, clock=resolved_clock)
 
+        # --- growth (spec 12, 23): deep state, consolidated separately -------
+        adaptation_engine = AdaptationEngine(
+            adaptation_repo, growth_policy.adaptation, clock=resolved_clock
+        )
+        growth_engine = GrowthEngine(
+            candidates=candidate_repo,
+            traits=trait_repo,
+            narratives=narrative_repo,
+            policy=growth_policy,
+            clock=resolved_clock,
+        )
+        value_engine = ValueEngine(
+            candidates=candidate_repo,
+            values=value_repo,
+            policy=growth_policy,
+            clock=resolved_clock,
+        )
+        drift_monitor = DriftMonitor(
+            state=state_repo,
+            drifts=drift_repo,
+            policy=growth_policy.drift,
+            clock=resolved_clock,
+        )
+
         # Update order follows the layers: immediate psychology first, then the
         # adaptive layer that reads it (spec 9.1, 9.5).
         bus.register(emotion_engine, kind="psychology", order=20)
@@ -401,6 +454,20 @@ class Application:
         bus.register(social_cognition_engine, kind="psychology", order=70)
         # The world is Layer 0 and is refreshed before anything interprets it.
         bus.register(world_service, kind="system", order=10)
+        # Deep state is reviewed only by the consolidation event, never by an
+        # ordinary one (spec 9.5, 12.3). The event type filter is that rule.
+        bus.register(
+            adaptation_engine,
+            kind="system",
+            event_types=(DEEP_CONSOLIDATION_REVIEW,),
+            order=80,
+        )
+        bus.register(
+            growth_engine, kind="system", event_types=(DEEP_CONSOLIDATION_REVIEW,), order=90
+        )
+        bus.register(
+            value_engine, kind="system", event_types=(DEEP_CONSOLIDATION_REVIEW,), order=91
+        )
 
         processor = EventProcessor(
             db=db,
@@ -414,6 +481,24 @@ class Application:
             interpreter=appraisal_engine,
             manifest_id=manifest_record.manifest_id,
             mode=resolved_config.runtime.mode,
+            clock=resolved_clock,
+        )
+
+        consolidation_job = ConsolidationJob(
+            processor=processor,
+            event_store=event_store,
+            state=state_repo,
+            consolidations=consolidation_repo,
+            candidates=candidate_repo,
+            narratives=narrative_repo,
+            memories=memory_repo,
+            adaptations=adaptation_engine,
+            growth=growth_engine,
+            values=value_engine,
+            drift=drift_monitor,
+            memory=memory_engine,
+            policy=growth_policy,
+            mood_baseline_valence=psychology_policy.mood.baseline_valence,
             clock=resolved_clock,
         )
 
@@ -490,6 +575,12 @@ class Application:
             world=world_service,
             scheduler=scheduler,
             proactive=proactive_engine,
+            growth_policy=growth_policy,
+            adaptations=adaptation_engine,
+            growth=growth_engine,
+            values=value_engine,
+            drift=drift_monitor,
+            consolidation=consolidation_job,
             appraisal=appraisal_engine,
             emotion=emotion_engine,
             mood=mood_engine,

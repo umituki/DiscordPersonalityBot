@@ -41,6 +41,7 @@ policies:
   belief_self: belief_self.yaml
   agency: agency.yaml
   world: world.yaml
+  growth: growth.yaml
 
 prompts:
   directory: config/prompts

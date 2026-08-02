@@ -153,6 +153,21 @@ def _status(config_file: Path | None) -> int:
             ),
             "pending_jobs": len(application.scheduler.pending()),
             "unanswered_contacts": application.proactive.unanswered(),
+            "adaptations": {
+                adaptation.name: round(adaptation.value, 3)
+                for adaptation in application.adaptations.all()
+            },
+            "personality": {
+                trait.name: round(trait.baseline, 3) for trait in application.growth.traits()
+            },
+            "values": {
+                value.name: round(value.priority, 3)
+                for value in application.values.ranking()[:3]
+            },
+            "narrative_themes": [theme.theme for theme in application.growth.themes(limit=5)],
+            "deep_update_candidates": len(application.growth.pending_candidates()),
+            "consolidation_due": application.consolidation.due(),
+            "drift_anomalies": len(application.drift.open_anomalies()),
             "integrity": application.db.integrity_check(),
         }
     finally:

@@ -51,6 +51,11 @@ domains:
     value_min: 0.0
     value_max: null
     max_delta_per_event: null
+  # Adaptations move faster than traits and slower than mood (spec 12.2).
+  # They are consolidation output, so they always carry evidence.
+  characteristic_adaptations:
+    max_delta_per_event: 0.05
+    min_evidence_count: 1
   goals:
     max_delta_per_event: 0.30
   habits:

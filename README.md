@@ -8,7 +8,7 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 8（Virtual Life）まで**完了。Phase 9 以降は未着手。
+仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 9（Growth）まで**完了。Phase 10 以降は未着手。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -21,7 +21,8 @@
 | 6 | Social / Belief / Self | 実装済み |
 | 7 | Agency（Goals / Decision / Dialogue Act / Habits / Epistemics / Tools） | 実装済み |
 | 8 | Virtual Life（World / Activity / Sleep / Scheduler / Proactive） | 実装済み |
-| 9+ | Growth / Society / Genesis / Hardening | 未着手 |
+| 9 | Growth（Consolidation / Adaptations / Personality / Values / Narrative / Drift） | 実装済み |
+| 10+ | Society / Genesis / Hardening | 未着手 |
 
 ### Phase 1 で動作するパイプライン
 
@@ -134,6 +135,27 @@ Proactive     : 無返信が増えるほど送信間隔が伸びる（positive f
                 上限を超えると USER が話すまで一切送らない
 ```
 
+### Phase 9 で動作する成長
+
+```text
+Consolidation : 出来事にその場で反応するのではなく、既に commit された
+                state 変化とその provenance を後から読み直す別ジョブ
+Adaptations   : 特性より速く動く中間層。証拠が溜まって初めて動く。
+                端に寄るほど同方向の証拠は効かなくなる（戻る方向は減衰しない）
+Deep Gate     : 反復・持続・複数文脈・意味のある結果・気分で説明できないこと。
+                5 条件すべてを満たすまで Trait も Value も 1 も動かない
+Personality   : baseline / adaptation / 表出を分離。1 回の更新は最大 0.01。
+                baseline は表出を追って少しずつ動く（初期値は永久固定ではない）
+Values        : 相対優先度。ひとつ上げると必ず他が下がる。総和は保存される
+Narrative     : 繰り返し思い出される話題が自己物語になる。飽和する
+Drift Monitor : 測って分類するだけ。EXPECTED / SUSPICIOUS / INVALID。
+                正常な人生変化を clamp で消さない
+```
+
+数か月ぶんの一貫した証拠が揃って初めて Trait が 0.01 動く。動いた事実は
+`personality_history` に candidate と run とともに残る。commit が受理しなかった
+変化は台帳にも履歴にも書かれない。
+
 主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
 
 ## セットアップ
@@ -179,6 +201,7 @@ app/
   epistemics/    epistemic action selection
   world/         activity / sleep / world service（仮想生活の single writer）
   jobs/          scheduler / proactive contact
+  consolidation/ adaptations / deep gate / personality / values / narrative / drift
   social/        relationship / attachment / user model / beliefs / self model
   tools/         Tool Manager / registry / builtin tools
   interfaces/    discord/ (adapter, dto, gateway)
