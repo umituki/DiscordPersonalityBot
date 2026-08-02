@@ -21,11 +21,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from app.agency.decision import DecisionEngine
+from app.agency.goals import GoalEngine
+from app.agency.habits import HabitEngine
+from app.agency.policy import AgencyPolicy
 from app.clock import Clock, SystemClock
 from app.config import AppConfig, load_config
 from app.events.bus import EventBus
 from app.events.dispatcher import EventDispatcher
 from app.events.model import Event, SystemStartedPayload, SystemStoppedPayload
+from app.epistemics.actions import EpistemicActionSelector
 from app.events.store import EventStore
 from app.conversation.engine import ConversationEngine
 from app.conversation.guard import OutputGuard, OutputGuardPolicy
@@ -44,6 +49,8 @@ from app.social.attachment import AttachmentEngine
 from app.social.belief_policy import BeliefSelfPolicy
 from app.social.beliefs import BeliefEngine
 from app.social.self_model import SelfEngine
+from app.tools.builtin import register_builtin_tools
+from app.tools.manager import ToolManager, ToolRegistry
 from app.social.policy import RelationshipPolicy
 from app.social.relationship import RelationshipEngine
 from app.social.user_model import SocialCognitionEngine
@@ -64,17 +71,22 @@ from app.storage.database import Database
 from app.storage.migrations import LATEST_VERSION, migrate, schema_version, verify_schema
 from app.storage.repositories import (
     BeliefRepository,
+    DecisionRepository,
     ConversationRepository,
     MemoryRepository,
     DeliveryRepository,
     EventRepository,
     FailureRepository,
+    GoalRepository,
+    HabitRepository,
     LLMCallRepository,
     ManifestRepository,
+    PlanRepository,
     ProcessingRunRepository,
     SelfRepository,
     SnapshotRepository,
     StateRepository,
+    ToolCallRepository,
 )
 from app.versioning.manifest import RuntimeManifest, ManifestService, base_components, detect_commit_hash
 
@@ -117,6 +129,12 @@ class Application:
     belief_self_policy: BeliefSelfPolicy
     beliefs: BeliefEngine
     self_model: SelfEngine
+    tools: ToolManager
+    agency_policy: AgencyPolicy
+    goals: GoalEngine
+    habits: HabitEngine
+    decisions: DecisionEngine
+    epistemics: EpistemicActionSelector
     appraisal: AppraisalEngine
     emotion: EmotionEngine
     mood: MoodEngine
@@ -192,6 +210,11 @@ class Application:
         memory_repo = MemoryRepository(db)
         belief_repo = BeliefRepository(db)
         self_repo = SelfRepository(db)
+        tool_call_repo = ToolCallRepository(db)
+        goal_repo = GoalRepository(db)
+        plan_repo = PlanRepository(db)
+        habit_repo = HabitRepository(db)
+        decision_repo = DecisionRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
@@ -206,6 +229,7 @@ class Application:
         psychology_policy = PsychologyPolicy.load(resolved_config.psychology_policy_path)
         relationship_policy = RelationshipPolicy.load(resolved_config.relationship_policy_path)
         belief_self_policy = BeliefSelfPolicy.load(resolved_config.belief_self_policy_path)
+        agency_policy = AgencyPolicy.load(resolved_config.agency_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -223,6 +247,7 @@ class Application:
         components["psychology_policy_version"] = str(psychology_policy.policy_version)
         components["relationship_policy_version"] = str(relationship_policy.policy_version)
         components["belief_self_policy_version"] = str(belief_self_policy.policy_version)
+        components["agency_policy_version"] = str(agency_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -315,6 +340,21 @@ class Application:
         # Beliefs and the self model are evidence-driven services rather than
         # per-event subscribers: they change when evidence arrives, which the
         # knowledge and consolidation phases will supply (spec 12.4, 25).
+        # --- tools (spec 26): the only authority on what actually ran --------
+        tool_registry = ToolRegistry()
+        register_builtin_tools(tool_registry, clock=resolved_clock)
+        tool_manager = ToolManager(tool_registry, tool_call_repo, clock=resolved_clock)
+
+        # --- agency (spec 15, 17) --------------------------------------------
+        goal_engine = GoalEngine(goal_repo, plan_repo, agency_policy.goals, clock=resolved_clock)
+        habit_engine = HabitEngine(habit_repo, agency_policy.habits, clock=resolved_clock)
+        decision_engine = DecisionEngine(
+            decision_repo, agency_policy.decision, clock=resolved_clock
+        )
+        epistemic_selector = EpistemicActionSelector(
+            agency_policy.epistemic, clock=resolved_clock
+        )
+
         belief_engine = BeliefEngine(belief_repo, belief_self_policy.belief, clock=resolved_clock)
         self_engine = SelfEngine(self_repo, belief_self_policy.self_schema, clock=resolved_clock)
 
@@ -361,6 +401,7 @@ class Application:
                 policy=conversation_policy,
                 memory=memory_engine,
                 appraisal=appraisal_engine,
+                tools=tool_manager,
                 clock=resolved_clock,
             )
         else:
@@ -404,6 +445,12 @@ class Application:
             belief_self_policy=belief_self_policy,
             beliefs=belief_engine,
             self_model=self_engine,
+            tools=tool_manager,
+            agency_policy=agency_policy,
+            goals=goal_engine,
+            habits=habit_engine,
+            decisions=decision_engine,
+            epistemics=epistemic_selector,
             appraisal=appraisal_engine,
             emotion=emotion_engine,
             mood=mood_engine,

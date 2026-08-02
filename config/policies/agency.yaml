@@ -1,0 +1,40 @@
+# Agency policy (spec 15, 16.1, 17.1, 40).
+policy_version: 1
+
+goals:
+  # 目標は need / emotion / value / interest から生まれる (spec 15.2)
+  activation_threshold: 0.55
+  max_active: 5
+  importance_from_need: 0.60
+  importance_from_value: 0.40
+  progress_step: 0.10
+  abandon_after_idle_days: 30
+
+habits:
+  # spec 15.3: 回数ではなく「文脈 × 反復」で自動性が育つ
+  automaticity_gain: 0.08
+  automaticity_ceiling: 0.95
+  # 1 日休んだだけでリセットしない。使わなければゆっくり下がるだけ。
+  decay_per_idle_day: 0.01
+  # 文脈が消えたときは発現しないが、痕跡は保持する
+  trace_floor: 0.15
+  established_at: 0.60
+  # 自動性がこの値を超えると、目標がなくても cue で立ち上がる
+  automatic_trigger: 0.50
+
+decision:
+  # 近い候補にだけ小さなゆらぎを許す。大差の候補を RNG で選ばない (spec 15.4)
+  tie_threshold: 0.08
+  exploration_noise: 0.04
+  min_candidates: 2
+  learning_rate: 0.20
+
+epistemic:
+  # spec 17.1: 未知 = 自動 Web Search にしない
+  curiosity_threshold: 0.55
+  search_cost: 0.35
+  ask_user_cost: 0.20
+  # 相手に聞ける状況なら、まず聞く
+  prefer_ask_when_present: true
+  # 直近に同じ検索が失敗していたら、すぐには繰り返さない
+  retry_after_failure_hours: 6.0

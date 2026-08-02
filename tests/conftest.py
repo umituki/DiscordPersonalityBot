@@ -247,6 +247,7 @@ def temp_config(tmp_path: Path) -> AppConfig:
         "psychology.yaml",
         "relationship.yaml",
         "belief_self.yaml",
+        "agency.yaml",
     ):
         shutil.copy(
             REPO_ROOT / "config" / "policies" / policy,

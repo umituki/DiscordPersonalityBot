@@ -59,12 +59,80 @@ class Conversation(BaseModel):
         return ensure_aware(value)
 
 
-class ReplyDraft(BaseModel):
-    """The structured shape asked of the model in Phase 3.
+#: Spec 16.2 conversation goals.
+ConversationGoal = Literal[
+    "understand_user",
+    "share_experience",
+    "have_fun",
+    "seek_support",
+    "give_support",
+    "maintain_connection",
+    "solve_problem",
+    "explore",
+    "pass_time",
+    "repair",
+]
 
-    Dialogue acts and conversation goals (spec 16.1, 16.2) arrive with the
-    Agency phase; this stays deliberately minimal.
+
+class DialogueAct(BaseModel):
+    """What kind of response this will be — decided before any sentence.
+
+    Spec 16.1: ``文章を直接最適化せず、先に Dialogue Act を決める``. The reply is then
+    generated to carry out these acts, rather than the acts being read back out
+    of whatever the model happened to write.
     """
+
+    acknowledge: bool = False
+    validate_feeling: bool = Field(default=False, alias="validate")
+    self_disclose: bool = False
+    ask_followup: bool = False
+    humor: bool = False
+    challenge: bool = False
+    topic_shift: bool = False
+    goal: ConversationGoal = "maintain_connection"
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    @property
+    def chosen(self) -> tuple[str, ...]:
+        names = (
+            ("acknowledge", self.acknowledge),
+            ("validate", self.validate_feeling),
+            ("self_disclose", self.self_disclose),
+            ("ask_followup", self.ask_followup),
+            ("humor", self.humor),
+            ("challenge", self.challenge),
+            ("topic_shift", self.topic_shift),
+        )
+        return tuple(name for name, active in names if active)
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.chosen
+
+    def render(self) -> str:
+        """The instruction block handed to the reply prompt."""
+        descriptions = {
+            "acknowledge": "相手の言ったことを受け止める",
+            "validate": "相手の感じ方を否定しない",
+            "self_disclose": "自分のことを少し話す",
+            "ask_followup": "質問を返す",
+            "humor": "少しだけ軽くする",
+            "challenge": "違う見方を示す",
+            "topic_shift": "話題を変える",
+        }
+        lines = [f"- {descriptions[name]}" for name in self.chosen]
+        lines.append(f"- この会話でのねらい: {self.goal}")
+        return "\n".join(lines)
+
+    @classmethod
+    def minimal(cls) -> DialogueAct:
+        """The safe fallback when the acts could not be decided."""
+        return cls(acknowledge=True, goal="maintain_connection")
+
+
+class ReplyDraft(BaseModel):
+    """The sentence itself, generated to carry out already-chosen acts."""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -30,17 +30,32 @@ class Appraisal(BaseModel):
     note: str = ""
 
 
+#: Dialogue acts are decided before every reply (spec 16.1). Tests that care
+#: about the reply itself should not have to script that call, so the client
+#: answers it from here unless the script explicitly provides one.
+DEFAULT_ACTS = '{"acknowledge": true, "goal": "maintain_connection"}'
+
+
 class ScriptedClient:
     """Returns queued texts or raises queued errors, one per call."""
 
     model = "test-model"
 
-    def __init__(self, script: list) -> None:
+    def __init__(self, script: list, *, acts_response: str | None = None) -> None:
         self._script = list(script)
+        self._acts_response = DEFAULT_ACTS if acts_response is None else acts_response
         self.requests: list = []
+
+    def _is_dialogue_act(self, request) -> bool:
+        schema = request.format_schema or {}
+        return schema.get("title") == "DialogueAct"
 
     async def generate(self, request):
         self.requests.append(request)
+        if self._is_dialogue_act(request) and self._acts_response is not None:
+            return LLMResponse(
+                text=self._acts_response, model=self.model, created_at=NOW, latency_ms=3
+            )
         if not self._script:
             raise AssertionError("client called more times than scripted")
         item = self._script.pop(0)

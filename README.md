@@ -8,7 +8,7 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 6（Social / Belief / Self）まで**完了。Phase 7 以降は未着手。
+仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 7（Agency）まで**完了。Phase 8 以降は未着手。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -19,7 +19,8 @@
 | 4 | Context / Episode / Memory | 実装済み |
 | 5 | Immediate Psychology（Appraisal / Emotion / Mood / Needs） | 実装済み |
 | 6 | Social / Belief / Self | 実装済み |
-| 7+ | Agency / Life / Growth / Society / Genesis | 未着手 |
+| 7 | Agency（Goals / Decision / Dialogue Act / Habits / Epistemics / Tools） | 実装済み |
+| 8+ | Virtual Life / Growth / Society / Genesis / Hardening | 未着手 |
 
 ### Phase 1 で動作するパイプライン
 
@@ -105,6 +106,19 @@ Appraisal + Event
                  自己像が揺れるのではなく明瞭さ(clarity)が下がる
 ```
 
+### Phase 7 で動作する行為選択
+
+```text
+Tool Manager  : 実行の真偽を握る唯一の場所。失敗は失敗として残り、
+                Output Guard はこの記録だけを信じる
+Goals         : need から目標が生まれる。plan と「起きたこと」は別物
+Habits        : 回数ではなく cue × 反復。1 日空けてもリセットしない。
+                文脈が消えても痕跡は残る
+Decision      : 僅差のときだけ小さく揺らぐ。大差は必ず良い方を選ぶ
+Dialogue Act  : 文章の前に「どう応じるか」を決めてから書く
+Epistemics    : 知らない ≠ 自動検索。相手が居れば聞く、失敗はしばらく再試行しない
+```
+
 主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
 
 ## セットアップ
@@ -146,7 +160,10 @@ app/
   events/        Event model / store / bus / dispatcher
   memory/        segmentation / encoding / retrieval / forgetting / engine
   psychology/    appraisal / emotion / mood / needs
+  agency/        goals / plans / habits / decision
+  epistemics/    epistemic action selection
   social/        relationship / attachment / user model / beliefs / self model
+  tools/         Tool Manager / registry / builtin tools
   interfaces/    discord/ (adapter, dto, gateway)
   llm/           LLMClient / Ollama / prompts / structured / validation
   state/         proposal / snapshot / ownership / dependency_graph / arbitrator / committer / policy

@@ -16,7 +16,7 @@ from typing import Sequence
 from app.clock import Clock, SystemClock, to_iso
 from app.context.builder import BuiltContext, ContextBuilder, Requirement
 from app.conversation.guard import OutputGuard
-from app.conversation.models import ConversationTurn, ReplyDraft
+from app.conversation.models import ConversationTurn, DialogueAct, ReplyDraft
 from app.memory.models import RetrievalCandidate
 from app.conversation.policy import ConversationPolicy
 from app.llm.prompts import PromptRegistry
@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 PROMPT_ID = "conversation_reply"
 PURPOSE = "conversation_reply"
+ACT_PROMPT_ID = "dialogue_act"
+ACT_PURPOSE = "dialogue_act"
 
 NO_HISTORY = "(まだ記録されたやりとりはない)"
 NO_MEMORIES = "(いま思い出せることはない)"
@@ -42,6 +44,9 @@ class ReplyGeneration:
     outcome: StructuredOutcome[ReplyDraft]
     context: BuiltContext
     prompt_version: str
+    #: Decided before the sentence was written (spec 16.1).
+    acts: DialogueAct = DialogueAct.minimal()
+    acts_source: str = "default"
 
     @property
     def accepted(self) -> bool:
@@ -85,8 +90,17 @@ class ConversationEngine:
         event_id: str | None = None,
         tool_success_ids: Sequence[str] = (),
     ) -> ReplyGeneration:
+        # Spec 16.1: decide what kind of response this is *before* writing it.
+        acts, acts_source = await self._choose_acts(
+            user_text=user_text,
+            recent_turns=recent_turns,
+            snapshot=snapshot,
+            run_id=run_id,
+            event_id=event_id,
+        )
+
         template = self._prompts.get(PROMPT_ID)
-        context = self._build_context(user_text, recent_turns, memories)
+        context = self._build_context(user_text, recent_turns, memories, acts)
 
         system_content = template.render(
             identity=context.get("identity").content,
@@ -100,6 +114,7 @@ class ConversationEngine:
                 if context.includes("relevant_memories")
                 else NO_MEMORIES
             ),
+            dialogue_acts=acts.render(),
             current_time=to_iso(self._clock.now()),
         )
 
@@ -129,8 +144,62 @@ class ConversationEngine:
         )
 
         return ReplyGeneration(
-            outcome=outcome, context=context, prompt_version=template.prompt_version
+            outcome=outcome,
+            context=context,
+            prompt_version=template.prompt_version,
+            acts=acts,
+            acts_source=acts_source,
         )
+
+    # --- dialogue acts (spec 16.1) -----------------------------------------
+    async def _choose_acts(
+        self,
+        *,
+        user_text: str,
+        recent_turns: Sequence[ConversationTurn],
+        snapshot: StateSnapshot | None,
+        run_id: str | None,
+        event_id: str | None,
+    ) -> tuple[DialogueAct, str]:
+        template = self._prompts.get(ACT_PROMPT_ID)
+        content = template.render(
+            identity=self._identity.render_for_prompt(),
+            recent_conversation=self._render_history(recent_turns) or NO_HISTORY,
+            user_message=user_text,
+            state_summary=self._state_summary(snapshot),
+        )
+        outcome = await self._structured.generate(
+            DialogueAct,
+            (LLMMessage(role="user", content=content),),
+            purpose=ACT_PURPOSE,
+            run_id=run_id,
+            event_id=event_id,
+            temperature=0.4,
+            max_tokens=200,
+            timeout_s=self._policy.generation.timeout_s,
+            priority="P0",
+            prompt_id=ACT_PROMPT_ID,
+            prompt_version=template.prompt_version,
+        )
+        if outcome.accepted and outcome.value is not None and not outcome.value.is_empty:
+            return outcome.value, "llm"
+        # Without a decision, answer in the smallest defensible way rather than
+        # inventing an intention (spec 28.3).
+        return DialogueAct.minimal(), "default"
+
+    @staticmethod
+    def _state_summary(snapshot: StateSnapshot | None) -> str:
+        """A short, factual reading of current state for the act decision."""
+        if snapshot is None:
+            return "(状態は不明)"
+        parts: list[str] = []
+        for domain in ("mood", "needs", "emotion"):
+            values = snapshot.domain(domain)
+            for key, value in sorted(values.items()):
+                number = value.numeric
+                if number is not None and number >= 0.4:
+                    parts.append(f"{domain}.{key}={number:.2f}")
+        return ", ".join(parts[:8]) or "(とくに強い状態はない)"
 
     # --- context ------------------------------------------------------------
     def _build_context(
@@ -138,6 +207,7 @@ class ConversationEngine:
         user_text: str,
         recent_turns: Sequence[ConversationTurn],
         memories: Sequence[RetrievalCandidate] = (),
+        acts: DialogueAct | None = None,
     ) -> BuiltContext:
         builder = ContextBuilder()
         builder.add(
@@ -172,6 +242,14 @@ class ConversationEngine:
             priority=40,
             source="episodic_memory",
         )
+        if acts is not None:
+            builder.add(
+                "dialogue_acts",
+                acts.render(),
+                requirement=Requirement.REQUIRED,
+                priority=80,
+                source="dialogue_act_engine",
+            )
         return builder.build(self._policy.context.budget())
 
     def _render_history(self, turns: Sequence[ConversationTurn]) -> str:

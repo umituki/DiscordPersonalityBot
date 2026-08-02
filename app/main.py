@@ -145,6 +145,7 @@ def _status(config_file: Path | None) -> int:
             "semantic_memories": application.memories.semantic_count(),
             "beliefs": application.beliefs.held_beliefs().__len__(),
             "self_schemas": len(application.self_model.active_schemas()),
+            "tools": list(application.tools.registry.names()),
             "integrity": application.db.integrity_check(),
         }
     finally:

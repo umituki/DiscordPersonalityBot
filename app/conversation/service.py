@@ -40,6 +40,7 @@ from app.events.model import Event
 from app.interfaces.discord.adapter import DiscordMessageAdapter, IgnoreReason
 from app.memory.engine import MemoryEngine
 from app.psychology.appraisal import AppraisalEngine
+from app.tools.manager import ToolManager
 from app.interfaces.discord.dto import InboundMessage, OutboundMessage
 from app.orchestrator.processor import EventProcessor, ProcessingOutcome
 from app.storage.repositories.conversations import ConversationRepository
@@ -79,6 +80,7 @@ class ConversationService:
         policy: ConversationPolicy,
         memory: MemoryEngine | None = None,
         appraisal: AppraisalEngine | None = None,
+        tools: ToolManager | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._processor = processor
@@ -89,6 +91,7 @@ class ConversationService:
         self._policy = policy
         self._memory = memory
         self._appraisal = appraisal
+        self._tools = tools
         self._clock = clock or SystemClock()
 
     # --- inbound -----------------------------------------------------------
@@ -141,6 +144,15 @@ class ConversationService:
                 event_id=event.event_id,
             )
 
+        # Spec 26: only the Tool Manager's record makes a tool claim sayable.
+        tool_success_ids: tuple[str, ...] = ()
+        if self._tools is not None:
+            tool_success_ids = tuple(
+                await asyncio.to_thread(
+                    self._tools.successful_call_ids, run_id=outcome.run.run_id
+                )
+            )
+
         generation = await self._engine.draft_reply(
             user_text=event.payload.text,
             recent_turns=recent,
@@ -148,6 +160,7 @@ class ConversationService:
             snapshot=outcome.snapshot,
             run_id=outcome.run.run_id,
             event_id=event.event_id,
+            tool_success_ids=tool_success_ids,
         )
 
         if not generation.accepted or generation.text is None:

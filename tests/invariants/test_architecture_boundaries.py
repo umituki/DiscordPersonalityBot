@@ -84,6 +84,29 @@ def test_state_writes_go_through_the_committer() -> None:
     assert offenders == [], f"direct state writes outside the state layer: {offenders}"
 
 
+@pytest.mark.parametrize(
+    "module",
+    ["app.main", "app.bootstrap", "app.storage.repositories", "app.state.snapshot"],
+)
+def test_entry_points_import_cleanly_in_a_fresh_interpreter(module: str) -> None:
+    """Import cycles depend on which module is imported first.
+
+    The test suite always imports through conftest, so it can hide a cycle that
+    breaks ``python -m app.main``. Each entry point is therefore imported in its
+    own interpreter, in isolation.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        capture_output=True,
+        text=True,
+        cwd=APP_ROOT.parent,
+    )
+    assert result.returncode == 0, f"importing {module} failed:\n{result.stderr}"
+
+
 def test_no_print_in_operational_code() -> None:
     """Spec 38: ``print()`` は運用 logging に使用しない."""
     offenders = [

@@ -530,12 +530,132 @@ _0005_BELIEFS_SELF = Migration(
 )
 
 
+_0006_TOOLS = Migration(
+    version=6,
+    name="tool_calls",
+    statements=(
+        # Spec 26: the execution record is the only authority on whether a tool
+        # call happened and whether it worked.
+        """
+        CREATE TABLE tool_calls (
+            call_id      TEXT PRIMARY KEY,
+            tool_name    TEXT NOT NULL,
+            permission   TEXT NOT NULL,
+            requested_by TEXT NOT NULL,
+            run_id       TEXT,
+            event_id     TEXT,
+            arguments_json TEXT NOT NULL,
+            status       TEXT NOT NULL,
+            success      INTEGER NOT NULL DEFAULT 0,
+            source       TEXT,
+            data_json    TEXT,
+            error        TEXT,
+            retryable    INTEGER NOT NULL DEFAULT 0,
+            reason       TEXT,
+            started_at   TEXT NOT NULL,
+            finished_at  TEXT
+        )
+        """,
+        "CREATE INDEX idx_tool_calls_started ON tool_calls (started_at)",
+        "CREATE INDEX idx_tool_calls_run ON tool_calls (run_id)",
+        "CREATE INDEX idx_tool_calls_tool ON tool_calls (tool_name, success)",
+    ),
+)
+
+
+_0007_AGENCY = Migration(
+    version=7,
+    name="goals_and_habits",
+    statements=(
+        # Spec 15.2, 31.6. A goal carries why it exists, not just what it is.
+        """
+        CREATE TABLE goals (
+            goal_id        TEXT PRIMARY KEY,
+            description    TEXT NOT NULL,
+            source         TEXT NOT NULL,
+            reason         TEXT NOT NULL DEFAULT '',
+            importance     REAL NOT NULL DEFAULT 0.5,
+            autonomy       REAL NOT NULL DEFAULT 0.5,
+            obligation     REAL NOT NULL DEFAULT 0.0,
+            expected_reward REAL NOT NULL DEFAULT 0.5,
+            identity_relevance REAL NOT NULL DEFAULT 0.3,
+            value_alignment REAL NOT NULL DEFAULT 0.5,
+            progress       REAL NOT NULL DEFAULT 0.0,
+            status         TEXT NOT NULL DEFAULT 'active',
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            last_pursued_at TEXT,
+            origin         TEXT NOT NULL DEFAULT 'real_discord',
+            UNIQUE (description, source)
+        )
+        """,
+        "CREATE INDEX idx_goals_status ON goals (status, importance)",
+        # Spec 18.2: a plan is an intended future and is never a completed
+        # experience (spec 2.15). Status transitions are explicit.
+        """
+        CREATE TABLE plans (
+            plan_id     TEXT PRIMARY KEY,
+            goal_id     TEXT REFERENCES goals (goal_id),
+            description TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'planned',
+            planned_for TEXT,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL,
+            started_at  TEXT,
+            completed_at TEXT,
+            outcome     TEXT
+        )
+        """,
+        "CREATE INDEX idx_plans_status ON plans (status, planned_for)",
+        # Spec 15.3: a habit is cue-triggered automaticity, not a streak.
+        """
+        CREATE TABLE habits (
+            habit_id      TEXT PRIMARY KEY,
+            name          TEXT NOT NULL,
+            cue           TEXT NOT NULL,
+            action        TEXT NOT NULL,
+            automaticity  REAL NOT NULL DEFAULT 0.0,
+            repetitions   INTEGER NOT NULL DEFAULT 0,
+            cue_encounters INTEGER NOT NULL DEFAULT 0,
+            context_available INTEGER NOT NULL DEFAULT 1,
+            last_performed_at TEXT,
+            last_cue_at   TEXT,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            status        TEXT NOT NULL DEFAULT 'forming',
+            UNIQUE (name, cue)
+        )
+        """,
+        "CREATE INDEX idx_habits_cue ON habits (cue, status)",
+        # Spec 15.4: what was chosen, what was expected, what happened.
+        """
+        CREATE TABLE decisions (
+            decision_id  TEXT PRIMARY KEY,
+            run_id       TEXT,
+            event_id     TEXT,
+            chosen_action TEXT NOT NULL,
+            route        TEXT NOT NULL,
+            expected_value REAL NOT NULL,
+            candidates_json TEXT NOT NULL,
+            outcome_value REAL,
+            prediction_error REAL,
+            decided_at   TEXT NOT NULL,
+            resolved_at  TEXT
+        )
+        """,
+        "CREATE INDEX idx_decisions_decided ON decisions (decided_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
     _0003_CONVERSATIONS,
     _0004_MEMORY,
     _0005_BELIEFS_SELF,
+    _0006_TOOLS,
+    _0007_AGENCY,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

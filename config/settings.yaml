@@ -39,6 +39,7 @@ policies:
   psychology: psychology.yaml
   relationship: relationship.yaml
   belief_self: belief_self.yaml
+  agency: agency.yaml
 
 prompts:
   directory: config/prompts
