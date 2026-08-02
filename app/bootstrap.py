@@ -617,6 +617,8 @@ class Application:
             repository=simulation_repo,
             knowledge=knowledge_service,
             growth=growth_engine,
+            structured=structured,
+            prompts=prompts,
             policy=simulation_policy,
             clock=resolved_clock,
         )

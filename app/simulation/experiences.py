@@ -21,6 +21,8 @@ import logging
 from dataclasses import dataclass, field
 from random import Random
 
+from pydantic import BaseModel, Field
+
 from app.simulation.models import EXPERIENCE_CLASSES, ExperienceClass
 from app.simulation.policy import ExperienceRules
 
@@ -37,6 +39,21 @@ LLM_COST: dict[ExperienceClass, str] = {
     "major": "detailed",
     "turning_point": "detailed",
 }
+
+
+class ExperienceNarration(BaseModel):
+    """What the model is asked for when an experience is worth describing.
+
+    Deliberately small: what happened, what it was about, and how much it
+    landed. It cannot return a trait, a value or a personality change — those
+    are produced by living through the event, not by narrating it (spec 22.6).
+    """
+
+    summary: str = Field(min_length=1)
+    topics: list[str] = Field(default_factory=list)
+    #: A signal, never the final importance (spec 2.6).
+    felt_significance: float = Field(default=0.0, ge=0.0, le=1.0)
+    involves_other_person: bool = False
 
 
 @dataclass

@@ -30,11 +30,14 @@ from datetime import datetime, timedelta
 from random import Random
 from typing import Sequence
 
-from app.clock import Clock, FixedClock, SystemClock
+from app.clock import Clock, FixedClock, SystemClock, to_iso
 from app.consolidation.growth import GrowthEngine
 from app.events.model import Event
 from app.knowledge.service import KnowledgeService
 from app.knowledge.temporal import TemporalLeakageError
+from app.llm.prompts import PromptRegistry
+from app.llm.structured import StructuredGenerator
+from app.llm.types import LLMMessage
 from app.orchestrator.processor import EventProcessor
 from app.simulation.events import (
     FIRST_BOOT,
@@ -45,7 +48,11 @@ from app.simulation.events import (
     LifePhaseStartedPayload,
     SimulatedExperiencePayload,
 )
-from app.simulation.experiences import ExperienceBudget, ExperienceSampler
+from app.simulation.experiences import (
+    ExperienceBudget,
+    ExperienceNarration,
+    ExperienceSampler,
+)
 from app.simulation.models import (
     LifeScaffold,
     SimulationBlock,
@@ -59,6 +66,12 @@ logger = logging.getLogger(__name__)
 
 MODULE = "past_simulation_engine"
 ORIGIN = "simulated_past"
+NARRATION_PROMPT_ID = "simulated_experience"
+NARRATION_PURPOSE = "simulated_experience"
+
+#: After this many consecutive failures the model is treated as unavailable
+#: for the rest of the run (spec 28.3).
+MAX_NARRATION_FAILURES = 3
 
 #: Spec 22.3: life stages are scaffold, not personality. Names only.
 DEFAULT_PHASES: tuple[str, ...] = ("childhood", "adolescence", "young_adulthood")
@@ -74,8 +87,11 @@ class SimulationProgress:
     knowledge_exposures: int = 0
     knowledge_acquired: int = 0
     leakage_attempts: int = 0
+    #: Experiences that were worth a model call (spec 22.4).
+    narrated: int = 0
     demotions: list[str] = field(default_factory=list)
     by_class: dict[str, int] = field(default_factory=dict)
+    recent_summaries: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +115,8 @@ class PastSimulationEngine:
         repository: SimulationRepository,
         knowledge: KnowledgeService,
         growth: GrowthEngine,
+        structured: StructuredGenerator,
+        prompts: PromptRegistry,
         policy: SimulationPolicy,
         clock: Clock | None = None,
         rng: Random | None = None,
@@ -107,10 +125,15 @@ class PastSimulationEngine:
         self._repository = repository
         self._knowledge = knowledge
         self._growth = growth
+        self._structured = structured
+        self._prompts = prompts
         self._policy = policy
         self._clock = clock or SystemClock()
         self._rng = rng or Random(20260101)
         self._sampler = ExperienceSampler(policy.experience, rng=self._rng)
+        #: Consecutive failed narrations. A simulated life must not spend
+        #: itself retrying an unreachable model (spec 28.3).
+        self._narration_failures = 0
 
     # --- setup --------------------------------------------------------------
     def prepare(
@@ -200,6 +223,7 @@ class PastSimulationEngine:
             experiences=progress.experiences,
             detail={
                 "expanded_blocks": progress.expanded_blocks,
+                "narrated": progress.narrated,
                 "knowledge_acquired": progress.knowledge_acquired,
                 "demotions": progress.demotions[:20],
                 "by_class": progress.by_class,
@@ -253,15 +277,28 @@ class PastSimulationEngine:
             progress.by_class.get(experience.experience_class, 0) + 1
         )
 
+        # --- describe it, at the cost its class justifies (spec 22.4) -------
+        narration = await self._narrate(
+            experience,
+            scaffold=scaffold,
+            seed=seed,
+            occurred_at=started_at,
+            recent=progress.recent_summaries[-3:],
+        )
+        if experience.llm_cost != "none":
+            progress.narrated += 1
+
         # --- the experience goes through the ordinary pipeline --------------
         event = self._experience_event(
             block_id=block.block_id,
             occurred_at=started_at,
             experience=experience,
-            scaffold=scaffold,
+            narration=narration,
         )
         await self._processor.process(event, mode="simulation")
         progress.experiences += 1
+        progress.recent_summaries.append(narration.summary)
+        self._repository.set_block_summary(block.block_id, narration.summary)
 
         # --- and so does whatever the world was saying at the time ----------
         self._expose_period_knowledge(
@@ -313,7 +350,7 @@ class PastSimulationEngine:
         block_id: str,
         occurred_at: datetime,
         experience,
-        scaffold: LifeScaffold,
+        narration: ExperienceNarration,
     ) -> Event:
         """A simulated experience: ``yui`` actor, ``simulated_past`` origin.
 
@@ -332,8 +369,11 @@ class PastSimulationEngine:
                 block_id=block_id,
                 experience_class=experience.experience_class,
                 valence=experience.valence,
-                summary=self._summarise(experience, scaffold),
-                text=self._summarise(experience, scaffold),
+                summary=narration.summary,
+                text=narration.summary,
+                topics=tuple(narration.topics)[:4],
+                felt_significance=narration.felt_significance,
+                involves_other_person=narration.involves_other_person,
                 demoted_from=experience.demoted_from,
             ),
             clock=self._clock,
@@ -356,14 +396,77 @@ class PastSimulationEngine:
             ),
         )
 
-    def _summarise(self, experience, scaffold: LifeScaffold) -> str:
-        """A placeholder description.
+    async def _narrate(
+        self,
+        experience,
+        *,
+        scaffold: LifeScaffold,
+        seed: TemperamentSeed,
+        occurred_at: datetime,
+        recent: Sequence[str],
+    ) -> ExperienceNarration:
+        """Describe one experience, at the cost its class justifies (spec 22.4).
 
-        Spec 22.4 reserves detailed generation for major experiences; wiring
-        the LLM in here is a later concern. What matters structurally is that
-        the *class* decides the cost, and that nothing is written backwards
-        from a desired personality.
+        ``Routine`` は主に Python — routine and minor never reach the model at
+        all, which is what makes simulating years of ordinary life affordable.
+        Meaningful gets a light call; only major and turning points get a
+        detailed one.
+
+        A failed or unusable generation falls back to the plain description
+        rather than inventing something: a degraded life is still a life, and
+        spec 28.2 forbids committing unvalidated output.
         """
+        cost = experience.llm_cost
+        if cost == "none" or not self._narration_available:
+            return ExperienceNarration(summary=self._plain_summary(experience, scaffold))
+
+        template = self._prompts.get(NARRATION_PROMPT_ID)
+        content = template.render(
+            occurred_at=to_iso(occurred_at),
+            life_stage=scaffold.life_stage or "そのころ",
+            environment=scaffold.environment or "ふつうの暮らし",
+            education_context=scaffold.education_context or "とくに定まっていない",
+            experience_class=experience.experience_class,
+            tone="よい方向" if experience.valence >= 0 else "つらい方向",
+            interests="、".join(seed.interests) or "まだはっきりしない",
+            recent="\n".join(f"- {line}" for line in recent) or "- （とくにない）",
+        )
+        outcome = await self._structured.generate(
+            ExperienceNarration,
+            (LLMMessage(role="user", content=content),),
+            purpose=NARRATION_PURPOSE,
+            # Spec 33: the simulated past is P7 and yields to everything.
+            priority="P7",
+            prompt_id=NARRATION_PROMPT_ID,
+            prompt_version=template.prompt_version,
+            temperature=0.9 if cost == "detailed" else 0.7,
+            max_tokens=400 if cost == "detailed" else 200,
+        )
+        if not outcome.accepted or outcome.value is None:
+            self._narration_failures += 1
+            if not self._narration_available:
+                logger.warning(
+                    "narration failed %d times; the rest of this life is described "
+                    "without the model (spec 28.3)",
+                    self._narration_failures,
+                )
+            return ExperienceNarration(summary=self._plain_summary(experience, scaffold))
+        self._narration_failures = 0
+        return outcome.value
+
+    @property
+    def _narration_available(self) -> bool:
+        """Stop asking once the model has clearly stopped answering.
+
+        A degraded run still produces a life — every experience still goes
+        through the full psychology pipeline — it is simply described plainly
+        rather than narrated (spec 28.3).
+        """
+        return self._narration_failures < MAX_NARRATION_FAILURES
+
+    @staticmethod
+    def _plain_summary(experience, scaffold: LifeScaffold) -> str:
+        """What an ordinary day looks like without asking a model (spec 22.4)."""
         where = scaffold.environment or "そのころの暮らし"
         tone = "よかったこと" if experience.valence >= 0 else "つらかったこと"
         return f"{where}での{tone}（{experience.experience_class}）"

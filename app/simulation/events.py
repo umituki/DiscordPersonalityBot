@@ -26,6 +26,11 @@ class SimulatedExperiencePayload(EventPayload):
     valence: float = 0.0
     summary: str = ""
     text: str = ""
+    topics: tuple[str, ...] = ()
+    #: The model's own sense of how much this landed. A signal that the
+    #: encoding gate may read, never the final importance (spec 2.6).
+    felt_significance: float = 0.0
+    involves_other_person: bool = False
     #: Set when a ceiling demoted this experience (spec 22.4).
     demoted_from: str | None = None
 

@@ -237,6 +237,12 @@ class SimulationRepository:
         )
         return self.block(block_id)  # type: ignore[return-value]
 
+    def set_block_summary(self, block_id: str, summary: str) -> None:
+        self._db.execute(
+            "UPDATE simulation_blocks SET summary = ? WHERE block_id = ?",
+            (summary, block_id),
+        )
+
     def block(self, block_id: str) -> SimulationBlock | None:
         row = self._db.query_one(
             "SELECT * FROM simulation_blocks WHERE block_id = ?", (block_id,)
