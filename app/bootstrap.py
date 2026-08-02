@@ -56,6 +56,9 @@ from app.events.store import EventStore
 from app.consolidation.events import DEEP_CONSOLIDATION_REVIEW
 from app.conversation.engine import ConversationEngine
 from app.conversation.guard import OutputGuard, OutputGuardPolicy
+from app.grounding.claims import ClaimExtractor, ClaimGroundingGuard
+from app.grounding.context import GroundingContextBuilder
+from app.grounding.policy import GroundingPolicy
 from app.conversation.policy import ConversationPolicy
 from app.conversation.service import ConversationService
 from app.interfaces.discord.adapter import DiscordMessageAdapter
@@ -352,6 +355,7 @@ class Application:
         # --- static identity and conversation policy (spec 1.3, 40) ----------
         identity = load_identity(resolved_config.character_dir)
         guard_policy = OutputGuardPolicy.load(resolved_config.output_guard_policy_path)
+        grounding_policy = GroundingPolicy.load(resolved_config.grounding_policy_path)
         conversation_policy = ConversationPolicy.load(resolved_config.conversation_policy_path)
         memory_policy = MemoryPolicy.load(resolved_config.memory_policy_path)
         psychology_policy = PsychologyPolicy.load(resolved_config.psychology_policy_path)
@@ -376,6 +380,7 @@ class Application:
         components["llm_provider"] = resolved_config.llm.provider
         components["identity_version"] = identity.version_tag()
         components["output_guard_policy_version"] = str(guard_policy.policy_version)
+        components["grounding_policy_version"] = str(grounding_policy.policy_version)
         components["conversation_policy_version"] = str(conversation_policy.policy_version)
         components["memory_policy_version"] = str(memory_policy.policy_version)
         components["psychology_policy_version"] = str(psychology_policy.policy_version)
@@ -443,12 +448,17 @@ class Application:
         )
 
         guard = OutputGuard(guard_policy)
+        # Rebuild spec 15. The guard resolves claims; the builder assembles what
+        # they are resolved against. Both are wired here so the reply path has
+        # no way to run without them.
+        claim_guard = ClaimGroundingGuard(ClaimExtractor(grounding_policy))
         conversation_engine = ConversationEngine(
             identity=identity,
             prompts=prompts,
             structured=structured,
             guard=guard,
             policy=conversation_policy,
+            grounding=claim_guard,
             clock=resolved_clock,
         )
 
@@ -766,6 +776,17 @@ class Application:
                 appraisal=appraisal_engine,
                 event_store=event_store,
                 tools=tool_manager,
+                grounding=GroundingContextBuilder(
+                    events=event_store,
+                    activities=activity_repo,
+                    memories=memory_repo,
+                    beliefs=belief_repo,
+                    goals=goal_repo,
+                    tools=tool_manager,
+                    npcs=npc_repo,
+                    state=state_repo,
+                    clock=resolved_clock,
+                ),
                 tracer=conversation_tracer,
                 clock=resolved_clock,
             )

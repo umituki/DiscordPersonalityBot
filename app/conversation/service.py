@@ -38,6 +38,7 @@ from app.conversation.events import (
 )
 from app.conversation.policy import ConversationPolicy
 from app.events.model import Event
+from app.grounding.context import GroundingContextBuilder
 from app.observability.trace import ConversationTrace, ConversationTracer
 from app.interfaces.discord.adapter import DiscordMessageAdapter, IgnoreReason
 from app.memory.engine import MemoryEngine
@@ -97,6 +98,7 @@ class ConversationService:
         event_store: EventStore,
         appraisal: AppraisalEngine | None = None,
         tools: ToolManager | None = None,
+        grounding: GroundingContextBuilder | None = None,
         tracer: ConversationTracer | None = None,
         clock: Clock | None = None,
     ) -> None:
@@ -116,6 +118,9 @@ class ConversationService:
         #: In-flight post-send work (patch spec 5.4).
         self._background: set[asyncio.Task[None]] = set()
         self._tools = tools
+        #: Rebuild spec 15.1: what is actually known, assembled before the
+        #: reply exists so nothing the model writes can end up in it.
+        self._grounding = grounding
         #: Patch spec 19.2: where the USER's wait went, stage by stage. Optional
         #: because observability must never be a precondition for answering.
         self._tracer = tracer
@@ -213,6 +218,18 @@ class ConversationService:
                 )
             )
 
+        # Rebuild spec 15.1. Built here, from rows, before a single token of
+        # the reply exists — which is what makes GROUND-001 structural rather
+        # than a rule somebody has to remember.
+        grounding_context = None
+        if self._grounding is not None:
+            grounding_context = await asyncio.to_thread(
+                self._grounding.build,
+                now=event.occurred_at,
+                recalled=memories,
+                run_id=outcome.run.run_id,
+            )
+
         self._mark(trace, "reply_started_at")
         generation = await self._engine.draft_reply(
             trace=trace,
@@ -225,6 +242,7 @@ class ConversationService:
             run_id=outcome.run.run_id,
             event_id=event.event_id,
             tool_success_ids=tool_success_ids,
+            grounding=grounding_context,
         )
         self._mark(trace, "reply_ended_at")
 

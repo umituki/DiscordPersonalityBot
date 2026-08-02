@@ -252,6 +252,7 @@ def temp_config(tmp_path: Path) -> AppConfig:
     shutil.copytree(REPO_ROOT / "character", tmp_path / "character")
     for policy in (
         "output_guard.yaml",
+        "grounding.yaml",
         "conversation.yaml",
         "memory.yaml",
         "psychology.yaml",

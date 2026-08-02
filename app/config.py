@@ -115,6 +115,7 @@ class PromptsSection(_Section):
 class PoliciesSection(_Section):
     state_arbitration: str = "state_arbitration.yaml"
     output_guard: str = "output_guard.yaml"
+    grounding: str = "grounding.yaml"
     conversation: str = "conversation.yaml"
     memory: str = "memory.yaml"
     psychology: str = "psychology.yaml"
@@ -202,6 +203,10 @@ class AppConfig(_Section):
     @property
     def output_guard_policy_path(self) -> Path:
         return self.policies_dir / self.policies.output_guard
+
+    @property
+    def grounding_policy_path(self) -> Path:
+        return self.policies_dir / self.policies.grounding
 
     @property
     def conversation_policy_path(self) -> Path:

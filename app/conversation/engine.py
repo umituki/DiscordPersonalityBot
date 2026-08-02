@@ -26,6 +26,8 @@ from app.conversation.guard import OutputGuard
 from app.conversation.models import ConversationTurn, DialogueAct, ReplyDraft
 from app.conversation.quality import ConversationQualityGuard, QualityVerdict
 from app.conversation.text import looks_like_question
+from app.grounding.claims import ClaimGroundingGuard, GroundingVerdict
+from app.grounding.models import GroundingContext
 from app.memory.models import RetrievalCandidate
 from app.conversation.policy import ConversationPolicy
 from app.llm.prompts import PromptRegistry
@@ -43,6 +45,23 @@ def _mark(trace, stage: str) -> None:
     """Patch spec 19.2. Timing must never be able to break a reply."""
     if trace is not None:
         trace.mark(stage)
+
+
+def _log_rejection(
+    event_id: str | None, quality: QualityVerdict, grounded: GroundingVerdict
+) -> None:
+    if not quality.accepted:
+        logger.info(
+            "reply rejected by quality guard event_id=%s issues=%s",
+            event_id,
+            ",".join(quality.issues),
+        )
+    if not grounded.accepted:
+        logger.warning(
+            "reply makes unsupported claims event_id=%s kinds=%s",
+            event_id,
+            ",".join(item.claim.kind for item in grounded.blocking),
+        )
 
 
 PROMPT_ID = "conversation_reply"
@@ -70,8 +89,11 @@ class ReplyGeneration:
     expression: ExpressionContext = ExpressionContext()
     #: The last quality verdict, on whichever text is being returned.
     quality: QualityVerdict | None = None
-    #: True when the first draft was rejected by the quality guard and a repair
-    #: call produced the text being returned (patch spec 10).
+    #: Rebuild spec 15: what the claims in this text were resolved to.
+    grounding: GroundingVerdict | None = None
+    #: True when the first draft was rejected by the quality or grounding guard
+    #: and a repair call produced the text being returned (patch spec 10,
+    #: GROUND-002).
     repaired: bool = False
 
     @property
@@ -93,6 +115,7 @@ class ConversationEngine:
         guard: OutputGuard,
         policy: ConversationPolicy,
         quality: ConversationQualityGuard | None = None,
+        grounding: ClaimGroundingGuard | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._identity = identity
@@ -100,6 +123,10 @@ class ConversationEngine:
         self._structured = structured
         self._guard = guard
         self._policy = policy
+        #: Rebuild spec 15. Optional only so a caller that has no context to
+        #: resolve against can still draft; when it is absent no claim is
+        #: checked, which is why bootstrap always supplies one.
+        self._grounding = grounding
         #: Patch spec 10: a stage separate from the Output Guard. The Output
         #: Guard decides whether this may be said at all; this decides whether
         #: it is a reply a person would send.
@@ -124,6 +151,7 @@ class ConversationEngine:
         run_id: str | None = None,
         event_id: str | None = None,
         tool_success_ids: Sequence[str] = (),
+        grounding: GroundingContext | None = None,
         trace: "ConversationTrace | None" = None,
     ) -> ReplyGeneration:
         # Spec 16.1: decide what kind of response this is *before* writing it.
@@ -209,6 +237,7 @@ class ConversationEngine:
             run_id=run_id,
             event_id=event_id,
             tool_success_ids=tool_success_ids,
+            grounding=grounding,
         )
 
     # --- quality (patch spec 10) -------------------------------------------
@@ -223,29 +252,30 @@ class ConversationEngine:
         run_id: str | None,
         event_id: str | None,
         tool_success_ids: Sequence[str],
+        grounding: GroundingContext | None = None,
     ) -> ReplyGeneration:
         """Review the draft, and rewrite it at most once.
 
-        Patch spec 10: ``Guard reject時のみ conversation_repair を最大1回``. The
-        repair is a rewrite of the same intention, not a second draft — the
-        dialogue decision is not re-run, because the decision was not what was
-        wrong.
+        Patch spec 10: ``Guard reject時のみ conversation_repair を最大1回``, and
+        GROUND-002: ``Unsupported claim があれば 1 回のみ repair``. One budget
+        covers both, because both are the same rewrite of the same intention —
+        the dialogue decision is not re-run, since the decision was not what was
+        wrong. Failing either check after that rewrite suppresses the send
+        (GROUND-003).
         """
         text = generation.text or ""
-        verdict = self._quality.review(
+        quality = self._quality.review(
             text, acts=generation.acts, user_text=user_text, recent_turns=recent_turns
         )
-        if verdict.accepted:
-            return dataclasses.replace(generation, quality=verdict)
+        grounded = self._check_grounding(text, grounding)
+        if quality.accepted and grounded.accepted:
+            return dataclasses.replace(generation, quality=quality, grounding=grounded)
 
-        logger.info(
-            "reply rejected by quality guard event_id=%s issues=%s",
-            event_id,
-            ",".join(verdict.issues),
-        )
+        _log_rejection(event_id, quality, grounded)
         repaired = await self._repair(
             rejected_text=text,
-            verdict=verdict,
+            verdict=quality,
+            grounded=grounded,
             acts=generation.acts,
             user_text=user_text,
             recent_turns=recent_turns,
@@ -257,21 +287,38 @@ class ConversationEngine:
         )
 
         if repaired.accepted and repaired.value is not None:
+            second_text = repaired.value.text.strip()
             second = self._quality.review(
-                repaired.value.text.strip(),
+                second_text,
                 acts=generation.acts,
                 user_text=user_text,
                 recent_turns=recent_turns,
             )
-            if second.accepted:
+            second_grounded = self._check_grounding(second_text, grounding)
+            if second.accepted and second_grounded.accepted:
                 return dataclasses.replace(
-                    generation, outcome=repaired, quality=second, repaired=True
+                    generation,
+                    outcome=repaired,
+                    quality=second,
+                    grounding=second_grounded,
+                    repaired=True,
                 )
-            verdict = second
+            quality, grounded = second, second_grounded
 
         # One rewrite was the budget. Saying nothing is worse than a good
         # reply and better than one that contradicts its own decision
-        # (prohibition 9, and the existing `on_rejection: suppress` posture).
+        # (prohibition 9, and the existing `on_rejection: suppress` posture) —
+        # or than one that states something that never happened (GROUND-003).
+        if not grounded.accepted:
+            reason_code, detail, validator = (
+                grounded.reason_code,
+                grounded.describe(),
+                self._grounding.name if self._grounding else "claim_grounding_guard",
+            )
+        else:
+            reason_code = quality.issues[0] if quality.issues else "quality_rejected"
+            detail, validator = quality.detail, self._quality.name
+
         return dataclasses.replace(
             generation,
             outcome=dataclasses.replace(
@@ -280,20 +327,35 @@ class ConversationEngine:
                 value=None,
                 failure=ValidationFailure(
                     stage=Stage.SEMANTIC,
-                    reason_code=verdict.issues[0] if verdict.issues else "quality_rejected",
-                    detail=verdict.detail,
-                    validator=self._quality.name,
+                    reason_code=reason_code,
+                    detail=detail,
+                    validator=validator,
                 ),
             ),
-            quality=verdict,
+            quality=quality,
+            grounding=grounded,
             repaired=True,
         )
+
+    def _check_grounding(
+        self, text: str, context: GroundingContext | None
+    ) -> GroundingVerdict:
+        """Resolve this text's claims against what is known (spec 15.3).
+
+        With no guard or no context there is nothing to resolve against, and an
+        empty verdict accepts: the guard's job is to catch a claim that
+        contradicts the record, not to refuse to speak when there is no record.
+        """
+        if self._grounding is None or context is None:
+            return GroundingVerdict()
+        return self._grounding.review(text, context)
 
     async def _repair(
         self,
         *,
         rejected_text: str,
         verdict: QualityVerdict,
+        grounded: GroundingVerdict,
         acts: DialogueAct,
         user_text: str,
         recent_turns: Sequence[ConversationTurn],
@@ -311,7 +373,7 @@ class ConversationEngine:
             dialogue_acts=acts.render(),
             user_message=user_text,
             rejected_reply=rejected_text,
-            problems=self._quality.describe(verdict),
+            problems=self._describe_problems(verdict, grounded),
         )
         return await self._structured.generate(
             ReplyDraft,
@@ -333,6 +395,25 @@ class ConversationEngine:
             prompt_id=REPAIR_PROMPT_ID,
             prompt_version=template.prompt_version,
         )
+
+    def _describe_problems(
+        self, verdict: QualityVerdict, grounded: GroundingVerdict
+    ) -> str:
+        """What was wrong, for the rewrite. Never what to say instead.
+
+        An unsupported claim is described as unsupported, not corrected: the
+        repair call must not be handed a fact to assert, because the system does
+        not have one — that is the whole finding.
+        """
+        parts: list[str] = []
+        if not verdict.accepted:
+            parts.append(self._quality.describe(verdict))
+        if not grounded.accepted:
+            parts.append(
+                "裏づけのない事実を書いている。書かないか、断定をやめること:\n"
+                + grounded.describe()
+            )
+        return "\n".join(part for part in parts if part.strip())
 
     # --- dialogue acts (spec 16.1) -----------------------------------------
     async def _choose_acts(

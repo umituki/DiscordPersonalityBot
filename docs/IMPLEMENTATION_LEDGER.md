@@ -63,10 +63,10 @@ epoch row says `genesis_status=pending`.
 | APP-002 | The schema makes impossible values unreachable | `app/psychology/models.py` (`AgencyLabel`, `ValenceLabel`) | `test_agency_cannot_be_negative`, `test_an_invented_category_is_refused` | `test_degraded_appraisal_does_not_corrupt_state` | `test_an_off_scale_number_never_reaches_state` | `llm_calls` rows (`purpose='appraisal'`) | E2E_VERIFIED |
 | APP-003 | Category→numeric mapping is stable and lives in policy | `app/psychology/policy.py` (`AppraisalScales`), `config/policies/psychology.yaml` | `test_the_scale_does_not_depend_on_who_is_reading`, `test_a_scale_missing_a_label_is_refused` | `test_the_mapping_lives_in_the_policy_file` | `test_a_categorical_reading_drives_the_real_pipeline` | `config/policies/psychology.yaml` | E2E_VERIFIED |
 | APP-004 | 100 real-Ollama turns: parse/schema failure < 2%, uncaught exceptions 0 | — | — | — | — | — | NOT_STARTED (needs a real Ollama host) |
-| GROUND-001 | The model's own prose is never evidence | — | — | — | — | — | NOT_STARTED |
-| GROUND-002 | An unsupported claim gets one repair | — | — | — | — | — | NOT_STARTED |
-| GROUND-003 | A failed repair suppresses the send | — | — | — | — | — | NOT_STARTED |
-| GROUND-004 | An unsent draft is never encoded into memory | — | — | — | — | — | NOT_STARTED |
+| GROUND-001 | The model's own prose is never evidence | `app/grounding/context.py` (`SELF_AUTHORED_EVENT_TYPES`), `app/grounding/claims.py` | `test_yuis_own_sentence_is_not_evidence_for_itself`, `test_the_guard_cannot_reach_the_conversation` | `test_the_users_own_message_can_still_be_evidence` | `test_a_failed_repair_suppresses_the_send` | `failures` rows (`reason_code` starts `unsupported_`) | E2E_VERIFIED |
+| GROUND-002 | An unsupported claim gets one repair | `app/conversation/engine.py` (`_review_and_repair`) | `test_a_completed_activity_supports_the_claim` | `test_an_unsupported_claim_is_rewritten_once` | `test_an_unsupported_claim_is_rewritten_once` | `llm_calls` rows (`purpose='conversation_repair'`) | E2E_VERIFIED |
+| GROUND-003 | A failed repair suppresses the send | `app/conversation/engine.py`, `app/conversation/service.py` (`_suppress`) | `test_a_different_activity_does_not_support_it` | `test_a_failed_repair_suppresses_the_send` | `test_a_failed_repair_suppresses_the_send` | `YUI_REPLY_SUPPRESSED` events | E2E_VERIFIED |
+| GROUND-004 | An unsent draft is never encoded into memory | `app/conversation/service.py` (`_post_send_work` runs only from `confirm_sent`) | — | `test_a_suppressed_draft_leaves_no_trace` | `test_a_suppressed_draft_leaves_no_trace` | `episodic_memories` / `conversation_turns` | E2E_VERIFIED |
 | CORR-001 | A USER denial re-checks YUI's own previous claim | — | — | — | — | — | NOT_STARTED |
 | CORR-002 | Without evidence, retract rather than explain harder | — | — | — | — | — | NOT_STARTED |
 | CORR-003 | A retracted claim leaves Common Ground | — | — | — | — | — | NOT_STARTED |
