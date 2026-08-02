@@ -1,16 +1,26 @@
-"""Output Guard (spec 1.3, 28.2 identity stage, `.claude/rules/llm.md`).
+"""Output Guard (spec 1.3, 28.2 identity stage; rebuild spec 16).
 
-The guard is the last thing between a generated sentence and the USER. It runs
-at the IDENTITY stage of the validation pipeline and rejects:
+The guard is the last thing between a generated sentence and the USER, and
+rebuild spec 16 narrows what it is for: ``Hard Guard のみにする``. It detects
+things that must never reach a person no matter how well they are written —
 
-* claims of a human body or of physical action in the real world,
+* internal prompt or instruction leakage, and internal identifiers (spec 30),
+* chain-of-thought markers: the model's scaffolding, not its answer,
+* malformed JSON residue that survived extraction,
+* claims of a human body or of physical action in the real world (spec 1.3),
+* admin operations, secrets and credentials,
 * claims that a search or tool call succeeded when no Tool Manager result says
-  so (spec 17.3, 26),
-* leaked internal identifiers or prompt scaffolding (spec 30).
+  so (spec 17.3, 26).
 
-Rejection means silence, not a repaired sentence: it is better to say nothing
-than to say something that violates an immutable rule (spec 2.12). Patterns are
-policy, not code (spec 40).
+The sixth §16 detection — an unsupported claim surviving repair — is enforced
+where the repair budget lives, in :mod:`app.conversation.engine` with
+:class:`app.grounding.claims.ClaimGroundingGuard` (GROUND-003).
+
+What the guard is *not* for: ``「少し文章がぎこちない」程度を guard で書き換え
+ない``. Awkwardness is the realizer's problem, and a guard that reaches for
+prose is a guard nobody can reason about. Rejection here means silence, never a
+rewritten sentence — it is better to say nothing than to say something that
+violates an immutable rule (spec 2.12). Patterns are policy, not code (spec 40).
 """
 
 from __future__ import annotations
@@ -63,6 +73,22 @@ class OutputGuardPolicy(BaseModel):
     human_body: RuleSet
     tool_claim: RuleSet
     system_leak: RuleSet
+    #: Rebuild spec 16. Defaults so an older policy file still loads; the
+    #: shipped one names them explicitly.
+    reasoning_leak: RuleSet = RuleSet(reason_code="reasoning_leak")
+    format_residue: RuleSet = RuleSet(reason_code="format_residue")
+    secret_disclosure: RuleSet = RuleSet(reason_code="secret_disclosure")
+
+    @property
+    def unconditional_rules(self) -> tuple[RuleSet, ...]:
+        """Rules with no escape hatch: no framing makes these sayable."""
+        return (
+            self.human_body,
+            self.system_leak,
+            self.reasoning_leak,
+            self.format_residue,
+            self.secret_disclosure,
+        )
 
     @classmethod
     def load(cls, path: Path | str) -> OutputGuardPolicy:
@@ -103,7 +129,7 @@ class OutputGuard:
         if len(stripped) < limits.min_reply_chars:
             return self._fail("output_too_short", "reply is shorter than the minimum")
 
-        for rule in (self.policy.human_body, self.policy.system_leak):
+        for rule in self.policy.unconditional_rules:
             hit = _first_match(stripped, rule)
             if hit is not None:
                 return self._fail(rule.reason_code, f"matched {hit!r}")

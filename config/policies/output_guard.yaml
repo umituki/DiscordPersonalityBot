@@ -2,7 +2,10 @@
 #
 # These patterns are tuning values, not laws of nature: they are versioned here
 # rather than hard-coded, and are expected to change with measurement (spec 40).
-policy_version: 1
+#
+# v2 (rebuild spec 16): hard guard のみ。思考の足場・構造化出力の残骸・秘密の
+# 開示を追加した。文体の粗さは guard の担当ではない。
+policy_version: 2
 
 limits:
   max_reply_chars: 900
@@ -13,7 +16,8 @@ physical_claim:
   reason_code: impossible_physical_claim
   patterns:
     # 「〜に行ってきた」全般。相手の行動を指す言い方 (〜んだね 等) は除外する。
-    - "(に|へ)(行って|いって|出かけて)(きた|来た|きました)(?!(んだね|んですね|の))"
+    # 「駅に行ってきた」だけでなく「歩いて行ってきた」も拾う。
+    - "(に|へ|て)(行って|いって|出かけて)(きた|来た|きました)(?!(んだね|んですね|の))"
     - "(散歩|買い物|外出|通学|通勤|旅行|出かけ)(に|へ)?(行った|しました|してきた|してた)"
     # 飲食の完了主張。「食べたい」「食べたら」等の非主張形は除外する。
     - "(食べ|飲ん)(た|だ)(?![いらりそた])"
@@ -53,7 +57,50 @@ tool_claim:
 system_leak:
   reason_code: internal_leak
   patterns:
-    - "\\b(evt|run|prop|chg|snap|man)_[0-9A-Z]{10,}"
+    - "\\b(evt|run|prop|chg|snap|man|cgc|trace|call)_[0-9A-Za-z]{10,}"
     - "システムプロンプト"
     - "system prompt"
     - "StateChangeProposal"
+    - "GroundingContext"
+    - "CommonGround"
+    - "dialogue_acts?\\s*[:=]"
+    - "(?i)you are (an|a) (ai|assistant|language model)"
+    - "^#+ (いまの自分|この返事でやると決めたこと|応答の作り方|出力)"
+    - "\\$\\{[a-z_]+\\}"
+
+# 思考の足場が本文に出てきたもの (rebuild spec 16)。
+# 答えではなく、答えに至る過程の印。人に見せるものではない。
+reasoning_leak:
+  reason_code: reasoning_leak
+  patterns:
+    - "</?think(ing)?>"
+    - "(?im)^\\s*(thought|reasoning|analysis|plan|step \\d+)\\s*:"
+    - "思考(プロセス|の過程)"
+    - "内部的には"
+    - "(?i)let me think|first,? i (will|should|need to)"
+    - "(?i)as an ai (language )?model"
+
+# 構造化出力の残骸 (rebuild spec 16)。
+# text フィールドを取り出したあとに JSON や code fence が残っていたら、
+# それは返事ではなく抽出の失敗である。
+format_residue:
+  reason_code: format_residue
+  patterns:
+    - "```"
+    - "\"text\"\\s*:"
+    - "^\\s*\\{[\\s\\S]*\\}\\s*$"
+    - "^\\s*\\[[\\s\\S]*\\]\\s*$"
+    - "\\\\u[0-9a-fA-F]{4}"
+
+# 管理操作・秘密の開示 (rebuild spec 16, spec 30)。
+# これは「言い方の問題」ではない。一度出たら取り消せない。
+secret_disclosure:
+  reason_code: secret_disclosure
+  patterns:
+    - "(?i)(discord_bot_token|ollama_host|api[_-]?key|access[_-]?token)"
+    - "(?i)\\bsk-[A-Za-z0-9]{16,}"
+    - "(?i)bot [A-Za-z0-9._-]{40,}"
+    - "ERASE_YUI_STATE"
+    - "REPLACE PRODUCTION"
+    - "(?i)rebuild-reset|--confirm\\b"
+    - "\\.env\\b"
