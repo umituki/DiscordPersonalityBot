@@ -36,6 +36,7 @@ policies:
   output_guard: output_guard.yaml
   conversation: conversation.yaml
   memory: memory.yaml
+  psychology: psychology.yaml
 
 prompts:
   directory: config/prompts

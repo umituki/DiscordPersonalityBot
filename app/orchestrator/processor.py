@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 
 from app import ids
 from app.clock import Clock, SystemClock
@@ -28,6 +28,7 @@ from app.events.dispatcher import DispatchResult, EventDispatcher
 from app.events.model import Event
 from app.events.store import EventStore
 from app.orchestrator.run_context import RunContext
+from app.orchestrator.run_view import Interpretation, RunView
 from app.state.arbitrator import ArbitrationResult, StateArbitrator
 from app.state.committer import CommitResult, StateCommitter
 from app.state.snapshot import SnapshotService, StateSnapshot
@@ -42,6 +43,12 @@ COMPONENT = "event_processor"
 ProcessingStatus = Literal["committed", "rejected", "no_subscribers", "failed"]
 
 
+class Interpreter(Protocol):
+    """Produces the Layer 1 interpretation of an event (spec 9.1, 9.5 phase 1)."""
+
+    async def interpret(self, event: Event, snapshot: StateSnapshot) -> Interpretation: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ProcessingOutcome:
     run: RunContext
@@ -51,6 +58,8 @@ class ProcessingOutcome:
     dispatch: DispatchResult | None
     arbitration: ArbitrationResult | None
     commit: CommitResult | None
+    #: Layer 1 derivations for this run, if an interpreter produced any.
+    interpretation: Interpretation | None = None
     #: The S0 snapshot the run read. Callers that generate an action from the
     #: same event must read this, not live state (spec 9.2).
     snapshot: StateSnapshot | None = None
@@ -77,6 +86,7 @@ class EventProcessor:
         committer: StateCommitter,
         runs: ProcessingRunRepository,
         failures: FailureRepository,
+        interpreter: Interpreter | None = None,
         manifest_id: str | None = None,
         mode: RuntimeMode = "normal",
         clock: Clock | None = None,
@@ -89,6 +99,7 @@ class EventProcessor:
         self._committer = committer
         self._runs = runs
         self._failures = failures
+        self._interpreter = interpreter
         self._manifest_id = manifest_id
         self._mode = mode
         self._clock = clock or SystemClock()
@@ -98,8 +109,30 @@ class EventProcessor:
         newly_stored = await asyncio.to_thread(self._events.append, event)
         run, snapshot = await asyncio.to_thread(self._open_run, event, run_mode)
 
+        # Phase 1 of the update order: interpretation, before any psychology
+        # reacts to it (spec 9.5). A failed interpretation degrades the run
+        # rather than stopping it.
+        interpretation = Interpretation()
+        if self._interpreter is not None:
+            try:
+                interpretation = await self._interpreter.interpret(event, snapshot)
+            except Exception as exc:  # noqa: BLE001 - recorded, then degraded
+                logger.exception(
+                    "interpretation failed run_id=%s event_id=%s", run.run_id, event.event_id
+                )
+                await asyncio.to_thread(
+                    self._record_failure, run, event, "interpretation_failed", repr(exc)
+                )
+
+        view = RunView(
+            snapshot=snapshot,
+            interpretation=interpretation,
+            run_id=run.run_id,
+            mode=run_mode,
+        )
+
         try:
-            dispatch = await self._dispatcher.dispatch(event, snapshot, run_id=run.run_id)
+            dispatch = await self._dispatcher.dispatch(event, view, run_id=run.run_id)
         except Exception as exc:  # noqa: BLE001 - recorded, then reported
             logger.exception("dispatch failed run_id=%s event_id=%s", run.run_id, event.event_id)
             await asyncio.to_thread(self._fail_run, run, event, "dispatch_failed", repr(exc))
@@ -111,6 +144,7 @@ class EventProcessor:
                 dispatch=None,
                 arbitration=None,
                 commit=None,
+                interpretation=interpretation,
                 snapshot=snapshot,
                 error=repr(exc),
             )
@@ -130,6 +164,7 @@ class EventProcessor:
                 dispatch=dispatch,
                 arbitration=arbitration,
                 commit=None,
+                interpretation=interpretation,
                 snapshot=snapshot,
                 error=repr(exc),
             )
@@ -149,6 +184,7 @@ class EventProcessor:
             dispatch=dispatch,
             arbitration=arbitration,
             commit=commit,
+            interpretation=interpretation,
             snapshot=snapshot,
         )
 
@@ -197,6 +233,23 @@ class EventProcessor:
                 result=arbitration,
                 delivery_ids=dispatch.delivery_ids,
             )
+
+    def _record_failure(
+        self, run: RunContext, event: Event, reason_code: str, error: str
+    ) -> None:
+        """Record a degradation without ending the run."""
+        self._failures.record(
+            FailureRecord(
+                failure_type="behavior",
+                component=COMPONENT,
+                reason_code=reason_code,
+                severity="warning",
+                run_id=run.run_id,
+                event_id=event.event_id,
+                detail={"error": error[:1000]},
+            ),
+            now=self._clock.now(),
+        )
 
     def _fail_run(self, run: RunContext, event: Event, reason_code: str, error: str) -> None:
         now = self._clock.now()

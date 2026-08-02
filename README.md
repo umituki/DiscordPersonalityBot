@@ -8,8 +8,8 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 4
-（Context / Episode / Memory）まで**完了。Phase 5 以降は未着手。
+仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 5
+（Immediate Psychology）まで**完了。Phase 6 以降は未着手。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -18,7 +18,8 @@
 | 2 | Ollama structured LLM | 実装済み |
 | 3 | Basic Discord conversation + Output Guard | 実装済み |
 | 4 | Context / Episode / Memory | 実装済み |
-| 5+ | Psychology / Social / Agency / Life / Growth / Society / Genesis | 未着手 |
+| 5 | Immediate Psychology（Appraisal / Emotion / Mood / Needs） | 実装済み |
+| 6+ | Social / Agency / Life / Growth / Society / Genesis | 未着手 |
 
 ### Phase 1 で動作するパイプライン
 
@@ -74,6 +75,20 @@ Events
 Objective Archive（events）と Subjective Memory は分離されている。符号化されな
 かった出来事は、archive に残っていても思い出せない。
 
+### Phase 5 で動作する心理
+
+```text
+Event
+→ Appraisal（8 次元。LLM は候補、Python が採否と confidence 上限を決める）
+→ Emotion Engine  : 強度と持続を分離、複数同時可、閾値未満は「起きなかった」
+→ Mood Engine     : 感情より遅い。慣性と baseline 回帰を持つ別 state
+→ Need Engine     : 孤独と「一人でいたい」は独立に動く
+→ Proposal → Arbitration → 単一 transaction
+```
+
+同じ出来事が常に同じ感情になるわけではない。Appraisal が文脈で変わるため。
+LLM が使えないときは appraisal が既定値へ degrade し、状態は壊れない。
+
 主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
 
 ## セットアップ
@@ -114,11 +129,12 @@ app/
   conversation/  engine / guard / service / projection
   events/        Event model / store / bus / dispatcher
   memory/        segmentation / encoding / retrieval / forgetting / engine
+  psychology/    appraisal / emotion / mood / needs
   interfaces/    discord/ (adapter, dto, gateway)
   llm/           LLMClient / Ollama / prompts / structured / validation
   state/         proposal / snapshot / ownership / dependency_graph / arbitrator / committer / policy
   storage/       Database / migrations / repositories（SQL の唯一の境界）
-  orchestrator/  RunContext / EventProcessor
+  orchestrator/  RunContext / RunView / EventProcessor
   versioning/    RuntimeManifest
   observability/ logging
   resources/     static identity loading

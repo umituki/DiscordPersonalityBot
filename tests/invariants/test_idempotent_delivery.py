@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pytest
 
+from app.orchestrator.run_view import RunView
+
 from app.orchestrator.processor import EventProcessor
 from app.state.proposal import StateChangeProposal
 
@@ -88,14 +90,14 @@ async def test_delivery_not_completed_until_commit(
     event_store.append(event)
 
     # Dispatch only — this simulates the process dying before commit.
-    result = await dispatcher.dispatch(event, snapshots.capture(persist=False))
+    result = await dispatcher.dispatch(event, RunView(snapshot=snapshots.capture(persist=False)))
 
     assert result.delivery_ids  # the committer would have completed these
     assert deliveries.status_of(event.event_id, "emotion_engine") == "pending"
     assert deliveries.attempts_of(event.event_id, "emotion_engine") == 1
 
     # After restart the same event is offered again and is processed.
-    second = await dispatcher.dispatch(event, snapshots.capture(persist=False))
+    second = await dispatcher.dispatch(event, RunView(snapshot=snapshots.capture(persist=False)))
     assert [outcome.status for outcome in second.outcomes] == ["handled"]
     assert len(subscriber.calls) == 2
 
@@ -108,9 +110,9 @@ async def test_repeated_failures_become_permanent(
     event_store.append(event)
 
     for _ in range(4):
-        await dispatcher.dispatch(event, snapshots.capture(persist=False))
+        await dispatcher.dispatch(event, RunView(snapshot=snapshots.capture(persist=False)))
 
     assert deliveries.status_of(event.event_id, "emotion_engine") == "failed_permanent"
     # A permanently failed delivery is not silently retried forever.
-    outcome = await dispatcher.dispatch(event, snapshots.capture(persist=False))
+    outcome = await dispatcher.dispatch(event, RunView(snapshot=snapshots.capture(persist=False)))
     assert [item.status for item in outcome.outcomes] == ["skipped"]

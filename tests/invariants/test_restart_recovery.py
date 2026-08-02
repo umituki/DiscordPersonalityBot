@@ -18,6 +18,16 @@ def build(config: AppConfig, clock) -> Application:
     return Application.build(config, clock=clock, configure_logs=False)
 
 
+def replace_emotion_engine(application: Application, engine) -> None:
+    """Swap the real emotion engine for a deterministic stand-in.
+
+    ``emotion`` has exactly one writer (spec 9.3), so a test double has to take
+    the real engine's place rather than sit beside it.
+    """
+    application.bus.unregister("emotion_engine")
+    application.bus.register(engine, kind="psychology", order=20)
+
+
 class JoyEngine:
     name = "emotion_engine"
 
@@ -47,7 +57,7 @@ async def test_state_and_history_survive_restart(temp_config: AppConfig, clock, 
         domain="emotion", key="joy", value=0.3, confidence=None, now=clock.now(),
         run_id=None, event_id=None, expected_version=None,
     )
-    first.bus.register(JoyEngine())
+    replace_emotion_engine(first, JoyEngine())
     event = make_event()
     outcome = await first.processor.process(event)
     assert outcome.status == "committed"
@@ -70,14 +80,14 @@ async def test_event_is_not_reprocessed_after_restart(
         domain="emotion", key="joy", value=0.3, confidence=None, now=clock.now(),
         run_id=None, event_id=None, expected_version=None,
     )
-    first.bus.register(JoyEngine())
+    replace_emotion_engine(first, JoyEngine())
     event = make_event()
     await first.processor.process(event)
     first.db.close()
 
     second = build(temp_config, clock)
     engine = JoyEngine()
-    second.bus.register(engine)
+    replace_emotion_engine(second, engine)
     try:
         await second.processor.process(event)
         assert engine.calls == 0  # already consumed before the restart

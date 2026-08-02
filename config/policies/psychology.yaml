@@ -1,0 +1,81 @@
+# Immediate psychology policy (spec 11, 15.1, 40).
+#
+# 感情の減衰率・気分の慣性・欲求の変化量は科学的固定値ではない。
+# シミュレーションと評価で調整する対象としてここに置く。
+policy_version: 1
+
+appraisal:
+  # LLM が appraisal 候補を出せないときに使う既定値 (degraded 運転)
+  defaults:
+    self_relevance: 0.5
+    goal_congruence: 0.0
+    novelty: 0.2
+    certainty: 0.5
+    control: 0.5
+    agency: 0.5
+    social_meaning: 0.3
+    expectation_violation: 0.0
+  # LLM 自己申告 confidence はそのまま採用しない (spec 24)
+  max_trusted_confidence: 0.7
+
+emotion:
+  # appraisal 次元 → 感情への重み。同じ出来事が常に同じ感情になるわけではない
+  # ことは、appraisal 側の文脈依存性で担保する (spec 11.1)。
+  dimensions:
+    joy:
+      goal_congruence: 0.55
+      social_meaning: 0.25
+      self_relevance: 0.20
+    sadness:
+      goal_congruence: -0.55
+      control: -0.20
+      self_relevance: 0.15
+    anger:
+      goal_congruence: -0.35
+      control: 0.25
+      agency: -0.30
+    fear:
+      certainty: -0.35
+      control: -0.35
+      goal_congruence: -0.20
+    surprise:
+      expectation_violation: 0.60
+      novelty: 0.30
+    interest:
+      novelty: 0.50
+      self_relevance: 0.25
+      goal_congruence: 0.15
+    affection:
+      social_meaning: 0.50
+      goal_congruence: 0.25
+      self_relevance: 0.20
+  # この強度未満の感情は「起きなかった」ものとして扱う
+  activation_threshold: 0.12
+  max_intensity_change: 0.55
+  # 減衰は時間ベース。半減期 (分)
+  half_life_minutes: 45
+  # 同時に複数の感情が立ってよい (spec 11.2 mixed emotion)
+  max_concurrent: 3
+
+mood:
+  # 気分は感情より遅い。直近の感情の平均へゆっくり寄る (spec 11.3)
+  inertia: 0.90
+  max_change_per_event: 0.06
+  recent_emotion_window_minutes: 180
+  baseline_valence: 0.55
+  baseline_arousal: 0.40
+  # 気分は基準値へゆっくり戻る
+  return_rate_per_hour: 0.02
+
+needs:
+  # spec 15.1: 満足と不満は別軸。孤独と一人でいたい欲求は独立に高くなりうる。
+  relatedness_gain_per_interaction: 0.06
+  relatedness_decay_per_hour: 0.010
+  competence_gain_on_success: 0.04
+  autonomy_gain_on_self_initiated: 0.03
+  loneliness_gain_per_idle_hour: 0.012
+  loneliness_relief_per_interaction: 0.10
+  connection_desire_from_loneliness: 0.50
+  solitude_desire_gain_per_interaction: 0.02
+  solitude_desire_decay_per_hour: 0.03
+  max_change_per_event: 0.20

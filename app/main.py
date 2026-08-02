@@ -130,6 +130,11 @@ def _status(config_file: Path | None) -> int:
             "runs": application.runs.count(),
             "state_changes": application.state.change_count(),
             "state_domains": application.state.domains(),
+            "emotion": {
+                value.key: value.value for value in application.state.list_domain("emotion")
+            },
+            "mood": {value.key: value.value for value in application.state.list_domain("mood")},
+            "needs": {value.key: value.value for value in application.state.list_domain("needs")},
             "failures": application.failures.count(),
             "llm_model": config.llm.model,
             "llm_base_url": config.llm.base_url,

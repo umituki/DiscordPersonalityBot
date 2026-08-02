@@ -25,7 +25,8 @@ from app.state.arbitrator import StateArbitrator
 from app.state.committer import StateCommitter
 from app.state.policy import ArbitrationPolicy
 from app.state.proposal import StateChangeProposal
-from app.state.snapshot import SnapshotService, StateSnapshot
+from app.orchestrator.run_view import RunView
+from app.state.snapshot import SnapshotService
 from app.storage.database import Database
 from app.storage.migrations import migrate
 from app.storage.repositories import (
@@ -208,14 +209,18 @@ class RecordingSubscriber:
         self._raises = raises
         self._factory = proposal_factory
         self.calls: list[str] = []
-        self.seen_snapshots: list[StateSnapshot] = []
+        self.seen_views: list[RunView] = []
 
-    async def handle(self, event: Event, snapshot: StateSnapshot) -> SubscriberResult:
+    @property
+    def seen_snapshots(self):
+        return [view.snapshot for view in self.seen_views]
+
+    async def handle(self, event: Event, view: RunView) -> SubscriberResult:
         self.calls.append(event.event_id)
-        self.seen_snapshots.append(snapshot)
+        self.seen_views.append(view)
         if self._raises is not None:
             raise self._raises
-        proposals = self._factory(event, snapshot) if self._factory else self._proposals
+        proposals = self._factory(event, view) if self._factory else self._proposals
         return SubscriberResult(proposals=tuple(proposals))
 
 
@@ -230,7 +235,7 @@ def temp_config(tmp_path: Path) -> AppConfig:
     (tmp_path / "config" / "policies").mkdir(parents=True)
     shutil.copytree(REPO_ROOT / "config" / "prompts", tmp_path / "config" / "prompts")
     shutil.copytree(REPO_ROOT / "character", tmp_path / "character")
-    for policy in ("output_guard.yaml", "conversation.yaml", "memory.yaml"):
+    for policy in ("output_guard.yaml", "conversation.yaml", "memory.yaml", "psychology.yaml"):
         shutil.copy(
             REPO_ROOT / "config" / "policies" / policy,
             tmp_path / "config" / "policies" / policy,
@@ -242,4 +247,8 @@ def temp_config(tmp_path: Path) -> AppConfig:
         REPO_ROOT / "config" / "policies" / "state_arbitration.yaml",
         tmp_path / "config" / "policies" / "state_arbitration.yaml",
     )
-    return load_config(root_dir=tmp_path, env={}, use_dotenv=False)
+    config = load_config(root_dir=tmp_path, env={}, use_dotenv=False)
+    # No model host in tests: one attempt, no backoff waiting.
+    return config.model_copy(
+        update={"llm": config.llm.model_copy(update={"max_attempts": 1})}
+    )

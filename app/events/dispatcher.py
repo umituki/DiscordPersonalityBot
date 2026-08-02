@@ -23,8 +23,8 @@ from typing import Literal
 from app.clock import Clock, SystemClock
 from app.events.bus import EventBus, SubscriberResult
 from app.events.model import Event
+from app.orchestrator.run_view import RunView
 from app.state.proposal import StateChangeProposal
-from app.state.snapshot import StateSnapshot
 from app.storage.repositories.deliveries import DeliveryRepository
 from app.storage.repositories.failures import FailureRecord, FailureRepository
 
@@ -82,7 +82,7 @@ class EventDispatcher:
         self._timeout = subscriber_timeout_s
 
     async def dispatch(
-        self, event: Event, snapshot: StateSnapshot, *, run_id: str | None = None
+        self, event: Event, view: RunView, *, run_id: str | None = None
     ) -> DispatchResult:
         proposals: list[StateChangeProposal] = []
         derived: list[Event] = []
@@ -106,7 +106,7 @@ class EventDispatcher:
 
             try:
                 result = await asyncio.wait_for(
-                    subscription.subscriber.handle(event, snapshot), timeout=self._timeout
+                    subscription.subscriber.handle(event, view), timeout=self._timeout
                 )
             except asyncio.TimeoutError:
                 await self._record_failure(

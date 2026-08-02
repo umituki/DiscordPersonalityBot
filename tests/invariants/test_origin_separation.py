@@ -11,6 +11,8 @@ from datetime import timedelta
 
 import pytest
 
+from app.orchestrator.run_view import RunView
+
 from app.events.model import Event, SystemStartedPayload
 from tests.conftest import SignalPayload
 
@@ -84,12 +86,12 @@ async def test_admin_and_system_events_bypass_psychology(
         clock=clock,
     )
     event_store.append(system_event)
-    await dispatcher.dispatch(system_event, snapshots.capture(persist=False))
+    await dispatcher.dispatch(system_event, RunView(snapshot=snapshots.capture(persist=False)))
 
     assert psychology.calls == []
     assert observer.calls == [system_event.event_id]
 
     social_event = make_event()
     event_store.append(social_event)
-    await dispatcher.dispatch(social_event, snapshots.capture(persist=False))
+    await dispatcher.dispatch(social_event, RunView(snapshot=snapshots.capture(persist=False)))
     assert psychology.calls == [social_event.event_id]

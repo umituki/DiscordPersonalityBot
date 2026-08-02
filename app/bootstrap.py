@@ -35,6 +35,11 @@ from app.interfaces.discord.adapter import DiscordMessageAdapter
 from app.memory.engine import MemoryEngine
 from app.memory.policy import MemoryPolicy
 from app.memory.transcripts import ConversationTranscriptSource
+from app.psychology.appraisal import AppraisalEngine
+from app.psychology.emotion import EmotionEngine
+from app.psychology.mood import MoodEngine
+from app.psychology.needs import NeedEngine
+from app.psychology.policy import PsychologyPolicy
 from app.llm.client import TracedLLMClient
 from app.llm.ollama import OllamaClient
 from app.llm.prompts import PromptRegistry
@@ -95,6 +100,11 @@ class Application:
     memories: MemoryRepository
     memory: MemoryEngine
     memory_policy: MemoryPolicy
+    psychology_policy: PsychologyPolicy
+    appraisal: AppraisalEngine
+    emotion: EmotionEngine
+    mood: MoodEngine
+    needs: NeedEngine
     identity: Identity
     conversation_policy: ConversationPolicy
     guard: OutputGuard
@@ -175,6 +185,7 @@ class Application:
         guard_policy = OutputGuardPolicy.load(resolved_config.output_guard_policy_path)
         conversation_policy = ConversationPolicy.load(resolved_config.conversation_policy_path)
         memory_policy = MemoryPolicy.load(resolved_config.memory_policy_path)
+        psychology_policy = PsychologyPolicy.load(resolved_config.psychology_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -189,6 +200,7 @@ class Application:
         components["output_guard_policy_version"] = str(guard_policy.policy_version)
         components["conversation_policy_version"] = str(conversation_policy.policy_version)
         components["memory_policy_version"] = str(memory_policy.policy_version)
+        components["psychology_policy_version"] = str(psychology_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -258,6 +270,24 @@ class Application:
             clock=resolved_clock,
         )
 
+        # --- immediate psychology (spec 9.5 phases 1-2) ----------------------
+        appraisal_engine = AppraisalEngine(
+            identity=identity,
+            prompts=prompts,
+            structured=structured,
+            policy=psychology_policy.appraisal,
+            clock=resolved_clock,
+        )
+        emotion_engine = EmotionEngine(psychology_policy.emotion, clock=resolved_clock)
+        mood_engine = MoodEngine(psychology_policy.mood, clock=resolved_clock)
+        need_engine = NeedEngine(psychology_policy.needs, clock=resolved_clock)
+
+        # Update order matters: emotion, then mood (which reads emotion from
+        # S0), then needs (spec 9.5).
+        bus.register(emotion_engine, kind="psychology", order=20)
+        bus.register(mood_engine, kind="psychology", order=30)
+        bus.register(need_engine, kind="psychology", order=40)
+
         processor = EventProcessor(
             db=db,
             event_store=event_store,
@@ -267,6 +297,7 @@ class Application:
             committer=committer,
             runs=runs,
             failures=failures,
+            interpreter=appraisal_engine,
             manifest_id=manifest_record.manifest_id,
             mode=resolved_config.runtime.mode,
             clock=resolved_clock,
@@ -290,6 +321,7 @@ class Application:
                 failures=failures,
                 policy=conversation_policy,
                 memory=memory_engine,
+                appraisal=appraisal_engine,
                 clock=resolved_clock,
             )
         else:
@@ -325,6 +357,11 @@ class Application:
             memories=memory_repo,
             memory=memory_engine,
             memory_policy=memory_policy,
+            psychology_policy=psychology_policy,
+            appraisal=appraisal_engine,
+            emotion=emotion_engine,
+            mood=mood_engine,
+            needs=need_engine,
             identity=identity,
             conversation_policy=conversation_policy,
             guard=guard,

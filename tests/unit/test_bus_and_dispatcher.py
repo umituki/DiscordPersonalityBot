@@ -9,14 +9,16 @@ import pytest
 from app.events.bus import EventBus, SubscriberResult, SubscriptionError
 from app.events.dispatcher import EventDispatcher
 from app.events.store import EventStore
+from app.orchestrator.run_view import RunView
 from app.state.proposal import StateChangeProposal
 from app.state.snapshot import SnapshotService
 from app.storage.repositories.deliveries import DeliveryRepository
 from app.storage.repositories.failures import FailureRepository
 
 
-def _snapshot(snapshots: SnapshotService):
-    return snapshots.capture(persist=False)
+def _view(snapshots: SnapshotService) -> RunView:
+    """Engines are handed a RunView, never the live database (spec 9.2)."""
+    return RunView(snapshot=snapshots.capture(persist=False))
 
 
 def test_duplicate_registration_rejected(bus: EventBus, recording_subscriber) -> None:
@@ -73,7 +75,7 @@ async def test_dispatch_collects_proposals(
     subscriber = recording_subscriber("emotion_engine", (proposal,))
     bus.register(subscriber)
 
-    result = await dispatcher.dispatch(event, _snapshot(snapshots))
+    result = await dispatcher.dispatch(event, _view(snapshots))
 
     assert result.proposals == (proposal,)
     assert [outcome.status for outcome in result.outcomes] == ["handled"]
@@ -103,7 +105,7 @@ async def test_failing_subscriber_is_isolated_and_recorded(
     bus.register(recording_subscriber("broken", raises=RuntimeError("engine exploded")))
     bus.register(recording_subscriber("mood_engine", (proposal,)))
 
-    result = await dispatcher.dispatch(event, _snapshot(snapshots))
+    result = await dispatcher.dispatch(event, _view(snapshots))
 
     assert result.degraded
     assert {outcome.status for outcome in result.outcomes} == {"failed", "handled"}
@@ -140,7 +142,7 @@ async def test_slow_subscriber_times_out(
     event = make_event()
     event_store.append(event)
 
-    result = await dispatcher.dispatch(event, _snapshot(snapshots))
+    result = await dispatcher.dispatch(event, _view(snapshots))
 
     assert [outcome.status for outcome in result.outcomes] == ["timeout"]
     assert any(row["reason_code"] == "subscriber_timeout" for row in failures.recent())
@@ -164,7 +166,7 @@ async def test_invalid_subscriber_result_is_rejected(
     event = make_event()
     event_store.append(event)
 
-    result = await dispatcher.dispatch(event, _snapshot(snapshots))
+    result = await dispatcher.dispatch(event, _view(snapshots))
 
     assert [outcome.status for outcome in result.outcomes] == ["failed"]
     assert result.proposals == ()
@@ -189,7 +191,7 @@ async def test_subscriber_reads_the_snapshot_not_the_database(
     bus.register(subscriber)
     event = make_event()
     event_store.append(event)
-    snapshot = _snapshot(snapshots)
+    snapshot = _view(snapshots)
 
     # State moves after the snapshot was taken.
     state_repo.write_value(

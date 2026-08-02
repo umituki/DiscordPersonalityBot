@@ -102,6 +102,7 @@ class PoliciesSection(_Section):
     output_guard: str = "output_guard.yaml"
     conversation: str = "conversation.yaml"
     memory: str = "memory.yaml"
+    psychology: str = "psychology.yaml"
 
 
 class Secrets(_Section):
@@ -181,6 +182,10 @@ class AppConfig(_Section):
     @property
     def memory_policy_path(self) -> Path:
         return self.policies_dir / self.policies.memory
+
+    @property
+    def psychology_policy_path(self) -> Path:
+        return self.policies_dir / self.policies.psychology
 
     def _resolve(self, value: Path) -> Path:
         return value if value.is_absolute() else (self.root_dir / value)

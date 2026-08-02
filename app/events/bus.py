@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol, Sequence, runtime_checkable
 
 from app.events.model import NON_PSYCHOLOGICAL_CATEGORIES, Event
+from app.orchestrator.run_view import RunView
 from app.state.proposal import StateChangeProposal
-from app.state.snapshot import StateSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +50,8 @@ class Subscriber(Protocol):
 
     name: str
 
-    async def handle(self, event: Event, snapshot: StateSnapshot) -> SubscriberResult:
-        """React to ``event`` reading only ``snapshot`` for state (spec 9.2)."""
+    async def handle(self, event: Event, view: RunView) -> SubscriberResult:
+        """React to ``event``, reading state only from ``view`` (spec 9.2)."""
 
 
 @dataclass(frozen=True, slots=True)

@@ -39,6 +39,7 @@ from app.conversation.policy import ConversationPolicy
 from app.events.model import Event
 from app.interfaces.discord.adapter import DiscordMessageAdapter, IgnoreReason
 from app.memory.engine import MemoryEngine
+from app.psychology.appraisal import AppraisalEngine
 from app.interfaces.discord.dto import InboundMessage, OutboundMessage
 from app.orchestrator.processor import EventProcessor, ProcessingOutcome
 from app.storage.repositories.conversations import ConversationRepository
@@ -77,6 +78,7 @@ class ConversationService:
         failures: FailureRepository,
         policy: ConversationPolicy,
         memory: MemoryEngine | None = None,
+        appraisal: AppraisalEngine | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._processor = processor
@@ -86,6 +88,7 @@ class ConversationService:
         self._failures = failures
         self._policy = policy
         self._memory = memory
+        self._appraisal = appraisal
         self._clock = clock or SystemClock()
 
     # --- inbound -----------------------------------------------------------
@@ -95,14 +98,24 @@ class ConversationService:
             return ConversationResult(accepted=False, ignored_reason=decision.reason)
 
         event = decision.event
-        outcome = await self._processor.process(event)
-
         conversation = await asyncio.to_thread(
             self._conversations.ensure_conversation,
             channel_id=message.channel_id,
             channel_type=message.channel_type,
             now=event.occurred_at,
         )
+        # Recent history is read before the run so appraisal can use it: an
+        # event is read in context, not in isolation (spec 11.1).
+        recent = await asyncio.to_thread(
+            self._conversations.recent_turns,
+            conversation.conversation_id,
+            limit=self._policy.context.recent_turn_limit,
+        )
+        if self._appraisal is not None:
+            self._appraisal.set_recent_turns(recent)
+
+        outcome = await self._processor.process(event)
+
         await asyncio.to_thread(
             self._conversations.record_turn,
             conversation_id=conversation.conversation_id,
@@ -112,12 +125,6 @@ class ConversationService:
             content=event.payload.text,
             occurred_at=event.occurred_at,
             message_ref=str(message.message_id),
-        )
-        recent = await asyncio.to_thread(
-            self._conversations.recent_turns,
-            conversation.conversation_id,
-            limit=self._policy.context.recent_turn_limit,
-            exclude_event_id=event.event_id,
         )
 
         memories = ()
