@@ -59,10 +59,10 @@ epoch row says `genesis_status=pending`.
 
 | Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
 |---|---|---|---|---|---|---|---|
-| APP-001 | Appraisal output is meaning categories, not raw floats | — | — | — | — | — | NOT_STARTED |
-| APP-002 | The schema makes impossible values unreachable | — | — | — | — | — | NOT_STARTED |
-| APP-003 | Category→numeric mapping is stable and lives in policy | — | — | — | — | — | NOT_STARTED |
-| APP-004 | 100 real-Ollama turns: parse/schema failure < 2%, uncaught exceptions 0 | — | — | — | — | — | NOT_STARTED |
+| APP-001 | Appraisal output is meaning categories, not raw floats | `app/psychology/models.py` (`AppraisalCandidate`), `app/psychology/appraisal.py`, `config/prompts/appraisal/v2.md` | `test_a_number_is_not_an_appraisal_answer`, `test_a_candidate_maps_to_every_dimension` | `test_appraisal_reads_the_event` | `test_a_categorical_reading_drives_the_real_pipeline` | `config/prompts/appraisal/v2.md` | E2E_VERIFIED |
+| APP-002 | The schema makes impossible values unreachable | `app/psychology/models.py` (`AgencyLabel`, `ValenceLabel`) | `test_agency_cannot_be_negative`, `test_an_invented_category_is_refused` | `test_degraded_appraisal_does_not_corrupt_state` | `test_an_off_scale_number_never_reaches_state` | `llm_calls` rows (`purpose='appraisal'`) | E2E_VERIFIED |
+| APP-003 | Category→numeric mapping is stable and lives in policy | `app/psychology/policy.py` (`AppraisalScales`), `config/policies/psychology.yaml` | `test_the_scale_does_not_depend_on_who_is_reading`, `test_a_scale_missing_a_label_is_refused` | `test_the_mapping_lives_in_the_policy_file` | `test_a_categorical_reading_drives_the_real_pipeline` | `config/policies/psychology.yaml` | E2E_VERIFIED |
+| APP-004 | 100 real-Ollama turns: parse/schema failure < 2%, uncaught exceptions 0 | — | — | — | — | — | NOT_STARTED (needs a real Ollama host) |
 | GROUND-001 | The model's own prose is never evidence | — | — | — | — | — | NOT_STARTED |
 | GROUND-002 | An unsupported claim gets one repair | — | — | — | — | — | NOT_STARTED |
 | GROUND-003 | A failed repair suppresses the send | — | — | — | — | — | NOT_STARTED |

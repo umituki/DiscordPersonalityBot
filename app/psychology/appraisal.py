@@ -170,17 +170,17 @@ class AppraisalEngine:
             return self._policy.defaults.as_appraisal(source="degraded")
 
         candidate = outcome.value
+        # Rebuild spec APP-001: the model named the meaning; Python owns what
+        # that name is worth. The scale is fixed policy and does not consult
+        # the personality or the mood reading the event (APP-003).
+        scales = self._policy.scales
         return Appraisal(
-            self_relevance=candidate.self_relevance,
-            goal_congruence=candidate.goal_congruence,
-            novelty=candidate.novelty,
-            certainty=candidate.certainty,
-            control=candidate.control,
-            agency=candidate.agency,
-            social_meaning=candidate.social_meaning,
-            expectation_violation=candidate.expectation_violation,
+            **scales.as_dimensions(candidate),
             # Spec 24: the model's own confidence is a signal, and it is capped.
-            confidence=min(candidate.confidence, self._policy.max_trusted_confidence),
+            confidence=min(
+                scales.value("confidence", candidate.confidence),
+                self._policy.max_trusted_confidence,
+            ),
             source="llm",
             reason=candidate.reason[:200],
         )

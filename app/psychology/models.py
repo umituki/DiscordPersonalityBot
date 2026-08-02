@@ -21,6 +21,34 @@ APPRAISAL_DIMENSIONS: tuple[str, ...] = (
     "expectation_violation",
 )
 
+#: Rebuild spec APP-001. The model no longer emits numbers. It names the
+#: *meaning* it read, on a scale a person could defend, and Python turns that
+#: name into the number the engines work with.
+#:
+#: Asking a language model for ``goal_congruence: -0.37`` invites two failures
+#: at once: it invents a precision it does not have, and it can produce values
+#: that are not on the scale at all (APP-002 — a negative ``agency``). A closed
+#: set of labels makes both impossible before validation even runs.
+MagnitudeLabel = Literal["low", "medium", "high"]
+ValenceLabel = Literal[
+    "strong_negative", "negative", "neutral", "positive", "strong_positive"
+]
+AgencyLabel = Literal["self", "mixed", "other", "situation"]
+
+#: Which scale each dimension is read on. This is structure, not tuning: a
+#: dimension does not change its kind. The numbers each label maps to are
+#: tuning, and live in the policy file (APP-001).
+DIMENSION_SCALES: dict[str, str] = {
+    "self_relevance": "magnitude",
+    "goal_congruence": "valence",
+    "novelty": "magnitude",
+    "certainty": "magnitude",
+    "control": "magnitude",
+    "agency": "agency",
+    "social_meaning": "valence",
+    "expectation_violation": "magnitude",
+}
+
 #: Spec 11.2: emotions are named states with intensity *and* duration.
 EmotionName = Literal[
     "joy", "sadness", "anger", "fear", "surprise", "interest", "affection"
@@ -79,20 +107,30 @@ class Appraisal(BaseModel):
 
 
 class AppraisalCandidate(BaseModel):
-    """Structured output asked of the model (spec 11.1: a candidate, not state)."""
+    """Structured output asked of the model (spec 11.1: a candidate, not state).
+
+    Rebuild spec APP-001: meaning categories only. Every field is a closed set
+    of labels, so an off-scale answer is a schema failure rather than a number
+    that quietly poisons the emotion weights.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    self_relevance: float = Field(ge=0.0, le=1.0)
-    goal_congruence: float = Field(ge=-1.0, le=1.0)
-    novelty: float = Field(ge=0.0, le=1.0)
-    certainty: float = Field(ge=0.0, le=1.0)
-    control: float = Field(ge=0.0, le=1.0)
-    agency: float = Field(ge=0.0, le=1.0)
-    social_meaning: float = Field(ge=-1.0, le=1.0)
-    expectation_violation: float = Field(ge=0.0, le=1.0)
-    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    self_relevance: MagnitudeLabel
+    goal_congruence: ValenceLabel
+    novelty: MagnitudeLabel
+    certainty: MagnitudeLabel
+    control: MagnitudeLabel
+    agency: AgencyLabel
+    social_meaning: ValenceLabel
+    expectation_violation: MagnitudeLabel
+    confidence: MagnitudeLabel = "medium"
     reason: str = ""
+
+    def label(self, dimension: str) -> str:
+        if dimension not in DIMENSION_SCALES:
+            raise KeyError(f"unknown appraisal dimension: {dimension!r}")
+        return str(getattr(self, dimension))
 
 
 class EmotionEpisode(BaseModel):

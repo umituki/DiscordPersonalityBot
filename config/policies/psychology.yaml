@@ -17,6 +17,31 @@ appraisal:
     expectation_violation: 0.0
   # LLM 自己申告 confidence はそのまま採用しない (spec 24)
   max_trusted_confidence: 0.7
+  # 意味カテゴリ → 数値 (rebuild spec APP-001)。
+  # LLM は小数を出さない。意味の名前だけを出し、数値化は Python が行う。
+  # APP-003: この尺度は人格や気分で動かさない。安定した物差しである。
+  scales:
+    magnitude:
+      low: 0.15
+      medium: 0.50
+      high: 0.85
+    valence:
+      strong_negative: -0.85
+      negative: -0.45
+      neutral: 0.0
+      positive: 0.45
+      strong_positive: 0.85
+    # 1.0 = 自分が引き起こした, 0.0 = 完全に相手の側。
+    # situation は other より少し上: 誰が選んだわけでもない。
+    agency:
+      self: 0.90
+      mixed: 0.55
+      other: 0.15
+      situation: 0.30
+    confidence:
+      low: 0.25
+      medium: 0.50
+      high: 0.80
 
 emotion:
   # appraisal 次元 → 感情への重み。同じ出来事が常に同じ感情になるわけではない

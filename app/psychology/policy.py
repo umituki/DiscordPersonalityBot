@@ -6,9 +6,16 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.psychology.models import Appraisal
+from app.psychology.models import (
+    DIMENSION_SCALES,
+    AgencyLabel,
+    Appraisal,
+    AppraisalCandidate,
+    MagnitudeLabel,
+    ValenceLabel,
+)
 
 
 class PsychologyPolicyError(RuntimeError):
@@ -17,6 +24,85 @@ class PsychologyPolicyError(RuntimeError):
 
 class _Frozen(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+def _labels(annotation) -> tuple[str, ...]:
+    return tuple(str(value) for value in annotation.__args__)
+
+
+class AppraisalScales(_Frozen):
+    """What each meaning category is worth (rebuild spec APP-001).
+
+    The model names the meaning; this turns the name into the number. Keeping
+    the numbers here rather than in the prompt means the scale can be retuned
+    against evaluation runs without touching what the model is asked.
+
+    APP-003: there is exactly one of these, loaded once. The scale must not
+    bend to the personality reading the event — a ``high`` self-relevance means
+    the same thing on a bad day as on a good one, and it is the appraisal's
+    *input* that carries the context, not the ruler.
+    """
+
+    magnitude: dict[str, float] = Field(
+        default_factory=lambda: {"low": 0.15, "medium": 0.50, "high": 0.85}
+    )
+    valence: dict[str, float] = Field(
+        default_factory=lambda: {
+            "strong_negative": -0.85,
+            "negative": -0.45,
+            "neutral": 0.0,
+            "positive": 0.45,
+            "strong_positive": 0.85,
+        }
+    )
+    #: 1.0 = brought about by YUI herself, 0.0 = entirely someone else's doing.
+    #: ``situation`` sits low but above ``other``: nobody chose it.
+    agency: dict[str, float] = Field(
+        default_factory=lambda: {
+            "self": 0.90,
+            "mixed": 0.55,
+            "other": 0.15,
+            "situation": 0.30,
+        }
+    )
+    confidence: dict[str, float] = Field(
+        default_factory=lambda: {"low": 0.25, "medium": 0.50, "high": 0.80}
+    )
+
+    @model_validator(mode="after")
+    def _covers_every_label(self) -> AppraisalScales:
+        expected = {
+            "magnitude": _labels(MagnitudeLabel),
+            "valence": _labels(ValenceLabel),
+            "agency": _labels(AgencyLabel),
+            "confidence": _labels(MagnitudeLabel),
+        }
+        for scale, labels in expected.items():
+            table: dict[str, float] = getattr(self, scale)
+            missing = [label for label in labels if label not in table]
+            if missing:
+                raise ValueError(f"scale {scale!r} has no value for: {', '.join(missing)}")
+            extra = [label for label in table if label not in labels]
+            if extra:
+                raise ValueError(f"scale {scale!r} has unknown labels: {', '.join(extra)}")
+        return self
+
+    def value(self, dimension: str, label: str) -> float:
+        """The number this dimension's label is worth."""
+        scale = DIMENSION_SCALES.get(dimension) if dimension != "confidence" else "confidence"
+        if scale is None:
+            raise KeyError(f"unknown appraisal dimension: {dimension!r}")
+        table: dict[str, float] = getattr(self, scale)
+        if label not in table:
+            raise KeyError(f"{dimension}: no value for category {label!r}")
+        return float(table[label])
+
+    def as_dimensions(self, candidate: AppraisalCandidate) -> dict[str, float]:
+        """Every dimension of a candidate, in numbers."""
+        return {
+            dimension: self.value(dimension, candidate.label(dimension))
+            for dimension in DIMENSION_SCALES
+        }
 
 
 class AppraisalDefaults(_Frozen):
@@ -74,6 +160,8 @@ class AppraisalPolicy(_Frozen):
     #: Spec 24: a model's self-reported confidence is capped, not trusted whole.
     max_trusted_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
     heuristic: HeuristicAppraisalRules = HeuristicAppraisalRules()
+    #: Rebuild spec APP-001: meaning category -> number.
+    scales: AppraisalScales = AppraisalScales()
 
 
 class EmotionPolicy(_Frozen):

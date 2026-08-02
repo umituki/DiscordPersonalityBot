@@ -94,19 +94,24 @@ def appraisal_engine(prompt_registry, psychology_policy, clock):
 
 
 VALID_APPRAISAL = (
-    '{"self_relevance": 0.8, "goal_congruence": 0.6, "novelty": 0.4, "certainty": 0.7, '
-    '"control": 0.6, "agency": 0.3, "social_meaning": 0.7, "expectation_violation": 0.1, '
-    '"confidence": 0.95, "reason": "ひさしぶりに話しかけられた"}'
+    '{"self_relevance": "high", "goal_congruence": "positive", "novelty": "medium", '
+    '"certainty": "high", "control": "medium", "agency": "other", '
+    '"social_meaning": "strong_positive", "expectation_violation": "low", '
+    '"confidence": "high", "reason": "ひさしぶりに話しかけられた"}'
 )
 
 
-async def test_appraisal_reads_the_event(appraisal_engine, make_event, snapshots) -> None:
+async def test_appraisal_reads_the_event(
+    appraisal_engine, make_event, snapshots, psychology_policy
+) -> None:
     engine = appraisal_engine([VALID_APPRAISAL])
     interpretation = await engine.interpret(make_event(), snapshots.capture(persist=False))
 
     appraisal = interpretation.appraisal
+    scales = psychology_policy.appraisal.scales
     assert appraisal.source == "llm"
-    assert appraisal.self_relevance == 0.8
+    assert appraisal.self_relevance == scales.value("self_relevance", "high")
+    assert appraisal.social_meaning == scales.value("social_meaning", "strong_positive")
     assert appraisal.reason
 
 
