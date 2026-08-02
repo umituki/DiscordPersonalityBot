@@ -1,0 +1,38 @@
+# Historical knowledge / exposure tuning values (spec 21, 40).
+policy_version: 1
+
+builder:
+  # A knowledge candidate without an availability date cannot be checked
+  # against the past, so it is rejected rather than defaulted.
+  require_available_from: true
+  # Coverage jobs produce candidates in bounded batches.
+  max_candidates_per_job: 200
+  default_truth_confidence: 0.5
+  # Interest-driven knowledge is the only class allowed to be deep and narrow;
+  # the rest is what anybody in that environment would have brushed against.
+  interest_salience_bonus: 0.25
+
+exposure:
+  # Spec 21.5. Every threshold is a place where "the world knew it" stops
+  # being "she knew it".
+  reach_threshold: 0.30
+  attention_threshold: 0.35
+  attention_from_salience: 0.45
+  attention_from_interest: 0.55
+  curiosity_threshold: 0.35
+  curiosity_from_interest: 0.60
+  comprehension_threshold: 0.40
+  comprehension_from_interest: 0.20
+  comprehension_penalty_from_complexity: 0.55
+  encoding_threshold: 0.45
+  encoding_from_attention: 0.40
+  encoding_from_comprehension: 0.40
+  encoding_from_novelty: 0.20
+  retention_threshold: 0.35
+
+retention:
+  # Knowledge fades like memory does: it becomes unavailable, not untrue.
+  fade_per_year_stable: 0.02
+  fade_per_year_changeable: 0.08
+  fade_per_year_volatile: 0.20
+  forgotten_below: 0.15

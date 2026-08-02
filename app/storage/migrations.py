@@ -1019,6 +1019,120 @@ _0010_SOCIETY = Migration(
 )
 
 
+_0011_KNOWLEDGE = Migration(
+    version=11,
+    name="historical_knowledge",
+    statements=(
+        # Spec 21.1: where a claim came from is part of the claim.
+        """
+        CREATE TABLE knowledge_sources (
+            source_id    TEXT PRIMARY KEY,
+            name         TEXT NOT NULL,
+            kind         TEXT NOT NULL DEFAULT 'reference',
+            url          TEXT,
+            published_at TEXT,
+            reliability  REAL NOT NULL DEFAULT 0.5,
+            created_at   TEXT NOT NULL
+        )
+        """,
+        # Spec 21.3: a knowledge candidate without its temporal fields cannot
+        # be checked against the past, so the columns are not optional extras.
+        """
+        CREATE TABLE external_knowledge (
+            knowledge_id  TEXT PRIMARY KEY,
+            statement     TEXT NOT NULL,
+            coverage_class TEXT NOT NULL,
+            topic         TEXT NOT NULL DEFAULT '',
+            geography     TEXT NOT NULL DEFAULT 'global',
+            language      TEXT NOT NULL DEFAULT 'ja',
+            available_from TEXT NOT NULL,
+            available_until TEXT,
+            valid_from    TEXT,
+            valid_until   TEXT,
+            source_published_at TEXT,
+            stability     TEXT NOT NULL DEFAULT 'CHANGEABLE',
+            truth_confidence REAL NOT NULL DEFAULT 0.5,
+            complexity    REAL NOT NULL DEFAULT 0.5,
+            salience      REAL NOT NULL DEFAULT 0.3,
+            source_id     TEXT REFERENCES knowledge_sources (source_id),
+            version       INTEGER NOT NULL DEFAULT 1,
+            created_at    TEXT NOT NULL,
+            UNIQUE (statement, available_from)
+        )
+        """,
+        "CREATE INDEX idx_knowledge_available ON external_knowledge (available_from)",
+        "CREATE INDEX idx_knowledge_class ON external_knowledge (coverage_class, topic)",
+        # Spec 21.3 / 31.8: what was believed true changes over time without
+        # rewriting what was believed before.
+        """
+        CREATE TABLE knowledge_versions (
+            version_id   TEXT PRIMARY KEY,
+            knowledge_id TEXT NOT NULL REFERENCES external_knowledge (knowledge_id),
+            version      INTEGER NOT NULL,
+            statement    TEXT NOT NULL,
+            valid_from   TEXT,
+            valid_until  TEXT,
+            truth_confidence REAL NOT NULL DEFAULT 0.5,
+            reason       TEXT NOT NULL DEFAULT '',
+            recorded_at  TEXT NOT NULL,
+            UNIQUE (knowledge_id, version)
+        )
+        """,
+        # Spec 21.5: existing in the world is only the first step. An
+        # opportunity is not knowledge, and being famous is not knowing.
+        """
+        CREATE TABLE knowledge_exposure_opportunities (
+            opportunity_id TEXT PRIMARY KEY,
+            knowledge_id  TEXT NOT NULL REFERENCES external_knowledge (knowledge_id),
+            occurred_at   TEXT NOT NULL,
+            channel       TEXT NOT NULL DEFAULT 'ambient',
+            salience      REAL NOT NULL DEFAULT 0.3,
+            reach         REAL NOT NULL DEFAULT 0.5,
+            stage_reached TEXT NOT NULL DEFAULT 'existed',
+            acquired      INTEGER NOT NULL DEFAULT 0,
+            reason        TEXT NOT NULL DEFAULT '',
+            simulation_block_id TEXT,
+            created_at    TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_exposure_time ON knowledge_exposure_opportunities (occurred_at)",
+        # Spec 21.1: the ONLY evidence that YUI knows something. A model that
+        # happens to have read the internet is not evidence about YUI.
+        """
+        CREATE TABLE knowledge_acquisitions (
+            acquisition_id TEXT PRIMARY KEY,
+            knowledge_id  TEXT NOT NULL REFERENCES external_knowledge (knowledge_id),
+            opportunity_id TEXT REFERENCES knowledge_exposure_opportunities (opportunity_id),
+            acquired_at   TEXT NOT NULL,
+            comprehension REAL NOT NULL DEFAULT 0.5,
+            retention     REAL NOT NULL DEFAULT 0.5,
+            status        TEXT NOT NULL DEFAULT 'retained',
+            semantic_memory_id TEXT,
+            origin        TEXT NOT NULL DEFAULT 'simulated_past',
+            UNIQUE (knowledge_id, acquired_at)
+        )
+        """,
+        "CREATE INDEX idx_acquisitions_knowledge ON knowledge_acquisitions (knowledge_id)",
+        # Spec 21.2: coverage is a job with a period and a class, so gaps are
+        # visible rather than silently absent.
+        """
+        CREATE TABLE historical_coverage_jobs (
+            job_id       TEXT PRIMARY KEY,
+            coverage_class TEXT NOT NULL,
+            period_start TEXT NOT NULL,
+            period_end   TEXT NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'pending',
+            requested_at TEXT NOT NULL,
+            completed_at TEXT,
+            produced_count INTEGER NOT NULL DEFAULT 0,
+            detail_json  TEXT NOT NULL DEFAULT '{}'
+        )
+        """,
+        "CREATE INDEX idx_coverage_status ON historical_coverage_jobs (status, coverage_class)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1030,6 +1144,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0008_VIRTUAL_LIFE,
     _0009_GROWTH,
     _0010_SOCIETY,
+    _0011_KNOWLEDGE,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

@@ -43,6 +43,7 @@ policies:
   world: world.yaml
   growth: growth.yaml
   society: society.yaml
+  knowledge: knowledge.yaml
 
 prompts:
   directory: config/prompts

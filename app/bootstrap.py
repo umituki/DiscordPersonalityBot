@@ -37,6 +37,9 @@ from app.events.bus import EventBus
 from app.events.dispatcher import EventDispatcher
 from app.events.model import Event, SystemStartedPayload, SystemStoppedPayload
 from app.epistemics.actions import EpistemicActionSelector
+from app.knowledge.builder import KnowledgeBuilder
+from app.knowledge.policy import KnowledgePolicy
+from app.knowledge.service import KnowledgeService
 from app.jobs.proactive import ProactiveEngine
 from app.jobs.scheduler import Scheduler
 from app.events.store import EventStore
@@ -85,21 +88,25 @@ from app.state.snapshot import SnapshotService
 from app.storage.database import Database
 from app.storage.migrations import LATEST_VERSION, migrate, schema_version, verify_schema
 from app.storage.repositories import (
+    AcquisitionRepository,
     ActivityRepository,
     AdaptationRepository,
     BeliefRepository,
     CandidateRepository,
     ConsolidationRepository,
+    CoverageJobRepository,
     DecisionRepository,
     ConversationRepository,
     DriftRepository,
     MemoryRepository,
     DeliveryRepository,
     EventRepository,
+    ExposureRepository,
     FailureRepository,
     GoalRepository,
     GroupRepository,
     JobRepository,
+    KnowledgeRepository,
     HabitRepository,
     LLMCallRepository,
     ManifestRepository,
@@ -178,6 +185,9 @@ class Application:
     values: ValueEngine
     drift: DriftMonitor
     consolidation: ConsolidationJob
+    knowledge_policy: KnowledgePolicy
+    knowledge_builder: KnowledgeBuilder
+    knowledge: KnowledgeService
     society_policy: SocietyPolicy
     society: SocietyService
     npc_relationships: NPCRelationshipEngine
@@ -280,6 +290,10 @@ class Application:
         group_repo = GroupRepository(db)
         social_link_repo = SocialLinkRepository(db)
         npc_interaction_repo = NPCInteractionRepository(db)
+        knowledge_repo = KnowledgeRepository(db)
+        exposure_repo = ExposureRepository(db)
+        acquisition_repo = AcquisitionRepository(db)
+        coverage_job_repo = CoverageJobRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
@@ -298,6 +312,7 @@ class Application:
         world_policy = WorldPolicy.load(resolved_config.world_policy_path)
         growth_policy = GrowthPolicy.load(resolved_config.growth_policy_path)
         society_policy = SocietyPolicy.load(resolved_config.society_policy_path)
+        knowledge_policy = KnowledgePolicy.load(resolved_config.knowledge_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -319,6 +334,7 @@ class Application:
         components["world_policy_version"] = str(world_policy.policy_version)
         components["growth_policy_version"] = str(growth_policy.policy_version)
         components["society_policy_version"] = str(society_policy.policy_version)
+        components["knowledge_policy_version"] = str(knowledge_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -488,6 +504,24 @@ class Application:
         )
         group_engine = GroupEngine(group_repo, society_policy, clock=resolved_clock)
 
+        # --- historical knowledge (spec 21) ----------------------------------
+        # The builder records what the world knew and when; the service is the
+        # only thing that may say YUI knows it, and only from an acquisition.
+        knowledge_builder = KnowledgeBuilder(
+            knowledge=knowledge_repo,
+            jobs=coverage_job_repo,
+            policy=knowledge_policy,
+            clock=resolved_clock,
+        )
+        knowledge_service = KnowledgeService(
+            knowledge=knowledge_repo,
+            exposures=exposure_repo,
+            acquisitions=acquisition_repo,
+            policy=knowledge_policy,
+            memory=memory_engine,
+            clock=resolved_clock,
+        )
+
         # Update order follows the layers: immediate psychology first, then the
         # adaptive layer that reads it (spec 9.1, 9.5).
         bus.register(emotion_engine, kind="psychology", order=20)
@@ -629,6 +663,9 @@ class Application:
             values=value_engine,
             drift=drift_monitor,
             consolidation=consolidation_job,
+            knowledge_policy=knowledge_policy,
+            knowledge_builder=knowledge_builder,
+            knowledge=knowledge_service,
             society_policy=society_policy,
             society=society_service,
             npc_relationships=npc_relationship_engine,

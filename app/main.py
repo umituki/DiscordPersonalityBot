@@ -175,6 +175,8 @@ def _status(config_file: Path | None) -> int:
                 for relationship in application.npc_relationships.all_relationships()[:5]
             },
             "groups": [group.name for group in application.society.groups_of_yui()],
+            "knowledge": application.knowledge.counts(),
+            "coverage_jobs": len(application.knowledge_builder.coverage_jobs()),
             "integrity": application.db.integrity_check(),
         }
     finally:
