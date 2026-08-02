@@ -106,6 +106,7 @@ class PoliciesSection(_Section):
     relationship: str = "relationship.yaml"
     belief_self: str = "belief_self.yaml"
     agency: str = "agency.yaml"
+    world: str = "world.yaml"
 
 
 class Secrets(_Section):
@@ -201,6 +202,10 @@ class AppConfig(_Section):
     @property
     def agency_policy_path(self) -> Path:
         return self.policies_dir / self.policies.agency
+
+    @property
+    def world_policy_path(self) -> Path:
+        return self.policies_dir / self.policies.world
 
     def _resolve(self, value: Path) -> Path:
         return value if value.is_absolute() else (self.root_dir / value)

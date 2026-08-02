@@ -32,9 +32,41 @@ _EXPORTS: dict[str, str] = {
     "SnapshotRepository": "snapshots",
     "StateRepository": "state",
     "ToolCallRepository": "tools",
+    "ActivityRepository": "world",
+    "JobRepository": "world",
+    "ProactiveRepository": "world",
+    "SleepRepository": "world",
+    "WorldHistoryRepository": "world",
 }
 
-__all__ = sorted(_EXPORTS)
+__all__ = [
+    "ActivityRepository",
+    "BeliefRepository",
+    "ConversationRepository",
+    "DecisionRepository",
+    "DeliveryDecision",
+    "DeliveryRepository",
+    "EventRepository",
+    "FailureRecord",
+    "FailureRepository",
+    "GoalRepository",
+    "HabitRepository",
+    "JobRepository",
+    "LLMCallRepository",
+    "ManifestRepository",
+    "MemoryRepository",
+    "PlanRepository",
+    "ProactiveRepository",
+    "ProcessingRunRepository",
+    "SelfRepository",
+    "SleepRepository",
+    "SnapshotRepository",
+    "StateRepository",
+    "ToolCallRepository",
+    "WorldHistoryRepository",
+]
+
+assert sorted(__all__) == sorted(_EXPORTS), "__all__ and _EXPORTS disagree"
 
 
 def __getattr__(name: str) -> Any:
@@ -67,3 +99,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.storage.repositories.social import BeliefRepository, SelfRepository
     from app.storage.repositories.state import StateRepository
     from app.storage.repositories.tools import ToolCallRepository
+    from app.storage.repositories.world import (
+        ActivityRepository,
+        JobRepository,
+        ProactiveRepository,
+        SleepRepository,
+        WorldHistoryRepository,
+    )

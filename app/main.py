@@ -146,6 +146,13 @@ def _status(config_file: Path | None) -> int:
             "beliefs": application.beliefs.held_beliefs().__len__(),
             "self_schemas": len(application.self_model.active_schemas()),
             "tools": list(application.tools.registry.names()),
+            "current_activity": (
+                None
+                if application.world.current_activity() is None
+                else application.world.current_activity().name
+            ),
+            "pending_jobs": len(application.scheduler.pending()),
+            "unanswered_contacts": application.proactive.unanswered(),
             "integrity": application.db.integrity_check(),
         }
     finally:

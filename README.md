@@ -8,7 +8,7 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 7（Agency）まで**完了。Phase 8 以降は未着手。
+仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 8（Virtual Life）まで**完了。Phase 9 以降は未着手。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -20,7 +20,8 @@
 | 5 | Immediate Psychology（Appraisal / Emotion / Mood / Needs） | 実装済み |
 | 6 | Social / Belief / Self | 実装済み |
 | 7 | Agency（Goals / Decision / Dialogue Act / Habits / Epistemics / Tools） | 実装済み |
-| 8+ | Virtual Life / Growth / Society / Genesis / Hardening | 未着手 |
+| 8 | Virtual Life（World / Activity / Sleep / Scheduler / Proactive） | 実装済み |
+| 9+ | Growth / Society / Genesis / Hardening | 未着手 |
 
 ### Phase 1 で動作するパイプライン
 
@@ -119,6 +120,20 @@ Dialogue Act  : 文章の前に「どう応じるか」を決めてから書く
 Epistemics    : 知らない ≠ 自動検索。相手が居れば聞く、失敗はしばらく再試行しない
 ```
 
+### Phase 8 で動作する仮想生活
+
+```text
+World Service : YUI が「いま何をしているか」の唯一の writer。
+                活動は開始と終了が別で、終了して初めて「起きたこと」になる
+Sleep         : 時計規則ではなく two-process（睡眠圧 × 概日リズム）＋
+                目標と会話による抵抗。抵抗は入眠を遅らせるが永久には防げない
+Catch-up      : 停止中の時間は捏造しない。上限付きで圧縮再構成するだけ
+Scheduler     : job は state を書かない。Opportunity を出すだけ。
+                再起動後も未処理 job は復元される
+Proactive     : 無返信が増えるほど送信間隔が伸びる（positive feedback の禁止）。
+                上限を超えると USER が話すまで一切送らない
+```
+
 主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
 
 ## セットアップ
@@ -162,6 +177,8 @@ app/
   psychology/    appraisal / emotion / mood / needs
   agency/        goals / plans / habits / decision
   epistemics/    epistemic action selection
+  world/         activity / sleep / world service（仮想生活の single writer）
+  jobs/          scheduler / proactive contact
   social/        relationship / attachment / user model / beliefs / self model
   tools/         Tool Manager / registry / builtin tools
   interfaces/    discord/ (adapter, dto, gateway)

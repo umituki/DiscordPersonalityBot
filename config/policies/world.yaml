@@ -1,0 +1,48 @@
+# Virtual life policy (spec 18, 19, 40).
+policy_version: 1
+
+sleep:
+  # spec 18.3: 人間生理の精密模倣ではなく、機能的な two-process 近似。
+  # Process S: 起きている間に溜まる睡眠圧
+  pressure_gain_per_awake_hour: 0.055
+  pressure_recovery_per_sleep_hour: 0.140
+  max_pressure: 1.0
+  # Process C: 概日リズム。UTC 基準の位相（0.0 = 深夜）
+  circadian_period_hours: 24.0
+  circadian_low_hour: 3.0
+  circadian_amplitude: 0.35
+  # 眠気は S と C の合成
+  sleepiness_from_pressure: 0.65
+  sleepiness_from_circadian: 0.35
+  sleep_threshold: 0.62
+  wake_threshold: 0.35
+  # 起床直後はぼんやりする
+  inertia_minutes: 25.0
+  typical_sleep_hours: 7.0
+  # 目標や会話は入眠を遅らせる（ただし無限には粘れない）
+  goal_resistance: 0.20
+  conversation_resistance: 0.35
+  max_resistance: 0.45
+
+world:
+  # オフライン復帰はぶんぶん回さず、意味のある遷移に圧縮する (spec 18.3)
+  catch_up_max_transitions: 24
+  catch_up_min_step_minutes: 30.0
+  default_location: 自室
+  default_activity: なにもしていない
+
+scheduler:
+  # spec 19: Scheduler は Opportunity を作るだけで、行動は実行しない
+  max_opportunities_per_tick: 5
+  window_grace_minutes: 15.0
+  default_misfire_policy: skip
+
+proactive:
+  # spec 19: 返事が来ないほど送信頻度が増える正のフィードバックを禁止する
+  min_hours_between_contacts: 6.0
+  max_unanswered: 2
+  # 未応答が続くほど間隔を延ばす（backoff）
+  unanswered_backoff_multiplier: 3.0
+  # 相手が起きていそうな時間帯（UTC）
+  quiet_hours_utc: [15, 22]
+  base_threshold: 0.55

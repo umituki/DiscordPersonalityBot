@@ -648,6 +648,93 @@ _0007_AGENCY = Migration(
 )
 
 
+_0008_VIRTUAL_LIFE = Migration(
+    version=8,
+    name="world_sleep_scheduler",
+    statements=(
+        # Spec 18.2: routine, plan, current activity and completed event are
+        # four different things. An activity row is a *fact about now* that
+        # becomes a completed fact only when it ends.
+        """
+        CREATE TABLE activities (
+            activity_id  TEXT PRIMARY KEY,
+            name         TEXT NOT NULL,
+            kind         TEXT NOT NULL,
+            location     TEXT,
+            plan_id      TEXT,
+            started_at   TEXT NOT NULL,
+            ended_at     TEXT,
+            status       TEXT NOT NULL DEFAULT 'ongoing',
+            outcome      TEXT,
+            origin       TEXT NOT NULL DEFAULT 'virtual_life'
+        )
+        """,
+        "CREATE INDEX idx_activities_status ON activities (status, started_at)",
+        # Spec 18.1: the objective world record, compressed to meaningful
+        # transitions rather than every tick (spec 8.3).
+        """
+        CREATE TABLE world_state_history (
+            entry_id     TEXT PRIMARY KEY,
+            recorded_at  TEXT NOT NULL,
+            transition   TEXT NOT NULL,
+            awake        INTEGER NOT NULL,
+            location     TEXT,
+            activity     TEXT,
+            detail_json  TEXT NOT NULL DEFAULT '{}'
+        )
+        """,
+        "CREATE INDEX idx_world_history_time ON world_state_history (recorded_at)",
+        # Spec 18.3: a functional two-process record, not a physiology sim.
+        """
+        CREATE TABLE sleep_episodes (
+            sleep_id     TEXT PRIMARY KEY,
+            started_at   TEXT NOT NULL,
+            ended_at     TEXT,
+            planned_wake_at TEXT,
+            sleep_pressure_at_onset REAL NOT NULL,
+            circadian_at_onset REAL NOT NULL,
+            quality      REAL,
+            interrupted  INTEGER NOT NULL DEFAULT 0,
+            reason       TEXT NOT NULL DEFAULT ''
+        )
+        """,
+        "CREATE INDEX idx_sleep_started ON sleep_episodes (started_at)",
+        # Spec 19: the scheduler produces opportunities, never actions.
+        """
+        CREATE TABLE scheduled_jobs (
+            job_id        TEXT PRIMARY KEY,
+            job_type      TEXT NOT NULL,
+            job_class     TEXT NOT NULL,
+            due_at        TEXT,
+            window_end    TEXT,
+            payload_json  TEXT NOT NULL DEFAULT '{}',
+            priority      TEXT NOT NULL DEFAULT 'P4',
+            status        TEXT NOT NULL DEFAULT 'pending',
+            misfire_policy TEXT NOT NULL DEFAULT 'skip',
+            expires_at    TEXT,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            last_fired_at TEXT,
+            attempts      INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        "CREATE INDEX idx_jobs_due ON scheduled_jobs (status, due_at)",
+        # Proactive contact history, so frequency can be governed by what
+        # actually happened rather than by hope (spec 19).
+        """
+        CREATE TABLE proactive_contacts (
+            contact_id   TEXT PRIMARY KEY,
+            opportunity  TEXT NOT NULL,
+            sent_at      TEXT NOT NULL,
+            answered_at  TEXT,
+            event_id     TEXT
+        )
+        """,
+        "CREATE INDEX idx_proactive_sent ON proactive_contacts (sent_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -656,6 +743,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0005_BELIEFS_SELF,
     _0006_TOOLS,
     _0007_AGENCY,
+    _0008_VIRTUAL_LIFE,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

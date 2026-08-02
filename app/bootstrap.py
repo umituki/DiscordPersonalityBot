@@ -31,6 +31,8 @@ from app.events.bus import EventBus
 from app.events.dispatcher import EventDispatcher
 from app.events.model import Event, SystemStartedPayload, SystemStoppedPayload
 from app.epistemics.actions import EpistemicActionSelector
+from app.jobs.proactive import ProactiveEngine
+from app.jobs.scheduler import Scheduler
 from app.events.store import EventStore
 from app.conversation.engine import ConversationEngine
 from app.conversation.guard import OutputGuard, OutputGuardPolicy
@@ -51,6 +53,8 @@ from app.social.beliefs import BeliefEngine
 from app.social.self_model import SelfEngine
 from app.tools.builtin import register_builtin_tools
 from app.tools.manager import ToolManager, ToolRegistry
+from app.world.policy import WorldPolicy
+from app.world.service import WorldService
 from app.social.policy import RelationshipPolicy
 from app.social.relationship import RelationshipEngine
 from app.social.user_model import SocialCognitionEngine
@@ -70,6 +74,7 @@ from app.state.snapshot import SnapshotService
 from app.storage.database import Database
 from app.storage.migrations import LATEST_VERSION, migrate, schema_version, verify_schema
 from app.storage.repositories import (
+    ActivityRepository,
     BeliefRepository,
     DecisionRepository,
     ConversationRepository,
@@ -78,15 +83,19 @@ from app.storage.repositories import (
     EventRepository,
     FailureRepository,
     GoalRepository,
+    JobRepository,
     HabitRepository,
     LLMCallRepository,
     ManifestRepository,
     PlanRepository,
+    ProactiveRepository,
     ProcessingRunRepository,
     SelfRepository,
+    SleepRepository,
     SnapshotRepository,
     StateRepository,
     ToolCallRepository,
+    WorldHistoryRepository,
 )
 from app.versioning.manifest import RuntimeManifest, ManifestService, base_components, detect_commit_hash
 
@@ -135,6 +144,10 @@ class Application:
     habits: HabitEngine
     decisions: DecisionEngine
     epistemics: EpistemicActionSelector
+    world_policy: WorldPolicy
+    world: WorldService
+    scheduler: Scheduler
+    proactive: ProactiveEngine
     appraisal: AppraisalEngine
     emotion: EmotionEngine
     mood: MoodEngine
@@ -215,6 +228,11 @@ class Application:
         plan_repo = PlanRepository(db)
         habit_repo = HabitRepository(db)
         decision_repo = DecisionRepository(db)
+        activity_repo = ActivityRepository(db)
+        sleep_repo = SleepRepository(db)
+        world_history_repo = WorldHistoryRepository(db)
+        job_repo = JobRepository(db)
+        proactive_repo = ProactiveRepository(db)
 
         # --- crash recovery (spec 32) ---------------------------------------
         interrupted = runs.mark_interrupted(now=resolved_clock.now())
@@ -230,6 +248,7 @@ class Application:
         relationship_policy = RelationshipPolicy.load(resolved_config.relationship_policy_path)
         belief_self_policy = BeliefSelfPolicy.load(resolved_config.belief_self_policy_path)
         agency_policy = AgencyPolicy.load(resolved_config.agency_policy_path)
+        world_policy = WorldPolicy.load(resolved_config.world_policy_path)
 
         # --- prompts (spec 38: versioned prompt files, never inline) ---------
         prompts = PromptRegistry.load(resolved_config.prompts_dir)
@@ -248,6 +267,7 @@ class Application:
         components["relationship_policy_version"] = str(relationship_policy.policy_version)
         components["belief_self_policy_version"] = str(belief_self_policy.policy_version)
         components["agency_policy_version"] = str(agency_policy.policy_version)
+        components["world_policy_version"] = str(world_policy.policy_version)
         components.update(prompts.manifest_components())
         manifest = RuntimeManifest(
             config_version=resolved_config.config_version,
@@ -345,6 +365,19 @@ class Application:
         register_builtin_tools(tool_registry, clock=resolved_clock)
         tool_manager = ToolManager(tool_registry, tool_call_repo, clock=resolved_clock)
 
+        # --- virtual life (spec 18, 19) --------------------------------------
+        world_service = WorldService(
+            activities=activity_repo,
+            sleeps=sleep_repo,
+            history=world_history_repo,
+            policy=world_policy,
+            clock=resolved_clock,
+        )
+        scheduler = Scheduler(job_repo, world_policy.scheduler, clock=resolved_clock)
+        proactive_engine = ProactiveEngine(
+            proactive_repo, world_policy.proactive, clock=resolved_clock
+        )
+
         # --- agency (spec 15, 17) --------------------------------------------
         goal_engine = GoalEngine(goal_repo, plan_repo, agency_policy.goals, clock=resolved_clock)
         habit_engine = HabitEngine(habit_repo, agency_policy.habits, clock=resolved_clock)
@@ -366,6 +399,8 @@ class Application:
         bus.register(relationship_engine, kind="psychology", order=50)
         bus.register(attachment_engine, kind="psychology", order=60)
         bus.register(social_cognition_engine, kind="psychology", order=70)
+        # The world is Layer 0 and is refreshed before anything interprets it.
+        bus.register(world_service, kind="system", order=10)
 
         processor = EventProcessor(
             db=db,
@@ -451,6 +486,10 @@ class Application:
             habits=habit_engine,
             decisions=decision_engine,
             epistemics=epistemic_selector,
+            world_policy=world_policy,
+            world=world_service,
+            scheduler=scheduler,
+            proactive=proactive_engine,
             appraisal=appraisal_engine,
             emotion=emotion_engine,
             mood=mood_engine,

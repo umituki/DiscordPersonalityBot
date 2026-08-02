@@ -32,6 +32,7 @@ pytestmark = pytest.mark.invariant
 #: Everything below the deep layer. Nothing outside this set may be committed
 #: by a single event (spec 9.1, 34.2-5).
 ADAPTIVE_AND_IMMEDIATE = {
+    "world",
     "emotion",
     "mood",
     "needs",
