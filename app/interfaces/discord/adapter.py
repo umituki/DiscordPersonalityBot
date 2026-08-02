@@ -64,24 +64,38 @@ class DiscordMessageAdapter:
     def owner_user_id(self) -> str:
         return self._owner_user_id
 
-    def admit(self, message: InboundMessage) -> InboundDecision:
-        """Decide whether a message is USER conversation, and build its event."""
+    def rejection_reason(self, message: InboundMessage) -> IgnoreReason | None:
+        """Why this message is not USER conversation, or ``None`` if it is.
+
+        Pure and side-effect free, so the interface can ask before committing to
+        anything — the typing indicator needs the answer before the work starts
+        (patch spec 6.1), and minting an event just to ask would put two event
+        ids in play for one message.
+        """
         if message.author_is_bot:
-            return self._ignore(message, IgnoreReason.BOT_AUTHOR)
+            return IgnoreReason.BOT_AUTHOR
         if str(message.author_id) != self._owner_user_id:
             # Spec 1.2 / 2.10: only one real USER exists. Anyone else is not an
             # NPC either — they are simply not part of YUI's world.
-            return self._ignore(message, IgnoreReason.NOT_THE_USER)
+            return IgnoreReason.NOT_THE_USER
         if self._allowed_channel_ids and str(message.channel_id) not in self._allowed_channel_ids:
-            return self._ignore(message, IgnoreReason.CHANNEL_NOT_ALLOWED)
+            return IgnoreReason.CHANNEL_NOT_ALLOWED
 
         text = message.text.strip()
         if text.startswith(ADMIN_PREFIX):
             # Never answer an admin command in character (spec 2.18, 30).
-            return self._ignore(message, IgnoreReason.ADMIN_PLANE_UNAVAILABLE)
+            return IgnoreReason.ADMIN_PLANE_UNAVAILABLE
         if not text and message.attachment_count == 0:
-            return self._ignore(message, IgnoreReason.EMPTY_MESSAGE)
+            return IgnoreReason.EMPTY_MESSAGE
+        return None
 
+    def admit(self, message: InboundMessage) -> InboundDecision:
+        """Decide whether a message is USER conversation, and build its event."""
+        reason = self.rejection_reason(message)
+        if reason is not None:
+            return self._ignore(message, reason)
+
+        text = message.text.strip()
         event = Event.create(
             event_type=USER_MESSAGE_RECEIVED,
             category="social",

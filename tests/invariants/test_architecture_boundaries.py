@@ -115,3 +115,31 @@ def test_no_print_in_operational_code() -> None:
         if re.search(r"^\s*print\(", path.read_text(encoding="utf-8"), re.M)
     ]
     assert offenders == []
+
+
+def test_the_running_system_does_not_depend_on_the_evaluator() -> None:
+    """Patch spec prohibition 10: ``外部LLMを本番全replyの必須依存にしない``.
+
+    A dev evaluator that production imports is that dependency, whichever
+    provider it happens to call. ``app/evaluation`` is therefore a leaf: tests
+    and tools import it, and nothing in the running system does.
+    """
+    offenders = [
+        str(path.relative_to(APP_ROOT))
+        for path in _python_files()
+        if path.relative_to(APP_ROOT).parts[:1] != ("evaluation",)
+        and re.search(r"^\s*(from|import)\s+app\.evaluation", path.read_text(encoding="utf-8"), re.M)
+    ]
+    assert offenders == [], f"app/evaluation is development-only, imported by: {offenders}"
+
+
+def test_the_evaluator_names_no_provider() -> None:
+    """Patch spec 11: ``provider-neutral evaluator``."""
+    vendors = re.compile(r"openai|anthropic|gemini|claude|gpt-|azure", re.IGNORECASE)
+    offenders = [
+        str(path.relative_to(APP_ROOT))
+        for path in _python_files()
+        if path.relative_to(APP_ROOT).parts[:1] == ("evaluation",)
+        and vendors.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == []

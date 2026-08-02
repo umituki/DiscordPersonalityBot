@@ -269,3 +269,37 @@ async def test_a_hard_commit_failure_still_fails_the_run(
     assert any(
         row["reason_code"] == "commit_failed" for row in failures.for_run(outcome.run.run_id)
     )
+
+
+# --- the state an action is generated from (patch spec 9) -------------------
+async def test_the_post_commit_snapshot_matches_what_was_written(
+    processor, bus, state_repo, make_event, recording_subscriber, clock
+) -> None:
+    """Patch spec 9: ``current USER Eventのcommit後stateだけを使用``.
+
+    S0 is what the run *read*; a reply is spoken after the event was taken in,
+    so it must see what the event produced.
+    """
+    state_repo.write_value(
+        domain="emotion", key="joy", value=0.3, confidence=None, now=clock.now(),
+        run_id=None, event_id=None, expected_version=None,
+    )
+    bus.register(recording_subscriber("emotion_engine", proposal_factory=emotion_proposal))
+
+    outcome = await processor.process(make_event())
+
+    assert outcome.snapshot.number_of("emotion", "joy") == pytest.approx(0.3)
+    post = outcome.post_commit_snapshot
+    assert post.number_of("emotion", "joy") == pytest.approx(0.5)
+    assert post.number_of("emotion", "joy") == state_repo.get("emotion", "joy").value
+
+
+async def test_a_run_that_wrote_nothing_reads_its_own_snapshot(
+    processor, bus, make_event, recording_subscriber
+) -> None:
+    """Nothing was committed, so S0 *is* current state — not a stale view."""
+    bus.register(recording_subscriber("emotion_engine"))
+    outcome = await processor.process(make_event())
+
+    assert outcome.committed_targets == ()
+    assert outcome.post_commit_snapshot is outcome.snapshot

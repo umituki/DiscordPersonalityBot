@@ -81,6 +81,24 @@ class ProcessingOutcome:
         return () if self.commit is None else self.commit.committed_targets
 
     @property
+    def post_commit_snapshot(self) -> StateSnapshot | None:
+        """S0 plus what this run committed (patch spec 9).
+
+        An action generated from this event should express the state the event
+        produced. When the commit did not happen, nothing was written, so S0
+        *is* the current state — and because a conflicted run is reprocessed
+        against a fresh snapshot, S0 here is never the stale one that lost.
+        """
+        if self.snapshot is None:
+            return None
+        if self.status != "committed" or self.arbitration is None:
+            return self.snapshot
+        return self.snapshot.with_committed(
+            (change.domain, change.key, change.new_value, change.confidence)
+            for change in self.arbitration.accepted
+        )
+
+    @property
     def degraded(self) -> bool:
         return bool(self.dispatch and self.dispatch.degraded)
 

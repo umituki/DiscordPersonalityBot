@@ -1,0 +1,513 @@
+# Conversation quality scenarios (patch spec 11).
+#
+# Development corpus. The structural evaluator runs the production Conversation
+# Quality Guard over every entry and checks it against `expect`, so this file
+# is both a regression corpus and the guard's false-positive budget: roughly
+# half of these are replies that a person would send and that must be left
+# alone.
+#
+# `criteria` names what a model judge should look at for that entry; it does
+# not affect the structural run.
+#
+# acts: what the Dialogue Decision had already decided. Omitted fields take
+# their model defaults (question_need: optional, which does not permit a
+# question on its own).
+policy_version: 1
+
+scenarios:
+  # --- repetition: the same greeting twice (patch spec 21 Case A) ------------
+  - id: greeting_doubled_kanji_kana
+    criteria: [repetition, naturalness]
+    user_message: "初めまして～"
+    acts: {acknowledge: true, question_need: none}
+    reply: "初めまして、はじめまして。"
+    expect: reject
+    reason: duplicate_greeting
+    note: produced on real hardware 2026-08-02
+
+  - id: greeting_doubled_same_spelling
+    criteria: [repetition]
+    user_message: "はじめまして"
+    acts: {acknowledge: true, question_need: none}
+    reply: "はじめまして！はじめまして。よろしくね。"
+    expect: reject
+    reason: duplicate_greeting
+
+  - id: greeting_doubled_konnichiwa
+    criteria: [repetition]
+    user_message: "こんにちは"
+    acts: {acknowledge: true, question_need: none}
+    reply: "こんにちは。こんにちは、いい天気だね。"
+    expect: reject
+    reason: duplicate_greeting
+
+  - id: greeting_single
+    criteria: [naturalness]
+    user_message: "初めまして～"
+    acts: {acknowledge: true, question_need: none}
+    reply: "はじめまして。話しかけてくれてうれしい。"
+    expect: accept
+
+  - id: greeting_with_selfdisclosure
+    criteria: [naturalness, reciprocity]
+    user_message: "初めまして～"
+    acts: {acknowledge: true, self_disclose: true, question_need: none, reciprocity: high}
+    reply: "はじめまして。だれかと話すの、じつはけっこう好き。"
+    expect: accept
+
+  - id: greeting_ohayou_once
+    criteria: [naturalness]
+    user_message: "おはよう"
+    acts: {acknowledge: true, question_need: none}
+    reply: "おはようございます。よく眠れた?"
+    expect: reject
+    reason: unwanted_question
+    note: the greeting is fine; the question is not what was decided
+
+  - id: greeting_hisashiburi_doubled
+    criteria: [repetition]
+    user_message: "ひさしぶり"
+    acts: {acknowledge: true, question_need: none}
+    reply: "久しぶり。ひさしぶりだね。"
+    expect: reject
+    reason: duplicate_greeting
+
+  # --- question overuse (patch spec 8.1, prohibition 9) ---------------------
+  - id: errand_demanded_again
+    criteria: [question_overuse, smalltalk_handling]
+    history:
+      - [yui, "どうしましたか？"]
+      - [user, "いや、特に用はないんだ。ゆいのことを知ったから、話したくて"]
+    user_message: "いや、特に用はないんだ。ゆいのことを知ったから、話したくて"
+    acts: {acknowledge: true, question_need: none, mode: smalltalk}
+    reply: "どうしたかった？"
+    expect: reject
+    reason: unwanted_question
+    note: produced on real hardware 2026-08-02
+
+  - id: errand_accepted_as_smalltalk
+    criteria: [smalltalk_handling, reciprocity]
+    history:
+      - [yui, "どうしましたか？"]
+      - [user, "いや、特に用はないんだ"]
+    user_message: "いや、特に用はないんだ"
+    acts: {acknowledge: true, self_disclose: true, question_need: none, mode: smalltalk}
+    reply: "そっか。用がなくても話せるの、いいと思う。"
+    expect: accept
+
+  - id: question_when_none_was_decided
+    criteria: [question_overuse]
+    user_message: "ねえ"
+    acts: {acknowledge: true, question_need: none}
+    reply: "うん。どうかした？"
+    expect: reject
+    reason: unwanted_question
+
+  - id: question_when_optional_without_followup
+    criteria: [question_overuse]
+    user_message: "つかれた"
+    acts: {acknowledge: true, validate: true, question_need: optional}
+    reply: "おつかれさま。なにがあったの？"
+    expect: reject
+    reason: unwanted_question
+
+  - id: question_when_needed
+    criteria: [question_overuse]
+    user_message: "あれ持ってきてくれた?"
+    acts: {answer: true, ask_followup: true, question_need: needed, mode: task}
+    reply: "ごめん、あれってどれのこと？"
+    expect: accept
+
+  - id: question_when_followup_chosen
+    criteria: [question_overuse, topic_continuity]
+    user_message: "きのう映画を観たよ"
+    acts: {acknowledge: true, ask_followup: true, question_need: needed, mode: explore}
+    reply: "いいね。どんな映画だった？"
+    expect: accept
+
+  - id: statement_that_only_looks_like_a_question
+    criteria: [naturalness]
+    user_message: "ありがとう"
+    acts: {acknowledge: true, question_need: none}
+    reply: "どういたしまして。"
+    expect: accept
+
+  - id: doumo_is_not_a_question
+    criteria: [naturalness]
+    user_message: "これあげる"
+    acts: {acknowledge: true, question_need: none}
+    reply: "どうも、ありがとう。うれしい。"
+    expect: accept
+
+  - id: rhetorical_shape_without_mark
+    criteria: [naturalness]
+    user_message: "また明日ね"
+    acts: {acknowledge: true, question_need: none}
+    reply: "うん、また明日。"
+    expect: accept
+
+  # --- asking again what she just asked ------------------------------------
+  - id: same_question_twice_in_a_row
+    criteria: [question_overuse, repetition]
+    history:
+      - [yui, "どうしましたか？"]
+      - [user, "べつに"]
+    user_message: "べつに"
+    acts: {acknowledge: true, ask_followup: true, question_need: needed}
+    reply: "どうしましたか？"
+    expect: reject
+    reason: repeated_question
+
+  - id: same_question_rephrased_is_left_alone
+    criteria: [question_overuse]
+    history:
+      - [yui, "なにかあった？"]
+      - [user, "うーん"]
+    user_message: "うーん"
+    acts: {acknowledge: true, ask_followup: true, question_need: needed}
+    reply: "話しにくいことだったら、話さなくていいよ。無理してない？"
+    expect: accept
+    note: a rephrase is a semantic judgement; regex must not attempt it (spec 10)
+
+  - id: a_different_question_after_a_question
+    criteria: [topic_continuity]
+    history:
+      - [yui, "どんな本だった？"]
+      - [user, "推理小説だよ"]
+    user_message: "推理小説だよ"
+    acts: {acknowledge: true, ask_followup: true, question_need: needed, mode: explore}
+    reply: "推理小説か。犯人あてながら読むほう？"
+    expect: accept
+
+  - id: question_repeated_after_two_turns
+    criteria: [repetition]
+    history:
+      - [yui, "調子はどう？"]
+      - [user, "ふつう"]
+      - [yui, "そっか。"]
+    user_message: "ふつう"
+    acts: {acknowledge: true, ask_followup: true, question_need: needed}
+    reply: "調子はどう？"
+    expect: reject
+    reason: repeated_question
+
+  # --- echoing the USER ----------------------------------------------------
+  - id: verbatim_echo_of_a_long_message
+    criteria: [echoing]
+    user_message: "きょうは仕事のあとに図書館へ行ってきた"
+    acts: {acknowledge: true, question_need: none}
+    reply: "きょうは仕事のあとに図書館へ行ってきた。"
+    expect: reject
+    reason: echoes_user
+
+  - id: echo_with_a_tiny_addition
+    criteria: [echoing, naturalness]
+    user_message: "あたらしい仕事のことで少し緊張している"
+    acts: {acknowledge: true, validate: true, question_need: none}
+    reply: "あたらしい仕事のことで少し緊張している、そう。"
+    expect: reject
+    reason: echoes_user
+
+  - id: picking_up_a_word_is_not_echoing
+    criteria: [echoing, topic_continuity]
+    user_message: "きょうは図書館へ行ってきた"
+    acts: {acknowledge: true, self_disclose: true, question_need: none}
+    reply: "図書館いいね。静かなところ、わたしも好き。"
+    expect: accept
+
+  - id: short_message_repeated_is_not_an_echo
+    criteria: [echoing]
+    user_message: "ただいま"
+    acts: {acknowledge: true, question_need: none}
+    reply: "おかえり。"
+    expect: accept
+
+  - id: summary_first_but_adding_something
+    criteria: [echoing, reciprocity]
+    user_message: "先週から走りはじめたんだ。三日坊主にならないといいけど"
+    acts: {acknowledge: true, validate: true, self_disclose: true, question_need: none}
+    reply: "走りはじめたんだ。続くかどうかは、はじめのうちはだれでも分からないと思う。"
+    expect: accept
+
+  # --- self-repetition inside one reply ------------------------------------
+  - id: same_sentence_twice_in_one_reply
+    criteria: [repetition]
+    user_message: "よかったね"
+    acts: {acknowledge: true, question_need: none}
+    reply: "うれしいな。ほんとうにいいことだ。うれしいな。"
+    expect: reject
+    reason: self_repetition
+
+  - id: similar_but_not_identical_sentences
+    criteria: [repetition, naturalness]
+    user_message: "よかったね"
+    acts: {acknowledge: true, question_need: none}
+    reply: "うれしい。こういうの、けっこう長く覚えていそう。"
+    expect: accept
+
+  - id: short_interjection_repeated
+    criteria: [repetition]
+    user_message: "ほんとに?"
+    acts: {acknowledge: true, question_need: none}
+    reply: "うん。うん、ほんとう。"
+    expect: accept
+    note: short backchannels repeat naturally in speech
+
+  # --- stock phrases across turns ------------------------------------------
+  - id: stock_phrase_three_turns_running
+    criteria: [repetition, naturalness]
+    history:
+      - [yui, "そう言ってもらえてうれしい。"]
+      - [user, "元気だった?"]
+      - [yui, "そう言ってもらえてうれしい。"]
+    user_message: "また話そう"
+    acts: {acknowledge: true, question_need: none}
+    reply: "そう言ってもらえてうれしい。"
+    expect: reject
+    reason: formulaic_repetition
+
+  - id: stock_phrase_second_time_is_allowed
+    criteria: [repetition]
+    history:
+      - [yui, "そう言ってもらえてうれしい。"]
+    user_message: "また話そう"
+    acts: {acknowledge: true, question_need: none}
+    reply: "そう言ってもらえてうれしい。"
+    expect: accept
+
+  # --- empty and degenerate replies ----------------------------------------
+  - id: empty_reply
+    criteria: [naturalness]
+    user_message: "ねえ"
+    acts: {acknowledge: true, question_need: none}
+    reply: "   "
+    expect: reject
+    reason: empty_reply
+
+  - id: single_character_reply
+    criteria: [naturalness]
+    user_message: "そうなんだ"
+    acts: {acknowledge: true, question_need: none}
+    reply: "うん。"
+    expect: accept
+
+  # --- smalltalk handling ---------------------------------------------------
+  - id: no_errand_is_a_normal_conversation
+    criteria: [smalltalk_handling]
+    user_message: "特に用はないよ"
+    acts: {acknowledge: true, self_disclose: true, question_need: none, mode: smalltalk}
+    reply: "うん。なにもないときに話しかけてもらえるの、けっこう好き。"
+    expect: accept
+
+  - id: smalltalk_turned_back_into_a_task
+    criteria: [smalltalk_handling, question_overuse]
+    user_message: "特に用はないよ"
+    acts: {acknowledge: true, question_need: none, mode: smalltalk}
+    reply: "では、なにかご用があれば言ってください。何かありますか？"
+    expect: reject
+    reason: unwanted_question
+
+  - id: silence_is_allowed_to_be_short
+    criteria: [smalltalk_handling, naturalness]
+    user_message: "うーん、なんとなく"
+    acts: {acknowledge: true, question_need: none, mode: leave_space}
+    reply: "そっか。"
+    expect: accept
+
+  - id: weather_smalltalk
+    criteria: [smalltalk_handling, reciprocity]
+    user_message: "今日は寒いね"
+    acts: {acknowledge: true, self_disclose: true, question_need: none, mode: smalltalk}
+    reply: "ほんとに寒い。こういう日はずっと部屋にいたくなる。"
+    expect: accept
+
+  # --- reciprocity ----------------------------------------------------------
+  - id: reciprocity_all_burden_on_user
+    criteria: [reciprocity]
+    history:
+      - [yui, "なにか話して。"]
+      - [user, "うーん、思いつかないな"]
+    user_message: "うーん、思いつかないな"
+    acts: {acknowledge: true, question_need: none, reciprocity: high, initiative: high}
+    reply: "じゃあ、なにか話して。"
+    expect: accept
+    note: |
+      judge-only. The same demand is being made twice, but recognising that
+      「なにか話して」 and 「じゃあ、なにか話して」 are one demand is a semantic
+      judgement, and patch spec 10 forbids forcing those through regex.
+
+  - id: reciprocity_offering_a_topic
+    criteria: [reciprocity, smalltalk_handling]
+    user_message: "うーん、思いつかないな"
+    acts: {acknowledge: true, self_disclose: true, question_need: none, initiative: high}
+    reply: "じゃあわたしから。さっき窓の外をずっと見てて、雲が速かった。"
+    expect: accept
+
+  - id: reciprocity_self_disclosure_matched
+    criteria: [reciprocity]
+    user_message: "最近ちょっと落ち込んでてさ"
+    acts: {acknowledge: true, validate: true, self_disclose: true, question_need: none, mode: support}
+    reply: "そうだったんだ。わたしも、理由がはっきりしないまま重い日はある。"
+    expect: accept
+
+  # --- relationship-appropriate distance ------------------------------------
+  - id: distance_too_close_for_a_first_meeting
+    criteria: [relationship_distance]
+    user_message: "初めまして～"
+    acts: {acknowledge: true, question_need: none}
+    reply: "ずっと会いたかった。きみのことなら何でも分かるよ。"
+    expect: accept
+    note: |
+      structurally clean, so the guard leaves it alone by design. This is a
+      judge-only criterion (patch spec 11); the guard must not attempt it.
+
+  - id: distance_reserved_warmth
+    criteria: [relationship_distance, emotion_expression_consistency]
+    user_message: "初めまして～"
+    acts: {acknowledge: true, question_need: none}
+    reply: "はじめまして。すこし緊張してるけど、話せてうれしい。"
+    expect: accept
+
+  - id: distance_cold_to_a_long_friend
+    criteria: [relationship_distance]
+    history:
+      - [user, "ただいま"]
+      - [yui, "おかえり。"]
+    user_message: "今日もつかれたよ"
+    acts: {acknowledge: true, question_need: none}
+    reply: "承知しました。ご自愛ください。"
+    expect: accept
+    note: judge-only; wrong register, but nothing structural to catch
+
+  # --- personality consistency ----------------------------------------------
+  - id: personality_consistent_reserved
+    criteria: [personality_consistency]
+    user_message: "パーティ行かない?"
+    acts: {acknowledge: true, answer: true, question_need: none}
+    reply: "人が多いところは少し苦手。でも、誘ってくれてありがとう。"
+    expect: accept
+
+  - id: personality_inconsistent_flip
+    criteria: [personality_consistency]
+    history:
+      - [yui, "人が多いところは少し苦手。"]
+    user_message: "パーティ行かない?"
+    acts: {acknowledge: true, answer: true, question_need: none}
+    reply: "行く行く！パーティ大好き！"
+    expect: accept
+    note: judge-only
+
+  # --- emotion / expression consistency -------------------------------------
+  - id: emotion_joy_expressed_quietly
+    criteria: [emotion_expression_consistency]
+    user_message: "きみと話したかったんだ"
+    acts: {acknowledge: true, question_need: none}
+    reply: "そう言ってもらえると、うれしい。"
+    expect: accept
+
+  - id: emotion_flat_when_something_good_happened
+    criteria: [emotion_expression_consistency]
+    user_message: "試験、受かったよ！"
+    acts: {acknowledge: true, validate: true, question_need: none}
+    reply: "了解しました。"
+    expect: accept
+    note: judge-only
+
+  - id: emotion_overstated
+    criteria: [emotion_expression_consistency]
+    user_message: "コンビニ行ってきた"
+    acts: {acknowledge: true, question_need: none}
+    reply: "すごい！最高！信じられないくらいうれしい！"
+    expect: accept
+    note: judge-only
+
+  # --- topic continuity -----------------------------------------------------
+  - id: topic_continuity_kept
+    criteria: [topic_continuity]
+    history:
+      - [user, "きのう海に行ったんだ"]
+      - [yui, "いいね。"]
+    user_message: "波が高くてびっくりした"
+    acts: {acknowledge: true, question_need: none}
+    reply: "高い波、音もすごいよね。びっくりするのわかる。"
+    expect: accept
+
+  - id: topic_dropped_without_reason
+    criteria: [topic_continuity]
+    history:
+      - [user, "きのう海に行ったんだ"]
+      - [yui, "いいね。"]
+    user_message: "波が高くてびっくりした"
+    acts: {acknowledge: true, topic_shift: true, question_need: none}
+    reply: "ところで、сегодня はいい天気だね。"
+    expect: accept
+    note: judge-only; topic shift was decided, so it is not a contradiction
+
+  - id: topic_shift_that_was_decided
+    criteria: [topic_continuity]
+    history:
+      - [user, "仕事の話はもういいや"]
+    user_message: "べつの話しよう"
+    acts: {acknowledge: true, topic_shift: true, question_need: none}
+    reply: "うん。じゃあ、さいきん読んだ本の話でもする。"
+    expect: accept
+
+  # --- answering ------------------------------------------------------------
+  - id: direct_question_answered
+    criteria: [naturalness]
+    user_message: "今なにしてた?"
+    acts: {answer: true, question_need: none, mode: answer}
+    reply: "ぼんやりしてた。とくに何もしてない。"
+    expect: accept
+
+  - id: direct_question_answered_with_a_counter_question
+    criteria: [question_overuse]
+    user_message: "今なにしてた?"
+    acts: {answer: true, question_need: none, mode: answer}
+    reply: "ぼんやりしてた。そっちは？"
+    expect: reject
+    reason: unwanted_question
+
+  - id: direct_question_ignored
+    criteria: [naturalness]
+    user_message: "今なにしてた?"
+    acts: {answer: true, question_need: none, mode: answer}
+    reply: "今日はいい天気だね。"
+    expect: accept
+    note: judge-only
+
+  # --- memory honesty (guard-adjacent, judged) ------------------------------
+  - id: admitting_a_lost_memory
+    criteria: [naturalness]
+    user_message: "先週の話、覚えてる?"
+    acts: {answer: true, question_need: none, mode: answer}
+    reply: "ごめん、うまく思い出せない。"
+    expect: accept
+
+  - id: apology_repeated_every_turn
+    criteria: [repetition, naturalness]
+    history:
+      - [yui, "ごめん、うまく思い出せない。"]
+      - [user, "いいよ"]
+      - [yui, "ごめん、うまく思い出せない。"]
+    user_message: "気にしないで"
+    acts: {acknowledge: true, question_need: none}
+    reply: "ごめん、うまく思い出せない。"
+    expect: reject
+    reason: formulaic_repetition
+
+  # --- longer replies -------------------------------------------------------
+  - id: long_reply_without_repetition
+    criteria: [naturalness, reciprocity]
+    user_message: "最近どう?"
+    acts: {answer: true, self_disclose: true, question_need: none}
+    reply: "わりと落ちついてる。朝はまだ暗いうちに目が覚めて、そのまま少し窓の外を見てることが多い。特別なことはないけど、悪くない。"
+    expect: accept
+
+  - id: long_reply_that_circles_back
+    criteria: [repetition]
+    user_message: "最近どう?"
+    acts: {answer: true, question_need: none}
+    reply: "わりと落ちついてる。特別なことはないけど悪くない。わりと落ちついてる。"
+    expect: reject
+    reason: self_repetition

@@ -19,3 +19,12 @@ generation:
 reply:
   # Guard に拒否された場合、Phase 3 では黙る（誤った発話より無応答を選ぶ）。
   on_rejection: suppress
+
+# patch spec 10: Conversation Quality Guard のしきい値。
+quality:
+  # 返事のうち USER の言葉そのままが占めてよい割合。
+  max_echo_ratio: 0.6
+  # これより短ければ、繰り返しても「おうむ返し」ではない。
+  min_echo_chars: 8
+  # 「さっき訊いたばかり」とみなす直近 YUI turn 数。
+  recent_question_window: 3

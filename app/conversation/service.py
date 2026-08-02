@@ -114,6 +114,16 @@ class ConversationService:
         self._clock = clock or SystemClock()
 
     # --- inbound -----------------------------------------------------------
+    def intends_to_reply(self, message: InboundMessage) -> bool:
+        """Whether this message will be answered, before any work is done.
+
+        Patch spec 6.1: an accepted owner message counts as reply intent, and
+        the typing indicator starts from that. When intentional silence exists
+        it will be decided here too (6.2), which is why the interface asks the
+        service rather than the adapter.
+        """
+        return self._adapter.rejection_reason(message) is None
+
     async def handle_inbound(self, message: InboundMessage) -> ConversationResult:
         decision = self._adapter.admit(message)
         if not decision.accepted or decision.event is None:
@@ -181,7 +191,9 @@ class ConversationService:
             user_text=event.payload.text,
             recent_turns=recent,
             memories=memories,
-            snapshot=outcome.snapshot,
+            # Patch spec 9: she speaks as who she is *after* taking the message
+            # in, so the reply reads the state this event produced.
+            snapshot=outcome.post_commit_snapshot,
             run_id=outcome.run.run_id,
             event_id=event.event_id,
             tool_success_ids=tool_success_ids,

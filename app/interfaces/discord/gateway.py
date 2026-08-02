@@ -11,7 +11,8 @@ It performs no persistence and makes no psychological decision (spec 37:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.clock import Clock, SystemClock, ensure_aware
 from app.conversation.service import ConversationResult, ConversationService
@@ -93,25 +94,67 @@ class DiscordGateway:
         return client
 
     async def handle_message(self, message: Any) -> ConversationResult:
-        """Process one gateway message and send the reply, if any."""
+        """Process one gateway message and send the reply, if any.
+
+        The typing indicator wraps everything the USER is waiting for and
+        nothing else (patch spec 6). It starts once the message is known to be
+        one YUI will answer, and ``async with`` ends it on every exit — send
+        success, suppression, an LLM error, a Discord error, cancellation and
+        shutdown alike (6.3). It is never recorded: typing is transient UI, not
+        an experience (6.4). No artificial delay is added (6.5).
+        """
         inbound = to_inbound(message)
-        result = await self._service.handle_inbound(inbound)
-        if not result.should_send or result.outbound is None:
-            return result
+        if not self._service.intends_to_reply(inbound):
+            return await self._service.handle_inbound(inbound)
 
-        try:
-            sent = await self._send(message, result.outbound.text)
-        except Exception as exc:  # noqa: BLE001 - the send is the fragile part
-            logger.exception("failed to send reply channel=%s", result.outbound.channel_id)
-            await self._service.record_send_failure(result, repr(exc))
-            return result
+        async with self._typing(message):
+            result = await self._service.handle_inbound(inbound)
+            if not result.should_send or result.outbound is None:
+                return result
 
+            try:
+                sent = await self._send(message, result.outbound.text)
+            except Exception as exc:  # noqa: BLE001 - the send is the fragile part
+                logger.exception("failed to send reply channel=%s", result.outbound.channel_id)
+                await self._service.record_send_failure(result, repr(exc))
+                return result
+
+        # Outside the indicator: the reply is already delivered, and the
+        # post-send run must not keep "typing" on screen after it.
         await self._service.confirm_sent(
             result,
             message_id=str(getattr(sent, "id", "unknown")),
             channel_type=inbound.channel_type,
         )
         return result
+
+    @staticmethod
+    @asynccontextmanager
+    async def _typing(message: Any) -> AsyncIterator[None]:
+        """``channel.typing()`` where the channel has one, otherwise nothing.
+
+        A channel object without ``typing`` is not a reason to drop a reply, so
+        this degrades to a no-op rather than raising.
+        """
+        factory = getattr(getattr(message, "channel", None), "typing", None)
+        indicator = None
+        if factory is not None:
+            try:
+                indicator = factory()
+                await indicator.__aenter__()
+            except Exception:  # noqa: BLE001 - a UI hint must never block a reply
+                logger.warning("typing indicator could not be started", exc_info=True)
+                indicator = None
+        try:
+            yield
+        finally:
+            # ``finally`` rather than ``except``: the indicator has to stop on
+            # cancellation and shutdown too, not only on ordinary returns.
+            if indicator is not None:
+                try:
+                    await indicator.__aexit__(None, None, None)
+                except Exception:  # noqa: BLE001
+                    logger.warning("typing indicator did not stop cleanly", exc_info=True)
 
     @staticmethod
     async def _send(message: Any, text: str) -> Any:

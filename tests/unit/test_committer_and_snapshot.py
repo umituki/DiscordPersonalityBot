@@ -180,3 +180,41 @@ def test_snapshot_is_read_only(state_repo, snapshots, clock) -> None:
     snapshot = snapshots.capture(persist=False)
     with pytest.raises(TypeError):
         snapshot._values[("needs", "autonomy")] = None  # type: ignore[index]
+
+
+# --- the state a reply speaks from (patch spec 9) ---------------------------
+def test_a_derived_snapshot_carries_this_runs_changes(state_repo, snapshots, clock) -> None:
+    seed(state_repo, clock, "emotion", "joy", 0.2)
+    snapshot = snapshots.capture(persist=False)
+
+    after = snapshot.with_committed([("emotion", "joy", 0.7, 0.9)])
+
+    assert after.number_of("emotion", "joy") == 0.7
+    assert after.get("emotion", "joy").confidence == 0.9
+    # The version moves, so the derived view is never mistaken for the S0 it
+    # came from when a fingerprint is compared.
+    assert after.version_of("emotion", "joy") == snapshot.version_of("emotion", "joy") + 1
+    assert after.fingerprint() != snapshot.fingerprint()
+
+
+def test_the_derived_snapshot_does_not_mutate_the_original(
+    state_repo, snapshots, clock
+) -> None:
+    """Spec 9.2: an S0 is immutable, and other engines still hold this one."""
+    seed(state_repo, clock, "emotion", "joy", 0.2)
+    snapshot = snapshots.capture(persist=False)
+
+    snapshot.with_committed([("emotion", "joy", 0.9, None)])
+
+    assert snapshot.number_of("emotion", "joy") == 0.2
+
+
+def test_a_key_written_for_the_first_time_appears_in_the_derived_snapshot(
+    snapshots,
+) -> None:
+    snapshot = snapshots.capture(persist=False)
+    after = snapshot.with_committed([("emotion", "affection", 0.4, None)])
+
+    assert snapshot.get("emotion", "affection") is None
+    assert after.number_of("emotion", "affection") == 0.4
+    assert after.version_of("emotion", "affection") == 1

@@ -36,6 +36,21 @@ class GenerationPolicy(_Frozen):
     timeout_s: float = Field(default=90.0, gt=0)
 
 
+class QualityPolicy(_Frozen):
+    """Conversation Quality Guard thresholds (patch spec 10).
+
+    Tuning, not code constants: how much of a reply may be the USER's own words
+    before it reads as an echo is a judgement that will move.
+    """
+
+    #: Fraction of the reply that may be the USER's message read back.
+    max_echo_ratio: float = Field(default=0.6, gt=0.0, le=1.0)
+    #: Below this length an echo is just agreement, not parroting.
+    min_echo_chars: int = Field(default=8, gt=0)
+    #: How many previous YUI turns count as "just now".
+    recent_question_window: int = Field(default=3, ge=1)
+
+
 class ReplyPolicy(_Frozen):
     #: Phase 3 keeps silent when the guard rejects. Regeneration with an
     #: adjusted plan belongs to the Agency phase.
@@ -47,6 +62,7 @@ class ConversationPolicy(_Frozen):
     context: ContextPolicy = ContextPolicy()
     generation: GenerationPolicy = GenerationPolicy()
     reply: ReplyPolicy = ReplyPolicy()
+    quality: QualityPolicy = QualityPolicy()
 
     @classmethod
     def load(cls, path: Path | str) -> ConversationPolicy:

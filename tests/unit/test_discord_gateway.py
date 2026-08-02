@@ -142,3 +142,154 @@ async def test_suppressed_reply_sends_nothing(service_factory, clock) -> None:
 
     assert channel.sent == []
     assert result.suppressed
+
+
+# --- typing indicator (patch spec 6) ----------------------------------------
+@dataclass
+class TypingChannel(FakeChannel):
+    """A channel that records when the typing indicator was on."""
+
+    events: list[str] = field(default_factory=list)
+    fail_on_enter: bool = False
+
+    def typing(self) -> Any:
+        channel = self
+
+        class _Typing:
+            async def __aenter__(self) -> None:
+                if channel.fail_on_enter:
+                    raise RuntimeError("typing is unavailable")
+                channel.events.append("start")
+
+            async def __aexit__(self, *exc_info: Any) -> bool:
+                channel.events.append("stop")
+                return False
+
+        return _Typing()
+
+    async def send(self, text: str) -> Any:
+        self.events.append("send")
+        return await super().send(text)
+
+
+@dataclass
+class TypingBrokenChannel(TypingChannel):
+    async def send(self, text: str) -> Any:
+        self.events.append("send")
+        raise RuntimeError("discord is down")
+
+
+async def test_typing_starts_before_the_work_and_stops_after_the_send(
+    service_factory, clock
+) -> None:
+    """Patch spec 6.1 and 6.3."""
+    service = service_factory(['{"text": "やっほー。"}'])
+    gateway = DiscordGateway(service, token="fake-token", clock=clock)
+    channel = TypingChannel()
+    message = FakeMessage(
+        channel=channel, author=FakeAuthor(), content="やっほー", created_at=clock.now()
+    )
+
+    await gateway.handle_message(message)
+
+    assert channel.events == ["start", "send", "stop"]
+
+
+async def test_typing_stops_when_the_send_fails(service_factory, clock) -> None:
+    """Patch spec 6.3: a Discord error must still end the indicator."""
+    service = service_factory(['{"text": "届かない返事"}'])
+    gateway = DiscordGateway(service, token="fake-token", clock=clock)
+    channel = TypingBrokenChannel()
+    message = FakeMessage(
+        channel=channel, author=FakeAuthor(), content="ねえ", created_at=clock.now()
+    )
+
+    await gateway.handle_message(message)
+
+    assert channel.events == ["start", "send", "stop"]
+
+
+async def test_typing_stops_when_the_reply_is_suppressed(service_factory, clock) -> None:
+    service = service_factory(['{"text": "さっき散歩に行ってきた。"}'] * 2)
+    gateway = DiscordGateway(service, token="fake-token", clock=clock)
+    channel = TypingChannel()
+    message = FakeMessage(
+        channel=channel, author=FakeAuthor(), content="なにしてた?", created_at=clock.now()
+    )
+
+    result = await gateway.handle_message(message)
+
+    assert result.suppressed
+    assert channel.events == ["start", "stop"]
+
+
+async def test_typing_stops_when_generation_raises(service_factory, clock) -> None:
+    """Patch spec 6.3: an LLM error is not an excuse to leave it running."""
+    service = service_factory([])
+    gateway = DiscordGateway(service, token="fake-token", clock=clock)
+    channel = TypingChannel()
+    message = FakeMessage(
+        channel=channel, author=FakeAuthor(), content="やっほー", created_at=clock.now()
+    )
+
+    async def explode(_inbound):
+        raise RuntimeError("the model is gone")
+
+    service.handle_inbound = explode  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError):
+        await gateway.handle_message(message)
+
+    assert channel.events == ["start", "stop"]
+
+
+async def test_no_typing_for_a_message_that_will_not_be_answered(
+    service_factory, clock
+) -> None:
+    """Patch spec 6.1: reply intent first, indicator second."""
+    service = service_factory([])
+    gateway = DiscordGateway(service, token="fake-token", clock=clock)
+    channel = TypingChannel()
+    message = FakeMessage(
+        channel=channel,
+        author=FakeAuthor(id=999999999999999999),
+        content="やっほー",
+        created_at=clock.now(),
+    )
+
+    result = await gateway.handle_message(message)
+
+    assert result.accepted is False
+    assert channel.events == []
+
+
+async def test_a_broken_typing_indicator_does_not_stop_the_reply(
+    service_factory, clock
+) -> None:
+    service = service_factory(['{"text": "やっほー。"}'])
+    gateway = DiscordGateway(service, token="fake-token", clock=clock)
+    channel = TypingChannel(fail_on_enter=True)
+    message = FakeMessage(
+        channel=channel, author=FakeAuthor(), content="やっほー", created_at=clock.now()
+    )
+
+    await gateway.handle_message(message)
+
+    assert channel.sent == ["やっほー。"]
+    assert "stop" not in channel.events
+
+
+async def test_typing_is_not_recorded_as_an_experience(
+    service_factory, event_store, clock
+) -> None:
+    """Patch spec 6.4: transient UI state, never an event."""
+    service = service_factory(['{"text": "やっほー。"}'])
+    gateway = DiscordGateway(service, token="fake-token", clock=clock)
+    message = FakeMessage(
+        channel=TypingChannel(), author=FakeAuthor(), content="やっほー", created_at=clock.now()
+    )
+
+    await gateway.handle_message(message)
+
+    types = {event.event_type for event in event_store.recent()}
+    assert not any("TYPING" in event_type for event_type in types)

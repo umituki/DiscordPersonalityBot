@@ -74,6 +74,30 @@ ConversationGoal = Literal[
 ]
 
 
+#: Patch spec 8. What kind of exchange this turn is. A conversation with no
+#: errand is a normal conversation, and ``smalltalk`` exists so the system can
+#: say so rather than treating every turn as a task to resolve.
+DialogueMode = Literal[
+    "smalltalk",
+    "answer",
+    "support",
+    "explore",
+    "repair",
+    "task",
+    "leave_space",
+]
+
+#: Patch spec 8. Whether a question is called for at all. The 2026-08-02
+#: conversation asked one every turn, including asking the USER what they
+#: wanted after they had just said they wanted nothing in particular.
+QuestionNeed = Literal["none", "optional", "needed"]
+
+#: How much of the turn is YUI's own contribution rather than a response.
+#: ``low`` reciprocity with ``low`` initiative is how a companion ends up
+#: making the USER carry the whole conversation (patch spec 8.1).
+Balance = Literal["low", "balanced", "high"]
+
+
 class DialogueAct(BaseModel):
     """What kind of response this will be — decided before any sentence.
 
@@ -94,8 +118,24 @@ class DialogueAct(BaseModel):
     challenge: bool = False
     topic_shift: bool = False
     goal: ConversationGoal = "maintain_connection"
+    #: Patch spec 8.
+    mode: DialogueMode = "smalltalk"
+    question_need: QuestionNeed = "optional"
+    reciprocity: Balance = "balanced"
+    initiative: Balance = "balanced"
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    @property
+    def wants_question(self) -> bool:
+        """Whether this turn is allowed to contain a question at all.
+
+        Patch spec 8.1: ``question_need=none`` / ``ask_followup=false`` なら
+        原則質問しない. The guard checks the produced text against this.
+        """
+        if self.question_need == "none":
+            return False
+        return self.ask_followup or self.question_need == "needed"
 
     @property
     def chosen(self) -> tuple[str, ...]:
@@ -128,7 +168,16 @@ class DialogueAct(BaseModel):
             "topic_shift": "話題を変える",
         }
         lines = [f"- {descriptions[name]}" for name in self.chosen]
+        lines.append(f"- この会話のかたち: {self.mode}")
         lines.append(f"- この会話でのねらい: {self.goal}")
+        if not self.wants_question:
+            # Stated positively and last, because this is the instruction the
+            # 2026-08-02 replies kept violating (patch spec 8.1).
+            lines.append("- 質問はしない。相手に用件を尋ね返さない")
+        elif self.question_need == "needed":
+            lines.append("- 必要なことをひとつだけ尋ねる")
+        if self.reciprocity == "high" or self.initiative == "high":
+            lines.append("- 相手に話題を出させるのではなく、自分からも差し出す")
         return "\n".join(lines)
 
     @classmethod
@@ -141,8 +190,19 @@ class DialogueAct(BaseModel):
         fallback answers instead of merely acknowledging.
         """
         if direct_question:
-            return cls(acknowledge=True, answer=True, goal="understand_user")
-        return cls(acknowledge=True, goal="maintain_connection")
+            return cls(
+                acknowledge=True,
+                answer=True,
+                goal="understand_user",
+                mode="answer",
+                question_need="none",
+            )
+        return cls(
+            acknowledge=True,
+            goal="maintain_connection",
+            mode="smalltalk",
+            question_need="none",
+        )
 
 
 class ReplyDraft(BaseModel):

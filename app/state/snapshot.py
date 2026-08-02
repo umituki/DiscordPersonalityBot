@@ -12,7 +12,7 @@ import hashlib
 
 from datetime import datetime
 from types import MappingProxyType
-from typing import Iterator, Mapping
+from typing import Iterable, Iterator, Mapping
 
 from app import ids
 from app.clock import Clock, SystemClock, from_iso, to_iso
@@ -149,6 +149,47 @@ class StateSnapshot:
     @classmethod
     def empty(cls, *, snapshot_id: str, created_at: datetime) -> StateSnapshot:
         return cls(snapshot_id=snapshot_id, created_at=created_at, values={})
+
+    # --- derived views ------------------------------------------------------
+    def with_committed(
+        self,
+        changes: Iterable[tuple[str, str, JSONValue, float | None]],
+        *,
+        now: datetime | None = None,
+    ) -> StateSnapshot:
+        """S0 plus the changes this run committed (patch spec 9).
+
+        A reply is spoken *after* the event has been taken in, so what it
+        expresses must be the state that resulted from the event, not the state
+        that preceded it. This is derived from the accepted changes rather than
+        re-read from the database: a fresh read would pick up other runs'
+        writes, which this event's reply has not experienced.
+
+        Not persisted, and never used as an S0 for another run.
+        """
+        merged = dict(self._values)
+        for domain, key, value, confidence in changes:
+            previous = merged.get((domain, key))
+            moment = now or (previous.updated_at if previous else self._created_at)
+            merged[(domain, key)] = StateValue(
+                domain=domain,
+                key=key,
+                value=value,
+                confidence=confidence if confidence is not None else (
+                    previous.confidence if previous else None
+                ),
+                version=(previous.version + 1) if previous else 1,
+                created_at=previous.created_at if previous else moment,
+                updated_at=moment,
+                updated_by_run_id=previous.updated_by_run_id if previous else None,
+                updated_by_event_id=previous.updated_by_event_id if previous else None,
+            )
+        return StateSnapshot(
+            snapshot_id=self._snapshot_id,
+            created_at=self._created_at,
+            values=merged,
+            root_event_id=self._root_event_id,
+        )
 
 
 class SnapshotService:

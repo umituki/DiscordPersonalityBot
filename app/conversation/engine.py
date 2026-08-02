@@ -1,29 +1,37 @@
-"""Reply generation (spec 35 Phase 3).
+"""Reply generation (spec 35 Phase 3, patch spec 8-10).
 
-Phase 3 is deliberately thin: static identity, recent history, one structured
-model call, and the Output Guard. There is no memory retrieval, no appraisal
-and no dialogue-act planning here — those belong to Phases 4, 5 and 7, and
-faking them now would produce a second, simplified personality engine that the
-architecture rules forbid.
+One reply is produced in four steps, in this order:
+
+    dialogue decision  → what kind of turn is this at all (spec 16.1)
+    expression context → how she currently is, in words (patch spec 9)
+    generation         → the sentence, plus the Output Guard
+    quality guard      → is this a reply a person would send (patch spec 10)
+
+The order is the point. Deciding the acts after the sentence exists would make
+the decision a description of whatever the model wrote, and checking quality
+before the acts are known would leave nothing to check the prose against.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 from typing import Sequence
 
 from app.clock import Clock, SystemClock, to_iso
 from app.context.builder import BuiltContext, ContextBuilder, Requirement
+from app.conversation.expression import ExpressionContext
 from app.conversation.guard import OutputGuard
 from app.conversation.models import ConversationTurn, DialogueAct, ReplyDraft
+from app.conversation.quality import ConversationQualityGuard, QualityVerdict
 from app.conversation.text import looks_like_question
 from app.memory.models import RetrievalCandidate
 from app.conversation.policy import ConversationPolicy
 from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator, StructuredOutcome
 from app.llm.types import LLMMessage
-from app.llm.validation import ValidationContext, ValidationPipeline
+from app.llm.validation import Stage, ValidationContext, ValidationFailure, ValidationPipeline
 from app.resources.identity import Identity
 from app.state.snapshot import StateSnapshot
 
@@ -33,6 +41,8 @@ PROMPT_ID = "conversation_reply"
 PURPOSE = "conversation_reply"
 ACT_PROMPT_ID = "dialogue_act"
 ACT_PURPOSE = "dialogue_act"
+REPAIR_PROMPT_ID = "conversation_repair"
+REPAIR_PURPOSE = "conversation_repair"
 
 NO_HISTORY = "(まだ記録されたやりとりはない)"
 NO_MEMORIES = "(いま思い出せることはない)"
@@ -48,6 +58,13 @@ class ReplyGeneration:
     #: Decided before the sentence was written (spec 16.1).
     acts: DialogueAct = DialogueAct.minimal()
     acts_source: str = "default"
+    #: How she was, in words rather than numbers (patch spec 9).
+    expression: ExpressionContext = ExpressionContext()
+    #: The last quality verdict, on whichever text is being returned.
+    quality: QualityVerdict | None = None
+    #: True when the first draft was rejected by the quality guard and a repair
+    #: call produced the text being returned (patch spec 10).
+    repaired: bool = False
 
     @property
     def accepted(self) -> bool:
@@ -67,6 +84,7 @@ class ConversationEngine:
         structured: StructuredGenerator,
         guard: OutputGuard,
         policy: ConversationPolicy,
+        quality: ConversationQualityGuard | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._identity = identity
@@ -74,6 +92,14 @@ class ConversationEngine:
         self._structured = structured
         self._guard = guard
         self._policy = policy
+        #: Patch spec 10: a stage separate from the Output Guard. The Output
+        #: Guard decides whether this may be said at all; this decides whether
+        #: it is a reply a person would send.
+        self._quality = quality or ConversationQualityGuard(
+            max_echo_ratio=policy.quality.max_echo_ratio,
+            min_echo_chars=policy.quality.min_echo_chars,
+            recent_question_window=policy.quality.recent_question_window,
+        )
         self._clock = clock or SystemClock()
 
     @property
@@ -100,11 +126,20 @@ class ConversationEngine:
             event_id=event_id,
         )
 
+        # Patch spec 9: the reply expresses the state the event produced, in
+        # qualitative bands. Never a dump of the state table.
+        expression = ExpressionContext.from_snapshot(snapshot, acts=acts)
+
         template = self._prompts.get(PROMPT_ID)
-        context = self._build_context(user_text, recent_turns, memories, acts)
+        context = self._build_context(user_text, recent_turns, memories, acts, expression)
 
         system_content = template.render(
             identity=context.get("identity").content,
+            expression=(
+                context.get("expression").content
+                if context.includes("expression")
+                else expression.render()
+            ),
             recent_conversation=(
                 context.get("recent_conversation").content
                 if context.includes("recent_conversation")
@@ -143,12 +178,149 @@ class ConversationEngine:
             prompt_version=template.prompt_version,
         )
 
-        return ReplyGeneration(
+        generation = ReplyGeneration(
             outcome=outcome,
             context=context,
             prompt_version=template.prompt_version,
             acts=acts,
             acts_source=acts_source,
+            expression=expression,
+        )
+        if not outcome.accepted or outcome.value is None:
+            return generation
+
+        return await self._review_and_repair(
+            generation,
+            user_text=user_text,
+            recent_turns=recent_turns,
+            expression=expression,
+            snapshot=snapshot,
+            run_id=run_id,
+            event_id=event_id,
+            tool_success_ids=tool_success_ids,
+        )
+
+    # --- quality (patch spec 10) -------------------------------------------
+    async def _review_and_repair(
+        self,
+        generation: ReplyGeneration,
+        *,
+        user_text: str,
+        recent_turns: Sequence[ConversationTurn],
+        expression: ExpressionContext,
+        snapshot: StateSnapshot | None,
+        run_id: str | None,
+        event_id: str | None,
+        tool_success_ids: Sequence[str],
+    ) -> ReplyGeneration:
+        """Review the draft, and rewrite it at most once.
+
+        Patch spec 10: ``Guard reject時のみ conversation_repair を最大1回``. The
+        repair is a rewrite of the same intention, not a second draft — the
+        dialogue decision is not re-run, because the decision was not what was
+        wrong.
+        """
+        text = generation.text or ""
+        verdict = self._quality.review(
+            text, acts=generation.acts, user_text=user_text, recent_turns=recent_turns
+        )
+        if verdict.accepted:
+            return dataclasses.replace(generation, quality=verdict)
+
+        logger.info(
+            "reply rejected by quality guard event_id=%s issues=%s",
+            event_id,
+            ",".join(verdict.issues),
+        )
+        repaired = await self._repair(
+            rejected_text=text,
+            verdict=verdict,
+            acts=generation.acts,
+            user_text=user_text,
+            recent_turns=recent_turns,
+            expression=expression,
+            snapshot=snapshot,
+            run_id=run_id,
+            event_id=event_id,
+            tool_success_ids=tool_success_ids,
+        )
+
+        if repaired.accepted and repaired.value is not None:
+            second = self._quality.review(
+                repaired.value.text.strip(),
+                acts=generation.acts,
+                user_text=user_text,
+                recent_turns=recent_turns,
+            )
+            if second.accepted:
+                return dataclasses.replace(
+                    generation, outcome=repaired, quality=second, repaired=True
+                )
+            verdict = second
+
+        # One rewrite was the budget. Saying nothing is worse than a good
+        # reply and better than one that contradicts its own decision
+        # (prohibition 9, and the existing `on_rejection: suppress` posture).
+        return dataclasses.replace(
+            generation,
+            outcome=dataclasses.replace(
+                generation.outcome,
+                accepted=False,
+                value=None,
+                failure=ValidationFailure(
+                    stage=Stage.SEMANTIC,
+                    reason_code=verdict.issues[0] if verdict.issues else "quality_rejected",
+                    detail=verdict.detail,
+                    validator=self._quality.name,
+                ),
+            ),
+            quality=verdict,
+            repaired=True,
+        )
+
+    async def _repair(
+        self,
+        *,
+        rejected_text: str,
+        verdict: QualityVerdict,
+        acts: DialogueAct,
+        user_text: str,
+        recent_turns: Sequence[ConversationTurn],
+        expression: ExpressionContext,
+        snapshot: StateSnapshot | None,
+        run_id: str | None,
+        event_id: str | None,
+        tool_success_ids: Sequence[str],
+    ) -> StructuredOutcome[ReplyDraft]:
+        template = self._prompts.get(REPAIR_PROMPT_ID)
+        content = template.render(
+            identity=self._identity.render_for_prompt(),
+            expression=expression.render(),
+            recent_conversation=self._render_history(recent_turns) or NO_HISTORY,
+            dialogue_acts=acts.render(),
+            user_message=user_text,
+            rejected_reply=rejected_text,
+            problems=self._quality.describe(verdict),
+        )
+        return await self._structured.generate(
+            ReplyDraft,
+            (LLMMessage(role="user", content=content),),
+            purpose=REPAIR_PURPOSE,
+            pipeline=self._structured_pipeline(),
+            context=ValidationContext(
+                purpose=REPAIR_PURPOSE,
+                run_id=run_id,
+                event_id=event_id,
+                snapshot=snapshot,
+                extras={"tool_success_ids": list(tool_success_ids)},
+            ),
+            run_id=run_id,
+            event_id=event_id,
+            temperature=self._policy.generation.temperature,
+            max_tokens=self._policy.generation.max_tokens,
+            priority="P0",
+            prompt_id=REPAIR_PROMPT_ID,
+            prompt_version=template.prompt_version,
         )
 
     # --- dialogue acts (spec 16.1) -----------------------------------------
@@ -208,6 +380,7 @@ class ConversationEngine:
         recent_turns: Sequence[ConversationTurn],
         memories: Sequence[RetrievalCandidate] = (),
         acts: DialogueAct | None = None,
+        expression: ExpressionContext | None = None,
     ) -> BuiltContext:
         builder = ContextBuilder()
         builder.add(
@@ -242,6 +415,17 @@ class ConversationEngine:
             priority=40,
             source="episodic_memory",
         )
+        if expression is not None and not expression.is_empty:
+            # IMPORTANT rather than REQUIRED: under context pressure she can
+            # still answer without knowing her own mood, but not without her
+            # identity or the message (spec 27.1, 27.2).
+            builder.add(
+                "expression",
+                expression.render(),
+                requirement=Requirement.IMPORTANT,
+                priority=70,
+                source="dynamic_state",
+            )
         if acts is not None:
             builder.add(
                 "dialogue_acts",
