@@ -15,6 +15,7 @@ from app.memory.encoding import (
     user_directed_ratio,
 )
 from app.memory.engine import MemoryEngine
+from app.memory.models import EpisodicMemory
 from app.memory.policy import MemoryPolicy
 from app.memory.retrieval import MemoryRetriever, build_match_query
 from app.memory.segmentation import EpisodeSegmenter
@@ -335,6 +336,41 @@ async def test_recall_strengthens_and_counts(
 def test_retriever_reads_only_active_memories(memories, memory_policy, clock) -> None:
     retriever = MemoryRetriever(memories, memory_policy.retrieval, clock=clock)
     assert retriever.retrieve("なんでもいい", now=clock.now()) == ()
+
+
+@pytest.mark.parametrize("question", ["何歳だっけ？", "いつからの記憶がある？"])
+def test_autobiographical_questions_recall_genesis_memory(
+    question, memories, memory_policy, clock
+) -> None:
+    """Regression: short Japanese wording must not hide a generated life."""
+    occurred_at = clock.now() - timedelta(days=19 * 365)
+    episode = memories.open_episode(
+        conversation_id=None,
+        origin="simulated_past",
+        started_at=occurred_at,
+    )
+    memory = EpisodicMemory(
+        memory_id="mem_autobiography",
+        episode_id=episode.episode_id,
+        origin="simulated_past",
+        summary="2007年7月に誕生し、現在は19歳になった。",
+        topics=("生涯", "成長"),
+        importance=0.5,
+        emotional_intensity=0.2,
+        accessibility=0.02,
+        occurred_at=occurred_at,
+        created_at=occurred_at,
+        updated_at=clock.now(),
+    )
+    assert memories.insert_memory(memory)
+
+    found = MemoryRetriever(
+        memories, memory_policy.retrieval, clock=clock
+    ).retrieve(question, now=clock.now())
+
+    assert found
+    assert found[0].memory_id == memory.memory_id
+    assert found[0].relevance == 1.0
 
 
 # --- reconstruction and semantic memory -------------------------------------

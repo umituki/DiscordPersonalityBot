@@ -88,7 +88,11 @@ class DiscordGateway:
 
         @client.event
         async def on_ready() -> None:  # pragma: no cover - requires a gateway
-            logger.info("discord connected as %s", client.user)
+            # Publish an explicit presence.  Relying on the library default can
+            # preserve an invisible/offline session state across reconnects,
+            # even though the gateway itself is healthy and messages work.
+            await client.change_presence(status=discord.Status.online)
+            logger.info("discord connected as %s presence=online", client.user)
 
         @client.event
         async def on_message(message: Message) -> None:  # pragma: no cover
