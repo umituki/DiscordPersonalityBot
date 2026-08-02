@@ -107,11 +107,25 @@ class AttachmentPolicy(_Frozen):
     separation_tolerance_from_security: float = 0.70
 
 
+class UserModelPolicy(_Frozen):
+    """Spec 14: a momentary state must not become a trait."""
+
+    state_estimate_rate: float = Field(default=0.40, ge=0.0, le=1.0)
+    state_estimate_decay_per_hour: float = Field(default=0.25, ge=0.0, le=1.0)
+    trait_evidence_required: int = Field(default=6, ge=1)
+    trait_gain_per_evidence: float = 0.02
+    trait_max_per_event: float = 0.03
+    provisional_until_observations: int = Field(default=5, ge=1)
+    model_error_tolerance: float = Field(default=0.30, ge=0.0, le=1.0)
+    max_per_event: float = Field(default=0.10, ge=0.0, le=1.0)
+
+
 class RelationshipPolicy(_Frozen):
     policy_version: int = 1
     dimensions: Dimensions = Dimensions()
     repair: RepairPolicy = RepairPolicy()
     attachment: AttachmentPolicy = AttachmentPolicy()
+    user_model: UserModelPolicy = UserModelPolicy()
 
     @classmethod
     def load(cls, path: Path | str) -> RelationshipPolicy:

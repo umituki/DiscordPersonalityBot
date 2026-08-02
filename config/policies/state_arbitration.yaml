@@ -36,7 +36,9 @@ domains:
     max_delta_per_event: 0.05
     min_evidence_count: 1
   attachment:
-    max_delta_per_event: 0.04
+    # activation は速い信号、expectancy は遅い信号。ドメインの上限は速い側に
+    # 合わせ、細かい上限は engine 側の per-key 制限で与える (spec 13.2)。
+    max_delta_per_event: 0.15
     min_evidence_count: 1
   beliefs:
     max_delta_per_event: 0.10
@@ -44,6 +46,11 @@ domains:
     max_delta_per_event: 0.05
   user_model:
     max_delta_per_event: 0.10
+  # 観察回数などのカウンタ。心理量ではないので上限を設けない。
+  user_model_counters:
+    value_min: 0.0
+    value_max: null
+    max_delta_per_event: null
   goals:
     max_delta_per_event: 0.30
   habits:

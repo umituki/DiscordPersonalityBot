@@ -11,6 +11,7 @@ from app.events.model import EventPayload, register_payload
 
 RELATIONSHIP_UPDATED = "RELATIONSHIP_UPDATED"
 ATTACHMENT_UPDATED = "ATTACHMENT_UPDATED"
+USER_MODEL_UPDATED = "USER_MODEL_UPDATED"
 
 
 @register_payload(RELATIONSHIP_UPDATED)
@@ -26,3 +27,14 @@ class AttachmentUpdatedPayload(EventPayload):
     changes: dict[str, float]
     reason_code: str = ""
     separation_days: float = 0.0
+
+
+@register_payload(USER_MODEL_UPDATED)
+class UserModelUpdatedPayload(EventPayload):
+    changes: dict[str, float]
+    observation_count: int = 0
+    #: True while the model rests on too few observations to be trusted.
+    provisional: bool = True
+    #: The event violated an expectation — a discrepancy, not yet a conclusion
+    #: about whether the USER changed or the model was wrong (spec 14).
+    model_error: bool = False

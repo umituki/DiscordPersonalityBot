@@ -68,3 +68,17 @@ attachment:
   withdrawal_from_unresolved: 0.35
   # security が高いほど分離に耐えられる
   separation_tolerance_from_security: 0.70
+
+user_model:
+  # spec 14: 一時状態を Trait へ即一般化しない
+  # 状態推定は速く動き、特性推定は繰り返し観察がなければ動かない
+  state_estimate_rate: 0.40
+  state_estimate_decay_per_hour: 0.25
+  trait_evidence_required: 6
+  trait_gain_per_evidence: 0.02
+  trait_max_per_event: 0.03
+  # 観察が少ないうちの印象は provisional
+  provisional_until_observations: 5
+  # モデルが外れたとき、「相手が変わった」と「自分の見立てが違った」は別物
+  model_error_tolerance: 0.30
+  max_per_event: 0.10

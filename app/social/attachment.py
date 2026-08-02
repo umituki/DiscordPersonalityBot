@@ -122,7 +122,7 @@ class AttachmentEngine:
         changes: dict[str, float] = {}
         for key, raw_target in targets.items():
             previous = current[key]
-            new_value = _clamp(self._bounded(previous, raw_target))
+            new_value = _clamp(self._bounded(key, previous, raw_target))
             if abs(new_value - previous) < 1e-6:
                 continue
             proposals.append(
@@ -160,8 +160,19 @@ class AttachmentEngine:
         return SubscriberResult(proposals=tuple(proposals), events=(updated,))
 
     # --- helpers -----------------------------------------------------------
-    def _bounded(self, previous: float, target: float) -> float:
-        limit = self._policy.max_per_event
+    #: Activation is the fast part of attachment; the expectancies are slow
+    #: (spec 13.2). Both stay under the domain's arbitration ceiling.
+    _KEY_LIMITS = {
+        ACTIVATION: 0.15,
+        PROXIMITY_DESIRE: 0.12,
+        REASSURANCE_NEED: 0.12,
+        WITHDRAWAL_TENDENCY: 0.12,
+        FELT_SECURITY: 0.04,
+        SEPARATION_SECURITY: 0.04,
+    }
+
+    def _bounded(self, key: str, previous: float, target: float) -> float:
+        limit = min(self._KEY_LIMITS.get(key, self._policy.max_per_event), 0.15)
         delta = max(-limit, min(limit, target - previous))
         return previous + delta
 

@@ -43,6 +43,7 @@ from app.psychology.policy import PsychologyPolicy
 from app.social.attachment import AttachmentEngine
 from app.social.policy import RelationshipPolicy
 from app.social.relationship import RelationshipEngine
+from app.social.user_model import SocialCognitionEngine
 from app.llm.client import TracedLLMClient
 from app.llm.ollama import OllamaClient
 from app.llm.prompts import PromptRegistry
@@ -107,6 +108,7 @@ class Application:
     relationship_policy: RelationshipPolicy
     relationship: RelationshipEngine
     attachment: AttachmentEngine
+    social_cognition: SocialCognitionEngine
     appraisal: AppraisalEngine
     emotion: EmotionEngine
     mood: MoodEngine
@@ -295,6 +297,9 @@ class Application:
         attachment_engine = AttachmentEngine(
             relationship_policy.attachment, clock=resolved_clock
         )
+        social_cognition_engine = SocialCognitionEngine(
+            relationship_policy.user_model, clock=resolved_clock
+        )
 
         # Update order follows the layers: immediate psychology first, then the
         # adaptive layer that reads it (spec 9.1, 9.5).
@@ -303,6 +308,7 @@ class Application:
         bus.register(need_engine, kind="psychology", order=40)
         bus.register(relationship_engine, kind="psychology", order=50)
         bus.register(attachment_engine, kind="psychology", order=60)
+        bus.register(social_cognition_engine, kind="psychology", order=70)
 
         processor = EventProcessor(
             db=db,
@@ -377,6 +383,7 @@ class Application:
             relationship_policy=relationship_policy,
             relationship=relationship_engine,
             attachment=attachment_engine,
+            social_cognition=social_cognition_engine,
             appraisal=appraisal_engine,
             emotion=emotion_engine,
             mood=mood_engine,

@@ -45,6 +45,7 @@ _LAYERS: Mapping[str, int] = MappingProxyType(
         "beliefs": ADAPTIVE,
         "self_schema": ADAPTIVE,
         "user_model": ADAPTIVE,
+        "user_model_counters": ADAPTIVE,
         "goals": ADAPTIVE,
         "habits": ADAPTIVE,
         "subjective_memory": ADAPTIVE,

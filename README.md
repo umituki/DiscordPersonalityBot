@@ -8,8 +8,8 @@
 
 ## 現在の実装状況
 
-仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 5
-（Immediate Psychology）まで**完了。Phase 6 以降は未着手。
+仕様 Section 35 のロードマップに従い、順番に実装している。現在は **Phase 6 の途中**（Relationship / Attachment / Social Cognition）まで完了。
+Phase 6 の残り（Beliefs / Self Model）と Phase 7 以降は未着手。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -19,7 +19,8 @@
 | 3 | Basic Discord conversation + Output Guard | 実装済み |
 | 4 | Context / Episode / Memory | 実装済み |
 | 5 | Immediate Psychology（Appraisal / Emotion / Mood / Needs） | 実装済み |
-| 6+ | Social / Agency / Life / Growth / Society / Genesis | 未着手 |
+| 6 | Social / Belief / Self | Relationship・Attachment・USER Model は実装済み / Beliefs・Self Model は未着手 |
+| 7+ | Agency / Life / Growth / Society / Genesis | 未着手 |
 
 ### Phase 1 で動作するパイプライン
 
@@ -89,6 +90,18 @@ Event
 同じ出来事が常に同じ感情になるわけではない。Appraisal が文脈で変わるため。
 LLM が使えないときは appraisal が既定値へ degrade し、状態は壊れない。
 
+### Phase 6 で動作する社会的認知
+
+```text
+Appraisal + Event
+→ Relationship : 接触量で上がるのは familiarity だけ。trust は証拠が要る
+                 謝罪は conflict_residue を下げるが trust は 1 も戻さない
+→ Attachment   : activation / felt_security と「一般的傾向」を分離
+                 security が高いほど分離に強く、依存は増えない
+→ Social Cogn. : 「いまそう見える」と「そういう人だ」を分離
+                 一度の短いメッセージで trait は動かない（証拠 6 件が必要）
+```
+
 主要な不変条件はすべてテストで保護している（`tests/invariants/`）。
 
 ## セットアップ
@@ -130,6 +143,7 @@ app/
   events/        Event model / store / bus / dispatcher
   memory/        segmentation / encoding / retrieval / forgetting / engine
   psychology/    appraisal / emotion / mood / needs
+  social/        relationship / attachment / user model / signals
   interfaces/    discord/ (adapter, dto, gateway)
   llm/           LLMClient / Ollama / prompts / structured / validation
   state/         proposal / snapshot / ownership / dependency_graph / arbitrator / committer / policy

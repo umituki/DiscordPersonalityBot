@@ -29,6 +29,18 @@ from tests.unit.test_psychology import (  # noqa: F401 - shared fixtures
 
 pytestmark = pytest.mark.invariant
 
+#: Everything below the deep layer. Nothing outside this set may be committed
+#: by a single event (spec 9.1, 34.2-5).
+ADAPTIVE_AND_IMMEDIATE = {
+    "emotion",
+    "mood",
+    "needs",
+    "relationship",
+    "attachment",
+    "user_model",
+    "user_model_counters",
+}
+
 
 def test_each_psychology_domain_has_its_own_writer() -> None:
     assert ownership.owner_of("emotion") == EmotionEngine.name
@@ -102,7 +114,7 @@ async def test_a_strong_event_still_commits_only_immediate_state(
         assert outcome.interpretation.appraisal.source == "degraded"
 
         changed = {target.split(".")[0] for target in outcome.committed_targets}
-        assert changed <= {"emotion", "mood", "needs", "relationship", "attachment"}
+        assert changed <= ADAPTIVE_AND_IMMEDIATE
         assert changed & {"personality", "values", "narrative_identity"} == set()
         assert application.state.get("personality", "openness") is None
     finally:
@@ -135,6 +147,6 @@ async def test_emotion_state_survives_the_full_pipeline(
         # Emotion and mood only appear if something actually activated; needs
         # and relationship always respond to contact. What must never happen is
         # a deep domain.
-        assert domains <= {"emotion", "mood", "needs", "relationship", "attachment"}
+        assert domains <= ADAPTIVE_AND_IMMEDIATE
     finally:
         application.db.close()

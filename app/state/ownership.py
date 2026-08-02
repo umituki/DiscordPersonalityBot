@@ -41,6 +41,12 @@ _OWNERSHIP: Mapping[str, DomainOwnership] = MappingProxyType(
             DomainOwnership("beliefs", "belief_engine", "spec 9.3 / 12"),
             DomainOwnership("self_schema", "self_engine", "spec 9.3 / 12.4"),
             DomainOwnership("user_model", "social_cognition_engine", "spec 9.3 / 14"),
+            # Counters (observations, evidence tallies) are bookkeeping, not
+            # psychological magnitudes: they are unbounded and belong in their
+            # own domain rather than distorting the 0..1 model space.
+            DomainOwnership(
+                "user_model_counters", "social_cognition_engine", "spec 14 bookkeeping"
+            ),
             DomainOwnership("goals", "goal_engine", "spec 9.3 / 15.2"),
             DomainOwnership("habits", "habit_engine", "spec 9.3 / 15.3"),
             DomainOwnership("personality", "growth_engine", "spec 9.3 / 12.1"),
