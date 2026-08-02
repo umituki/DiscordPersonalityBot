@@ -125,6 +125,20 @@ def test_a_finished_trace_is_stored(tracer, traces, clock) -> None:
     assert rows[0]["total_ms"] == 7000
 
 
+def test_a_finished_trace_can_receive_later_gateway_marks(tracer, traces, clock) -> None:
+    trace = tracer.start(channel_id=CHANNEL)
+    tracer.mark(trace, "reply_ended_at")
+    tracer.finish(trace, outcome="suppressed")
+    clock.advance(seconds=1)
+    tracer.mark(trace, "typing_stopped_at")
+
+    tracer.finish(trace, outcome="suppressed")
+
+    rows = traces.recent()
+    assert len(rows) == 1
+    assert rows[0]["typing_stopped_at"] is not None
+
+
 def test_the_model_time_comes_from_the_calls_the_run_made(
     tracer, traces, llm_calls_repo, clock
 ) -> None:

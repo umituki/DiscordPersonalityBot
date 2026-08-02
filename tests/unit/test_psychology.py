@@ -110,6 +110,19 @@ async def test_appraisal_reads_the_event(appraisal_engine, make_event, snapshots
     assert appraisal.reason
 
 
+async def test_appraisal_prompt_uses_the_events_time(
+    appraisal_engine, make_event, snapshots, clock
+) -> None:
+    event_time = clock.now() - timedelta(days=3650)
+    engine = appraisal_engine([VALID_APPRAISAL])
+    event = make_event(occurred_at=event_time)
+
+    await engine.interpret(event, snapshots.capture(persist=False))
+
+    request = engine._structured._client.requests[0]  # noqa: SLF001
+    assert event_time.isoformat() in request.messages[0].content
+
+
 async def test_model_confidence_is_capped(
     appraisal_engine, make_event, snapshots, psychology_policy
 ) -> None:

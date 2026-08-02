@@ -237,6 +237,7 @@ class ConversationService:
                 outcome=outcome,
                 generation=generation,
                 suppressed=True,
+                trace=trace,
             )
 
         return ConversationResult(
@@ -340,6 +341,10 @@ class ConversationService:
     def _finish(self, trace: ConversationTrace | None, *, outcome: str) -> None:
         if self._tracer is not None:
             self._tracer.finish(trace, outcome=outcome)
+
+    def finish_trace(self, trace: ConversationTrace | None, *, outcome: str) -> None:
+        """Persist marks added by the gateway while the typing context exits."""
+        self._finish(trace, outcome=outcome)
 
     # --- background work (patch spec 5.4) ----------------------------------
     def schedule_background(self, work: Awaitable[None]) -> None:

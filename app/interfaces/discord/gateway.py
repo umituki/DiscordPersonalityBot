@@ -117,26 +117,47 @@ class DiscordGateway:
         # USER's wait is measured from when the message arrived rather than
         # from when the service got round to it.
         trace = self._service.start_trace(inbound)
+        result: ConversationResult | None = None
+        sent: Any = None
+        send_failed = False
+        exceptional_exit = False
+        try:
+            async with self._typing(message):
+                _mark(trace, "typing_started_at")
+                result = await self._service.handle_inbound(inbound, trace=trace)
+                if result.should_send and result.outbound is not None:
+                    _mark(trace, "discord_send_started_at")
+                    try:
+                        sent = await self._send(message, result.outbound.text)
+                    except Exception as exc:  # noqa: BLE001 - the send is the fragile part
+                        _mark(trace, "discord_send_ended_at")
+                        logger.exception(
+                            "failed to send reply channel=%s", result.outbound.channel_id
+                        )
+                        await self._service.record_send_failure(result, repr(exc))
+                        send_failed = True
+                    else:
+                        _mark(trace, "discord_send_ended_at")
+        except BaseException:
+            exceptional_exit = True
+            raise
+        finally:
+            # This mark belongs after ``__aexit__`` on every path, including
+            # suppression, send failure, model error and cancellation.
+            _mark(trace, "typing_stopped_at")
+            if exceptional_exit:
+                self._service.finish_trace(trace, outcome="failed")
 
-        async with self._typing(message):
-            _mark(trace, "typing_started_at")
-            result = await self._service.handle_inbound(inbound, trace=trace)
-            if not result.should_send or result.outbound is None:
-                return result
-
-            _mark(trace, "discord_send_started_at")
-            try:
-                sent = await self._send(message, result.outbound.text)
-            except Exception as exc:  # noqa: BLE001 - the send is the fragile part
-                _mark(trace, "discord_send_ended_at")
-                logger.exception("failed to send reply channel=%s", result.outbound.channel_id)
-                await self._service.record_send_failure(result, repr(exc))
-                return result
-            _mark(trace, "discord_send_ended_at")
+        assert result is not None
+        if not result.should_send or result.outbound is None:
+            self._service.finish_trace(trace, outcome="suppressed")
+            return result
+        if send_failed:
+            self._service.finish_trace(trace, outcome="send_failed")
+            return result
 
         # Outside the indicator: the reply is already delivered, and the
         # post-send run must not keep "typing" on screen after it.
-        _mark(trace, "typing_stopped_at")
         await self._service.confirm_sent(
             result,
             message_id=str(getattr(sent, "id", "unknown")),

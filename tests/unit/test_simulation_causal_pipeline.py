@@ -411,16 +411,22 @@ async def test_a_life_without_a_consolidation_job_still_runs(simulation) -> None
 
 
 # --- 24 the block's event count is real -------------------------------------
-async def test_a_block_records_how_many_events_it_produced(simulation, db) -> None:
+async def test_a_block_records_how_many_events_it_produced(
+    simulation, db, event_store
+) -> None:
     engine, scaffold = simulation()
     await engine.run(scaffold, max_blocks=6)
 
     blocks = SimulationRepository(db).blocks(engine.latest_run().simulation_id)
     assert blocks
-    assert all(block.event_count > 1 for block in blocks), (
-        "an experience, its knowledge exposures and the block event all count"
-    )
-    assert len({block.event_count for block in blocks}) >= 1
+    experiences = {
+        event.payload.block_id: event
+        for event in event_store.by_types((SIMULATED_EXPERIENCE,))
+    }
+    assert all(block.event_count > 1 for block in blocks)
+    for block in blocks:
+        root = experiences[block.block_id]
+        assert block.event_count == len(event_store.chain(root.root_event_id))
 
 
 # --- 15 the life is remembered, selectively ---------------------------------

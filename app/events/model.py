@@ -253,7 +253,12 @@ class Event(BaseModel):
         **kwargs: Any,
     ) -> Event:
         """Derive a causally linked event in the same root chain (spec 8.3)."""
-        kwargs.setdefault("origin", self.origin)
+        origin = kwargs.setdefault("origin", self.origin)
+        # A derived part of a simulated life happened in that life, not when
+        # the simulation happened to run on the machine. Callers may still
+        # provide a more precise simulated moment explicitly.
+        if origin == "simulated_past":
+            kwargs.setdefault("occurred_at", self.occurred_at)
         return Event.create(
             event_type=event_type,
             category=category,

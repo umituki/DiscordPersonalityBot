@@ -146,7 +146,10 @@ class AppraisalEngine:
             identity=self._identity.render_for_prompt(),
             situation=situation,
             recent_conversation=self._render_history(),
-            current_time=to_iso(self._clock.now()),
+            # The event's time is the time being appraised. This is identical
+            # to wall time for an ordinary live message, and remains in the
+            # correct historical period for simulation and replay.
+            current_time=to_iso(event.occurred_at),
         )
 
         outcome = await self._structured.generate(

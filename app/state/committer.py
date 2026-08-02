@@ -74,8 +74,10 @@ class StateCommitter:
         result: ArbitrationResult,
         delivery_ids: Sequence[str] = (),
         now: datetime | None = None,
+        run_finished_at: datetime | None = None,
     ) -> CommitResult:
         moment = now or self._clock.now()
+        finished_at = run_finished_at or moment
         change_ids: list[str] = []
         failure_ids: list[str] = []
 
@@ -144,7 +146,7 @@ class StateCommitter:
             self._runs.finish(
                 run_id=run_id,
                 status="committed" if result.accepted else "rejected",
-                now=moment,
+                now=finished_at,
                 proposals_received=result.received,
                 proposals_accepted=result.accepted_count,
                 proposals_rejected=result.rejected_proposal_count,

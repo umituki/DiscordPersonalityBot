@@ -377,6 +377,7 @@ class PastSimulationEngine:
         )
         outcome = await self._processor.process(event, mode="simulation")
         self._record_appraisal(outcome, progress)
+        experience_events = self._persisted_event_count(outcome)
         # Patch spec 15.1: the experience becomes episode material and goes
         # through segmentation and the Encoding Gate like anything else. It is
         # never written straight into the memory table (prohibition 3).
@@ -386,23 +387,30 @@ class PastSimulationEngine:
         self._repository.set_block_summary(block.block_id, narration.summary)
 
         # --- and so does whatever the world was saying at the time ----------
-        block_exposures = self._expose_period_knowledge(
+        self._expose_period_knowledge(
             moment=started_at,
             seed=seed,
             block_id=block.block_id,
             progress=progress,
         )
 
-        # Patch spec 24 (Patch D): the count is the events this block really
-        # produced, not a constant. The experience, plus one event per piece of
-        # period knowledge that reached her, plus the block event itself.
-        event_count = 1 + block_exposures + 1
+        # Patch spec 24: count persisted Events, not knowledge-repository rows.
+        # The block event itself is included; any events it derives are added
+        # after its processing outcome is known.
+        event_count = experience_events + 1
         block_event = self._block_event(
             block, event, occurred_at=ended_at, event_count=event_count
         )
-        await self._processor.process(block_event, mode="simulation")
+        block_outcome = await self._processor.process(block_event, mode="simulation")
+        event_count = experience_events + self._persisted_event_count(block_outcome)
         self._repository.set_block_event_count(block.block_id, event_count)
         return block.model_copy(update={"event_count": event_count}), ended_at
+
+    @staticmethod
+    def _persisted_event_count(outcome) -> int:
+        """How many immutable EventStore rows one processor call produced."""
+        derived = 0 if outcome.dispatch is None else len(outcome.dispatch.derived_events)
+        return int(outcome.newly_stored) + derived
 
     @staticmethod
     def _record_appraisal(outcome, progress: SimulationProgress) -> None:

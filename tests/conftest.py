@@ -275,5 +275,14 @@ def temp_config(tmp_path: Path) -> AppConfig:
     config = load_config(root_dir=tmp_path, env={}, use_dotenv=False)
     # No model host in tests: one attempt, no backoff waiting.
     return config.model_copy(
-        update={"llm": config.llm.model_copy(update={"max_attempts": 1})}
+        update={
+            "llm": config.llm.model_copy(
+                update={
+                    # Keep tests isolated from an Ollama instance that may be
+                    # running on the developer's machine.
+                    "base_url": "http://127.0.0.1:1",
+                    "max_attempts": 1,
+                }
+            )
+        }
     )

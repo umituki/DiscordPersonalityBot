@@ -51,9 +51,12 @@ class ConversationTraceRepository:
             for name, value in ((stage, trace.at(stage)) for stage in _STAGE_COLUMNS)
         }
         placeholders = ", ".join("?" for _ in _COLUMNS)
+        updates = ", ".join(
+            f"{column} = excluded.{column}" for column in _COLUMNS if column != "trace_id"
+        )
         self._db.execute(
-            f"INSERT OR IGNORE INTO conversation_traces ({', '.join(_COLUMNS)}) "
-            f"VALUES ({placeholders})",
+            f"INSERT INTO conversation_traces ({', '.join(_COLUMNS)}) "
+            f"VALUES ({placeholders}) ON CONFLICT(trace_id) DO UPDATE SET {updates}",
             (
                 trace.trace_id,
                 trace.event_id,

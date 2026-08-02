@@ -132,6 +132,42 @@ async def test_derived_events_are_persisted_with_the_commit(
     assert chain[1].parent_event_id == root.event_id
 
 
+async def test_simulation_commits_state_and_derived_events_at_the_simulated_time(
+    processor, bus, state_repo, event_store, make_event, recording_subscriber, clock
+) -> None:
+    from datetime import timedelta
+
+    from app.events.bus import SubscriberResult
+    from tests.conftest import SignalPayload
+
+    simulated = clock.now() - timedelta(days=3650)
+    state_repo.write_value(
+        domain="emotion", key="joy", value=0.3, confidence=None, now=simulated,
+        run_id=None, event_id=None, expected_version=None,
+    )
+
+    class Deriving:
+        name = "emotion_engine"
+
+        async def handle(self, event, view):
+            follow_up = event.child(
+                event_type="TEST_SIGNAL", category="internal", actor_type="yui",
+                source_type="unit_test", payload=SignalPayload(label="derived"), clock=clock,
+            )
+            return SubscriberResult(
+                proposals=emotion_proposal(event, view), events=(follow_up,)
+            )
+
+    bus.register(Deriving())
+    root = make_event(occurred_at=simulated, origin="simulated_past")
+
+    outcome = await processor.process(root, mode="simulation")
+
+    assert outcome.status == "committed"
+    assert state_repo.get("emotion", "joy").updated_at == simulated
+    assert event_store.chain(root.event_id)[1].occurred_at == simulated
+
+
 async def test_no_subscribers_is_a_clean_outcome(processor, make_event, runs) -> None:
     outcome = await processor.process(make_event())
     assert outcome.status == "no_subscribers"

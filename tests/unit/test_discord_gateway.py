@@ -235,12 +235,27 @@ async def test_typing_stops_when_generation_raises(service_factory, clock) -> No
     async def explode(_inbound, **kwargs):
         raise RuntimeError("the model is gone")
 
+    class Trace:
+        def __init__(self) -> None:
+            self.marks: list[str] = []
+
+        def mark(self, stage: str) -> None:
+            self.marks.append(stage)
+
+    trace = Trace()
+    finished: list[str] = []
+    service.start_trace = lambda _inbound: trace  # type: ignore[method-assign]
+    service.finish_trace = (  # type: ignore[method-assign]
+        lambda _trace, *, outcome: finished.append(outcome)
+    )
     service.handle_inbound = explode  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError):
         await gateway.handle_message(message)
 
     assert channel.events == ["start", "stop"]
+    assert trace.marks[-1] == "typing_stopped_at"
+    assert finished == ["failed"]
 
 
 async def test_no_typing_for_a_message_that_will_not_be_answered(

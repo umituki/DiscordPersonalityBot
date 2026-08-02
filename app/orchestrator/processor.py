@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal, Protocol
 
@@ -185,6 +185,7 @@ class EventProcessor:
         commit_attempt: int = 1,
     ) -> ProcessingOutcome:
         run_mode = mode or self._mode
+        effective_now = self._effective_now(event, run_mode)
         newly_stored = await asyncio.to_thread(self._events.append, event)
         run, snapshot = await asyncio.to_thread(
             self._open_run, event, run_mode, retry_of, commit_attempt
@@ -210,7 +211,7 @@ class EventProcessor:
             interpretation=interpretation,
             run_id=run.run_id,
             mode=run_mode,
-            effective_now=self._effective_now(event, run_mode),
+            effective_now=effective_now,
         )
 
         try:
@@ -231,10 +232,25 @@ class EventProcessor:
                 error=repr(exc),
             )
 
+        # Derived events describe effects that happened at the run's
+        # psychological moment. During simulation and replay their constructors
+        # may have used the machine clock, so normalise them before the atomic
+        # append. ``recorded_at`` remains the real machine time.
+        if run_mode in ("simulation", "replay") and dispatch.derived_events:
+            dispatch = replace(
+                dispatch,
+                derived_events=tuple(
+                    derived.model_copy(update={"occurred_at": effective_now})
+                    for derived in dispatch.derived_events
+                ),
+            )
+
         arbitration = self._arbitrator.arbitrate(dispatch.proposals, snapshot)
 
         try:
-            commit = await asyncio.to_thread(self._commit, run, event, dispatch, arbitration)
+            commit = await asyncio.to_thread(
+                self._commit, run, event, dispatch, arbitration, effective_now
+            )
         except ConcurrentStateWriteError as exc:
             # Patch spec 7.2: the snapshot went stale while this run was
             # thinking. Nothing was committed, so nothing is inconsistent —
@@ -353,6 +369,7 @@ class EventProcessor:
         event: Event,
         dispatch: DispatchResult,
         arbitration: ArbitrationResult,
+        effective_now: datetime,
     ) -> CommitResult:
         with self._db.transaction():
             # Follow-up events belong to the same atomic unit as the state they
@@ -364,6 +381,10 @@ class EventProcessor:
                 root_event_id=event.event_id,
                 result=arbitration,
                 delivery_ids=dispatch.delivery_ids,
+                now=effective_now,
+                # Processing telemetry measures the actual run. State history
+                # measures when the simulated/replayed event happened.
+                run_finished_at=self._clock.now(),
             )
 
     def _conflict_run(
