@@ -275,7 +275,14 @@ async def test_a_whole_turn_is_traced(traced_service, traces, clock) -> None:
     assert row["outcome"] == "sent"
     assert row["admitted_at"] is not None
     assert row["state_commit_started_at"] is not None
-    assert row["dialogue_started_at"] is not None
+    # Phase 3 §47: the stages Phase 3 added are separately visible, so the
+    # latency it costs can be measured rather than guessed at.
+    assert row["social_interpretation_started_at"] is not None
+    assert row["social_interpretation_ended_at"] is not None
+    assert row["reference_retrieval_started_at"] is not None
+    assert row["reference_retrieval_ended_at"] is not None
+    assert row["realization_started_at"] is not None
+    assert row["realization_ended_at"] is not None
     assert row["reply_ended_at"] is not None
     assert row["outbound_projected_at"] is not None
     assert row["run_id"] == result.outcome.run.run_id

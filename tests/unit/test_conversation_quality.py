@@ -14,14 +14,16 @@ from datetime import timedelta
 import pytest
 
 from app.conversation.expression import FLOOR, NOTHING, ExpressionContext
-from app.conversation.models import ConversationTurn, DialogueAct
+from app.conversation.models import ConversationTurn
 from app.conversation.quality import ConversationQualityGuard, QualityIssue
 from app.conversation.text import looks_like_question
 from app.state.snapshot import StateSnapshot
 from app.state.value import StateValue
 
-NO_QUESTION = DialogueAct(acknowledge=True, question_need="none")
-MAY_ASK = DialogueAct(acknowledge=True, ask_followup=True, question_need="needed")
+#: Phase 3 §19: the guard now takes the SurfacePlan's question budget rather
+#: than a decision object, so these are simply whether a question is allowed.
+NO_QUESTION = False
+MAY_ASK = True
 
 
 @pytest.fixture
@@ -45,21 +47,21 @@ def turn(clock, speaker: str, content: str, minutes: int = 1) -> ConversationTur
 def test_the_same_greeting_twice_is_rejected(quality) -> None:
     """Patch spec 21 Case A, verbatim from the 2026-08-02 run."""
     verdict = quality.review(
-        "初めまして、はじめまして。", acts=NO_QUESTION, user_text="初めまして～"
+        "初めまして、はじめまして。", allows_question=NO_QUESTION, user_text="初めまして～"
     )
     assert verdict.rejected
     assert QualityIssue.DUPLICATE_GREETING in verdict.issues
 
 
 def test_one_greeting_is_fine(quality) -> None:
-    verdict = quality.review("はじめまして。", acts=NO_QUESTION, user_text="初めまして～")
+    verdict = quality.review("はじめまして。", allows_question=NO_QUESTION, user_text="初めまして～")
     assert verdict.accepted
 
 
 # --- 10.2 verbatim echo -----------------------------------------------------
 def test_reading_the_users_message_back_is_rejected(quality) -> None:
     user_text = "きょうは仕事のあとに図書館へ行ってきた"
-    verdict = quality.review(user_text + "。", acts=NO_QUESTION, user_text=user_text)
+    verdict = quality.review(user_text + "。", allows_question=NO_QUESTION, user_text=user_text)
     assert verdict.rejected
     assert QualityIssue.ECHOES_USER in verdict.issues
 
@@ -68,7 +70,7 @@ def test_quoting_a_short_phrase_is_not_an_echo(quality) -> None:
     """A reply that picks up the USER's words and adds to them is normal."""
     verdict = quality.review(
         "図書館いいね。わたしも静かなところは好き。",
-        acts=NO_QUESTION,
+        allows_question=NO_QUESTION,
         user_text="きょうは図書館へ行ってきた",
     )
     assert verdict.accepted
@@ -81,7 +83,7 @@ def test_asking_again_what_she_just_asked_is_rejected(quality, clock) -> None:
         turn(clock, "user", "いや、特に用はないんだ", minutes=2),
     )
     verdict = quality.review(
-        "どうしましたか？", acts=MAY_ASK, user_text="いや、特に用はないんだ", recent_turns=recent
+        "どうしましたか？", allows_question=MAY_ASK, user_text="いや、特に用はないんだ", recent_turns=recent
     )
     assert verdict.rejected
     assert QualityIssue.REPEATED_QUESTION in verdict.issues
@@ -90,7 +92,7 @@ def test_asking_again_what_she_just_asked_is_rejected(quality, clock) -> None:
 def test_a_new_question_is_allowed_when_the_decision_asked_for_one(quality, clock) -> None:
     recent = (turn(clock, "yui", "どうしましたか？", minutes=3),)
     verdict = quality.review(
-        "その本、どんな話だった？", acts=MAY_ASK, user_text="本を読んだ", recent_turns=recent
+        "その本、どんな話だった？", allows_question=MAY_ASK, user_text="本を読んだ", recent_turns=recent
     )
     assert verdict.accepted
 
@@ -98,7 +100,7 @@ def test_a_new_question_is_allowed_when_the_decision_asked_for_one(quality, cloc
 # --- 10.4 the decision said no question -------------------------------------
 def test_a_question_against_the_decision_is_rejected(quality) -> None:
     """Prohibition 9: ``ask_followup=false`` なのに質問を許す — never."""
-    verdict = quality.review("そうなんだ。何かあった？", acts=NO_QUESTION, user_text="ねえ")
+    verdict = quality.review("そうなんだ。何かあった？", allows_question=NO_QUESTION, user_text="ねえ")
     assert verdict.rejected
     assert QualityIssue.UNWANTED_QUESTION in verdict.issues
 
@@ -106,27 +108,31 @@ def test_a_question_against_the_decision_is_rejected(quality) -> None:
 def test_question_need_optional_without_ask_followup_still_means_no_question(
     quality,
 ) -> None:
-    acts = DialogueAct(acknowledge=True, question_need="optional")
-    assert acts.wants_question is False
-    assert quality.review("どうしたの？", acts=acts, user_text="ねえ").rejected
+    from app.conversation.social_interpretation import SocialInterpretation
+    from app.conversation.surface import SurfacePlanner
+
+    social = SocialInterpretation(primary_move="acknowledge", question="optional")
+    # 「あってもよい」は「する」ではない。initiative が high でない限り 0 (§19, §20).
+    assert SurfacePlanner.question_budget(social) == 0
+    assert quality.review("どうしたの？", allows_question=False, user_text="ねえ").rejected
 
 
 def test_a_statement_is_not_read_as_a_question(quality) -> None:
     assert looks_like_question("どうも、ありがとう") is False
-    assert quality.review("どうも、ありがとう。", acts=NO_QUESTION, user_text="はい").accepted
+    assert quality.review("どうも、ありがとう。", allows_question=NO_QUESTION, user_text="はい").accepted
 
 
 # --- 10.5 / 10.6 repetition and emptiness -----------------------------------
 def test_the_same_sentence_twice_in_one_reply_is_rejected(quality) -> None:
     verdict = quality.review(
-        "うれしいな。ほんとうにうれしいことだ。うれしいな。", acts=NO_QUESTION, user_text="よかったね"
+        "うれしいな。ほんとうにうれしいことだ。うれしいな。", allows_question=NO_QUESTION, user_text="よかったね"
     )
     assert verdict.rejected
     assert QualityIssue.SELF_REPETITION in verdict.issues
 
 
 def test_an_empty_reply_is_rejected(quality) -> None:
-    verdict = quality.review("   ", acts=NO_QUESTION, user_text="ねえ")
+    verdict = quality.review("   ", allows_question=NO_QUESTION, user_text="ねえ")
     assert verdict.rejected
     assert verdict.issues == (QualityIssue.EMPTY,)
 
@@ -139,7 +145,7 @@ def test_the_same_stock_sentence_every_turn_is_rejected(quality, clock) -> None:
         turn(clock, "yui", "そう言ってもらえてうれしい。", minutes=3),
     )
     verdict = quality.review(
-        "そう言ってもらえてうれしい。", acts=NO_QUESTION, user_text="また話そう", recent_turns=recent
+        "そう言ってもらえてうれしい。", allows_question=NO_QUESTION, user_text="また話そう", recent_turns=recent
     )
     assert verdict.rejected
     assert QualityIssue.FORMULAIC in verdict.issues
@@ -148,14 +154,14 @@ def test_the_same_stock_sentence_every_turn_is_rejected(quality, clock) -> None:
 def test_saying_something_once_before_is_not_formulaic(quality, clock) -> None:
     recent = (turn(clock, "yui", "そう言ってもらえてうれしい。", minutes=3),)
     verdict = quality.review(
-        "そう言ってもらえてうれしい。", acts=NO_QUESTION, user_text="また話そう", recent_turns=recent
+        "そう言ってもらえてうれしい。", allows_question=NO_QUESTION, user_text="また話そう", recent_turns=recent
     )
     assert verdict.accepted
 
 
 # --- the rejection is legible to the repair prompt --------------------------
 def test_the_rejection_is_described_in_words(quality) -> None:
-    verdict = quality.review("初めまして、はじめまして。", acts=NO_QUESTION, user_text="初めまして～")
+    verdict = quality.review("初めまして、はじめまして。", allows_question=NO_QUESTION, user_text="初めまして～")
     described = quality.describe(verdict)
     assert "挨拶" in described
     assert described.startswith("- ")
@@ -235,11 +241,15 @@ def test_a_low_confidence_guess_about_the_user_is_not_stated(clock) -> None:
     assert "つかれている" in ExpressionContext.from_snapshot(sure).render()
 
 
-def test_the_dialogue_goal_travels_with_the_expression(clock) -> None:
-    context = ExpressionContext.from_snapshot(
-        snapshot_with(clock, {}), acts=DialogueAct(acknowledge=True, goal="have_fun")
+def test_the_expression_does_not_carry_the_turns_intention(clock) -> None:
+    """Phase 3: the intention is rendered by the social interpretation. Holding
+    it here as well would put one decision in two places."""
+    import inspect
+
+    parameters = set(
+        inspect.signature(ExpressionContext.from_snapshot).parameters
     )
-    assert any("have_fun" in line for line in context.lines)
+    assert parameters == {"snapshot"}
 
 
 def test_no_snapshot_is_not_an_error(clock) -> None:

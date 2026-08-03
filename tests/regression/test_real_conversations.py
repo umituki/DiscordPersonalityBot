@@ -49,15 +49,18 @@ NOW = datetime(2026, 8, 2, 12, 0, tzinfo=timezone.utc)
 #: A decision that does not call for a question. Both real failures asked one
 #: anyway (patch spec 8.1, prohibition 9).
 NO_QUESTION_ACTS = (
-    '{"acknowledge": true, "self_disclose": true, "goal": "maintain_connection", '
-    '"mode": "smalltalk", "question_need": "none", "reciprocity": "high"}'
+    '{"primary_move": "acknowledge", "secondary_move": "self_disclose", '
+    '"initiative": "high", "question": "none", "tone": "light", '
+    '"response_energy": "normal", "topic_direction": "stay", '
+    '"user_state_hint": "unknown", "self_disclosure": "light", "reason": ""}'
 )
 
 #: The decision that produced 「どうしましたか？」 in the real run: an errand was
 #: assumed, so a question was needed.
 ASKING_ACTS = (
-    '{"acknowledge": true, "ask_followup": true, "goal": "understand_user", '
-    '"mode": "task", "question_need": "needed"}'
+    '{"primary_move": "clarify", "initiative": "balanced", "question": "necessary", '
+    '"tone": "neutral", "response_energy": "normal", "topic_direction": "expand", '
+    '"user_state_hint": "unknown", "self_disclosure": "none", "reason": ""}'
 )
 
 
@@ -78,7 +81,11 @@ class SequencedClient:
 
     async def generate(self, request):
         schema = request.format_schema or {}
-        queue = self._acts if schema.get("title") == "DialogueAct" else self._replies
+        queue = (
+            self._acts
+            if schema.get("title") == "SocialInterpretation"
+            else self._replies
+        )
         self.purposes.append(request.purpose)
         if not queue:
             raise AssertionError(f"unscripted call: {request.purpose}")

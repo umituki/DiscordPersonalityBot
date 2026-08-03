@@ -1510,6 +1510,28 @@ _0020_RETRIEVAL_STAGES = Migration(
 )
 
 
+_0021_REALIZATION_TRACE = Migration(
+    version=21,
+    name="realization_trace",
+    statements=(
+        # Rebuild spec Phase 3 §47. Phase 3 adds a model call to every turn, so
+        # the stages it adds have to be separately visible or the latency gate
+        # is unmeasurable.
+        #
+        # ``dialogue_started_at``/``dialogue_ended_at`` stay for rows written
+        # before this migration. Nothing marks them now: the decision stage is
+        # the social interpretation, and holding the same stage under two names
+        # is how a timeline stops meaning anything.
+        "ALTER TABLE conversation_traces ADD COLUMN social_interpretation_started_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN social_interpretation_ended_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN reference_retrieval_started_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN reference_retrieval_ended_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN realization_started_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN realization_ended_at TEXT",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1531,6 +1553,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0018_REBUILD_EPOCHS,
     _0019_COMMON_GROUND,
     _0020_RETRIEVAL_STAGES,
+    _0021_REALIZATION_TRACE,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

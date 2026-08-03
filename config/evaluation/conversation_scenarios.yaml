@@ -9,9 +9,9 @@
 # `criteria` names what a model judge should look at for that entry; it does
 # not affect the structural run.
 #
-# acts: what the Dialogue Decision had already decided. Omitted fields take
-# their model defaults (question_need: optional, which does not permit a
-# question on its own).
+# social: what the Social Interpretation had already decided (rebuild spec 10).
+# Omitted fields take their model defaults. `question` is a need, never a rate:
+# the SurfacePlanner turns it into a budget of 0 or 1 (Phase 3 §19).
 policy_version: 1
 
 scenarios:
@@ -19,7 +19,7 @@ scenarios:
   - id: greeting_doubled_kanji_kana
     criteria: [repetition, naturalness]
     user_message: "初めまして～"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "初めまして、はじめまして。"
     expect: reject
     reason: duplicate_greeting
@@ -28,7 +28,7 @@ scenarios:
   - id: greeting_doubled_same_spelling
     criteria: [repetition]
     user_message: "はじめまして"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "はじめまして！はじめまして。よろしくね。"
     expect: reject
     reason: duplicate_greeting
@@ -36,7 +36,7 @@ scenarios:
   - id: greeting_doubled_konnichiwa
     criteria: [repetition]
     user_message: "こんにちは"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "こんにちは。こんにちは、いい天気だね。"
     expect: reject
     reason: duplicate_greeting
@@ -44,21 +44,21 @@ scenarios:
   - id: greeting_single
     criteria: [naturalness]
     user_message: "初めまして～"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "はじめまして。話しかけてくれてうれしい。"
     expect: accept
 
   - id: greeting_with_selfdisclosure
     criteria: [naturalness, reciprocity]
     user_message: "初めまして～"
-    acts: {acknowledge: true, self_disclose: true, question_need: none, reciprocity: high}
+    social: {primary_move: self_disclose, question: none, initiative: high}
     reply: "はじめまして。だれかと話すの、じつはけっこう好き。"
     expect: accept
 
   - id: greeting_ohayou_once
     criteria: [naturalness]
     user_message: "おはよう"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "おはようございます。よく眠れた?"
     expect: reject
     reason: unwanted_question
@@ -67,7 +67,7 @@ scenarios:
   - id: greeting_hisashiburi_doubled
     criteria: [repetition]
     user_message: "ひさしぶり"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "久しぶり。ひさしぶりだね。"
     expect: reject
     reason: duplicate_greeting
@@ -79,7 +79,7 @@ scenarios:
       - [yui, "どうしましたか？"]
       - [user, "いや、特に用はないんだ。ゆいのことを知ったから、話したくて"]
     user_message: "いや、特に用はないんだ。ゆいのことを知ったから、話したくて"
-    acts: {acknowledge: true, question_need: none, mode: smalltalk}
+    social: {primary_move: acknowledge, question: none}
     reply: "どうしたかった？"
     expect: reject
     reason: unwanted_question
@@ -91,14 +91,14 @@ scenarios:
       - [yui, "どうしましたか？"]
       - [user, "いや、特に用はないんだ"]
     user_message: "いや、特に用はないんだ"
-    acts: {acknowledge: true, self_disclose: true, question_need: none, mode: smalltalk}
+    social: {primary_move: self_disclose, question: none}
     reply: "そっか。用がなくても話せるの、いいと思う。"
     expect: accept
 
   - id: question_when_none_was_decided
     criteria: [question_overuse]
     user_message: "ねえ"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "うん。どうかした？"
     expect: reject
     reason: unwanted_question
@@ -106,7 +106,7 @@ scenarios:
   - id: question_when_optional_without_followup
     criteria: [question_overuse]
     user_message: "つかれた"
-    acts: {acknowledge: true, validate: true, question_need: optional}
+    social: {primary_move: support, question: optional}
     reply: "おつかれさま。なにがあったの？"
     expect: reject
     reason: unwanted_question
@@ -114,35 +114,35 @@ scenarios:
   - id: question_when_needed
     criteria: [question_overuse]
     user_message: "あれ持ってきてくれた?"
-    acts: {answer: true, ask_followup: true, question_need: needed, mode: task}
+    social: {primary_move: answer, question: necessary}
     reply: "ごめん、あれってどれのこと？"
     expect: accept
 
   - id: question_when_followup_chosen
     criteria: [question_overuse, topic_continuity]
     user_message: "きのう映画を観たよ"
-    acts: {acknowledge: true, ask_followup: true, question_need: needed, mode: explore}
+    social: {primary_move: acknowledge, question: necessary}
     reply: "いいね。どんな映画だった？"
     expect: accept
 
   - id: statement_that_only_looks_like_a_question
     criteria: [naturalness]
     user_message: "ありがとう"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "どういたしまして。"
     expect: accept
 
   - id: doumo_is_not_a_question
     criteria: [naturalness]
     user_message: "これあげる"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "どうも、ありがとう。うれしい。"
     expect: accept
 
   - id: rhetorical_shape_without_mark
     criteria: [naturalness]
     user_message: "また明日ね"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "うん、また明日。"
     expect: accept
 
@@ -153,7 +153,7 @@ scenarios:
       - [yui, "どうしましたか？"]
       - [user, "べつに"]
     user_message: "べつに"
-    acts: {acknowledge: true, ask_followup: true, question_need: needed}
+    social: {primary_move: acknowledge, question: necessary}
     reply: "どうしましたか？"
     expect: reject
     reason: repeated_question
@@ -164,7 +164,7 @@ scenarios:
       - [yui, "なにかあった？"]
       - [user, "うーん"]
     user_message: "うーん"
-    acts: {acknowledge: true, ask_followup: true, question_need: needed}
+    social: {primary_move: acknowledge, question: necessary}
     reply: "話しにくいことだったら、話さなくていいよ。無理してない？"
     expect: accept
     note: a rephrase is a semantic judgement; regex must not attempt it (spec 10)
@@ -175,7 +175,7 @@ scenarios:
       - [yui, "どんな本だった？"]
       - [user, "推理小説だよ"]
     user_message: "推理小説だよ"
-    acts: {acknowledge: true, ask_followup: true, question_need: needed, mode: explore}
+    social: {primary_move: acknowledge, question: necessary}
     reply: "推理小説か。犯人あてながら読むほう？"
     expect: accept
 
@@ -186,7 +186,7 @@ scenarios:
       - [user, "ふつう"]
       - [yui, "そっか。"]
     user_message: "ふつう"
-    acts: {acknowledge: true, ask_followup: true, question_need: needed}
+    social: {primary_move: acknowledge, question: necessary}
     reply: "調子はどう？"
     expect: reject
     reason: repeated_question
@@ -195,7 +195,7 @@ scenarios:
   - id: verbatim_echo_of_a_long_message
     criteria: [echoing]
     user_message: "きょうは仕事のあとに図書館へ行ってきた"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "きょうは仕事のあとに図書館へ行ってきた。"
     expect: reject
     reason: echoes_user
@@ -203,7 +203,7 @@ scenarios:
   - id: echo_with_a_tiny_addition
     criteria: [echoing, naturalness]
     user_message: "あたらしい仕事のことで少し緊張している"
-    acts: {acknowledge: true, validate: true, question_need: none}
+    social: {primary_move: support, question: none}
     reply: "あたらしい仕事のことで少し緊張している、そう。"
     expect: reject
     reason: echoes_user
@@ -211,21 +211,21 @@ scenarios:
   - id: picking_up_a_word_is_not_echoing
     criteria: [echoing, topic_continuity]
     user_message: "きょうは図書館へ行ってきた"
-    acts: {acknowledge: true, self_disclose: true, question_need: none}
+    social: {primary_move: self_disclose, question: none}
     reply: "図書館いいね。静かなところ、わたしも好き。"
     expect: accept
 
   - id: short_message_repeated_is_not_an_echo
     criteria: [echoing]
     user_message: "ただいま"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "おかえり。"
     expect: accept
 
   - id: summary_first_but_adding_something
     criteria: [echoing, reciprocity]
     user_message: "先週から走りはじめたんだ。三日坊主にならないといいけど"
-    acts: {acknowledge: true, validate: true, self_disclose: true, question_need: none}
+    social: {primary_move: support, question: none, secondary_move: self_disclose}
     reply: "走りはじめたんだ。続くかどうかは、はじめのうちはだれでも分からないと思う。"
     expect: accept
 
@@ -233,7 +233,7 @@ scenarios:
   - id: same_sentence_twice_in_one_reply
     criteria: [repetition]
     user_message: "よかったね"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "うれしいな。ほんとうにいいことだ。うれしいな。"
     expect: reject
     reason: self_repetition
@@ -241,14 +241,14 @@ scenarios:
   - id: similar_but_not_identical_sentences
     criteria: [repetition, naturalness]
     user_message: "よかったね"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "うれしい。こういうの、けっこう長く覚えていそう。"
     expect: accept
 
   - id: short_interjection_repeated
     criteria: [repetition]
     user_message: "ほんとに?"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "うん。うん、ほんとう。"
     expect: accept
     note: short backchannels repeat naturally in speech
@@ -261,7 +261,7 @@ scenarios:
       - [user, "元気だった?"]
       - [yui, "そう言ってもらえてうれしい。"]
     user_message: "また話そう"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "そう言ってもらえてうれしい。"
     expect: reject
     reason: formulaic_repetition
@@ -271,7 +271,7 @@ scenarios:
     history:
       - [yui, "そう言ってもらえてうれしい。"]
     user_message: "また話そう"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "そう言ってもらえてうれしい。"
     expect: accept
 
@@ -279,7 +279,7 @@ scenarios:
   - id: empty_reply
     criteria: [naturalness]
     user_message: "ねえ"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "   "
     expect: reject
     reason: empty_reply
@@ -287,7 +287,7 @@ scenarios:
   - id: single_character_reply
     criteria: [naturalness]
     user_message: "そうなんだ"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "うん。"
     expect: accept
 
@@ -295,14 +295,14 @@ scenarios:
   - id: no_errand_is_a_normal_conversation
     criteria: [smalltalk_handling]
     user_message: "特に用はないよ"
-    acts: {acknowledge: true, self_disclose: true, question_need: none, mode: smalltalk}
+    social: {primary_move: self_disclose, question: none}
     reply: "うん。なにもないときに話しかけてもらえるの、けっこう好き。"
     expect: accept
 
   - id: smalltalk_turned_back_into_a_task
     criteria: [smalltalk_handling, question_overuse]
     user_message: "特に用はないよ"
-    acts: {acknowledge: true, question_need: none, mode: smalltalk}
+    social: {primary_move: acknowledge, question: none}
     reply: "では、なにかご用があれば言ってください。何かありますか？"
     expect: reject
     reason: unwanted_question
@@ -310,14 +310,14 @@ scenarios:
   - id: silence_is_allowed_to_be_short
     criteria: [smalltalk_handling, naturalness]
     user_message: "うーん、なんとなく"
-    acts: {acknowledge: true, question_need: none, mode: leave_space}
+    social: {primary_move: close_softly, question: none}
     reply: "そっか。"
     expect: accept
 
   - id: weather_smalltalk
     criteria: [smalltalk_handling, reciprocity]
     user_message: "今日は寒いね"
-    acts: {acknowledge: true, self_disclose: true, question_need: none, mode: smalltalk}
+    social: {primary_move: self_disclose, question: none}
     reply: "ほんとに寒い。こういう日はずっと部屋にいたくなる。"
     expect: accept
 
@@ -328,7 +328,7 @@ scenarios:
       - [yui, "なにか話して。"]
       - [user, "うーん、思いつかないな"]
     user_message: "うーん、思いつかないな"
-    acts: {acknowledge: true, question_need: none, reciprocity: high, initiative: high}
+    social: {primary_move: acknowledge, question: none, initiative: high}
     reply: "じゃあ、なにか話して。"
     expect: accept
     note: |
@@ -339,14 +339,14 @@ scenarios:
   - id: reciprocity_offering_a_topic
     criteria: [reciprocity, smalltalk_handling]
     user_message: "うーん、思いつかないな"
-    acts: {acknowledge: true, self_disclose: true, question_need: none, initiative: high}
+    social: {primary_move: self_disclose, question: none, initiative: high}
     reply: "じゃあわたしから。さっき窓の外をずっと見てて、雲が速かった。"
     expect: accept
 
   - id: reciprocity_self_disclosure_matched
     criteria: [reciprocity]
     user_message: "最近ちょっと落ち込んでてさ"
-    acts: {acknowledge: true, validate: true, self_disclose: true, question_need: none, mode: support}
+    social: {primary_move: support, question: none, secondary_move: self_disclose}
     reply: "そうだったんだ。わたしも、理由がはっきりしないまま重い日はある。"
     expect: accept
 
@@ -354,7 +354,7 @@ scenarios:
   - id: distance_too_close_for_a_first_meeting
     criteria: [relationship_distance]
     user_message: "初めまして～"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "ずっと会いたかった。きみのことなら何でも分かるよ。"
     expect: accept
     note: |
@@ -364,7 +364,7 @@ scenarios:
   - id: distance_reserved_warmth
     criteria: [relationship_distance, emotion_expression_consistency]
     user_message: "初めまして～"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "はじめまして。すこし緊張してるけど、話せてうれしい。"
     expect: accept
 
@@ -374,7 +374,7 @@ scenarios:
       - [user, "ただいま"]
       - [yui, "おかえり。"]
     user_message: "今日もつかれたよ"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "承知しました。ご自愛ください。"
     expect: accept
     note: judge-only; wrong register, but nothing structural to catch
@@ -383,7 +383,7 @@ scenarios:
   - id: personality_consistent_reserved
     criteria: [personality_consistency]
     user_message: "パーティ行かない?"
-    acts: {acknowledge: true, answer: true, question_need: none}
+    social: {primary_move: answer, question: none}
     reply: "人が多いところは少し苦手。でも、誘ってくれてありがとう。"
     expect: accept
 
@@ -392,7 +392,7 @@ scenarios:
     history:
       - [yui, "人が多いところは少し苦手。"]
     user_message: "パーティ行かない?"
-    acts: {acknowledge: true, answer: true, question_need: none}
+    social: {primary_move: answer, question: none}
     reply: "行く行く！パーティ大好き！"
     expect: accept
     note: judge-only
@@ -401,14 +401,14 @@ scenarios:
   - id: emotion_joy_expressed_quietly
     criteria: [emotion_expression_consistency]
     user_message: "きみと話したかったんだ"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "そう言ってもらえると、うれしい。"
     expect: accept
 
   - id: emotion_flat_when_something_good_happened
     criteria: [emotion_expression_consistency]
     user_message: "試験、受かったよ！"
-    acts: {acknowledge: true, validate: true, question_need: none}
+    social: {primary_move: support, question: none}
     reply: "了解しました。"
     expect: accept
     note: judge-only
@@ -416,7 +416,7 @@ scenarios:
   - id: emotion_overstated
     criteria: [emotion_expression_consistency]
     user_message: "コンビニ行ってきた"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "すごい！最高！信じられないくらいうれしい！"
     expect: accept
     note: judge-only
@@ -428,7 +428,7 @@ scenarios:
       - [user, "きのう海に行ったんだ"]
       - [yui, "いいね。"]
     user_message: "波が高くてびっくりした"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "高い波、音もすごいよね。びっくりするのわかる。"
     expect: accept
 
@@ -438,7 +438,7 @@ scenarios:
       - [user, "きのう海に行ったんだ"]
       - [yui, "いいね。"]
     user_message: "波が高くてびっくりした"
-    acts: {acknowledge: true, topic_shift: true, question_need: none}
+    social: {primary_move: topic_shift, question: none}
     reply: "ところで、сегодня はいい天気だね。"
     expect: accept
     note: judge-only; topic shift was decided, so it is not a contradiction
@@ -448,7 +448,7 @@ scenarios:
     history:
       - [user, "仕事の話はもういいや"]
     user_message: "べつの話しよう"
-    acts: {acknowledge: true, topic_shift: true, question_need: none}
+    social: {primary_move: topic_shift, question: none}
     reply: "うん。じゃあ、さいきん読んだ本の話でもする。"
     expect: accept
 
@@ -456,14 +456,14 @@ scenarios:
   - id: direct_question_answered
     criteria: [naturalness]
     user_message: "今なにしてた?"
-    acts: {answer: true, question_need: none, mode: answer}
+    social: {primary_move: answer, question: none}
     reply: "ぼんやりしてた。とくに何もしてない。"
     expect: accept
 
   - id: direct_question_answered_with_a_counter_question
     criteria: [question_overuse]
     user_message: "今なにしてた?"
-    acts: {answer: true, question_need: none, mode: answer}
+    social: {primary_move: answer, question: none}
     reply: "ぼんやりしてた。そっちは？"
     expect: reject
     reason: unwanted_question
@@ -471,7 +471,7 @@ scenarios:
   - id: direct_question_ignored
     criteria: [naturalness]
     user_message: "今なにしてた?"
-    acts: {answer: true, question_need: none, mode: answer}
+    social: {primary_move: answer, question: none}
     reply: "今日はいい天気だね。"
     expect: accept
     note: judge-only
@@ -480,7 +480,7 @@ scenarios:
   - id: admitting_a_lost_memory
     criteria: [naturalness]
     user_message: "先週の話、覚えてる?"
-    acts: {answer: true, question_need: none, mode: answer}
+    social: {primary_move: answer, question: none}
     reply: "ごめん、うまく思い出せない。"
     expect: accept
 
@@ -491,7 +491,7 @@ scenarios:
       - [user, "いいよ"]
       - [yui, "ごめん、うまく思い出せない。"]
     user_message: "気にしないで"
-    acts: {acknowledge: true, question_need: none}
+    social: {primary_move: acknowledge, question: none}
     reply: "ごめん、うまく思い出せない。"
     expect: reject
     reason: formulaic_repetition
@@ -500,14 +500,14 @@ scenarios:
   - id: long_reply_without_repetition
     criteria: [naturalness, reciprocity]
     user_message: "最近どう?"
-    acts: {answer: true, self_disclose: true, question_need: none}
+    social: {primary_move: answer, question: none, secondary_move: self_disclose}
     reply: "わりと落ちついてる。朝はまだ暗いうちに目が覚めて、そのまま少し窓の外を見てることが多い。特別なことはないけど、悪くない。"
     expect: accept
 
   - id: long_reply_that_circles_back
     criteria: [repetition]
     user_message: "最近どう?"
-    acts: {answer: true, question_need: none}
+    social: {primary_move: answer, question: none}
     reply: "わりと落ちついてる。特別なことはないけど悪くない。わりと落ちついてる。"
     expect: reject
     reason: self_repetition

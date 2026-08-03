@@ -12,8 +12,10 @@ One trace per inbound message, marked at the boundaries:
     appraisal_started / ended
     state_commit_started / ended
     memory_recall_started / ended
-    dialogue_started / ended
+    social_interpretation_started / ended
+    reference_retrieval_started / ended
     reply_started / ended
+      realization_started / ended
     discord_send_started / ended
     outbound_projected_at
     typing_stopped_at
@@ -52,9 +54,18 @@ STAGES: tuple[str, ...] = (
     "state_commit_ended_at",
     "memory_recall_started_at",
     "memory_recall_ended_at",
+    # Rebuild spec Phase 3 §47. ``dialogue_*`` is kept in the schema for rows
+    # written before Phase 3, but nothing marks it now: the decision stage is
+    # the social interpretation.
     "dialogue_started_at",
     "dialogue_ended_at",
+    "social_interpretation_started_at",
+    "social_interpretation_ended_at",
+    "reference_retrieval_started_at",
+    "reference_retrieval_ended_at",
     "reply_started_at",
+    "realization_started_at",
+    "realization_ended_at",
     "reply_ended_at",
     "discord_send_started_at",
     "discord_send_ended_at",

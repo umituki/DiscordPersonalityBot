@@ -27,7 +27,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Sequence
 
-from app.conversation.models import ConversationTurn, DialogueAct
+from app.conversation.models import ConversationTurn
 from app.conversation.text import looks_like_question
 
 MODULE = "conversation_quality_guard"
@@ -125,7 +125,7 @@ class ConversationQualityGuard:
         self,
         text: str,
         *,
-        acts: DialogueAct,
+        allows_question: bool,
         user_text: str,
         recent_turns: Sequence[ConversationTurn] = (),
     ) -> QualityVerdict:
@@ -150,9 +150,10 @@ class ConversationQualityGuard:
             issues.append(QualityIssue.ECHOES_USER)
             details.append("the reply is mostly the USER's own words")
 
-        if not acts.wants_question and looks_like_question(stripped):
-            # Patch spec 10.4 and 8.1. The decision said no question; asking
-            # one anyway means the prose and the decision disagree.
+        if not allows_question and looks_like_question(stripped):
+            # Patch spec 10.4 and 8.1, now spending the SurfacePlan's question
+            # budget (Phase 3 §19). The decision said no question; asking one
+            # anyway means the prose and the decision disagree.
             issues.append(QualityIssue.UNWANTED_QUESTION)
             details.append("a question was asked although the decision said not to")
 

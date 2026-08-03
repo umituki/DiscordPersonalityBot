@@ -29,7 +29,9 @@ from typing import Any, Literal, Protocol, Sequence
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.conversation.models import ConversationTurn, DialogueAct
+from app.conversation.models import ConversationTurn
+from app.conversation.social_interpretation import SocialInterpretation
+from app.conversation.surface import SurfacePlanner
 from app.conversation.quality import ConversationQualityGuard, QualityVerdict
 
 logger = logging.getLogger(__name__)
@@ -67,7 +69,7 @@ class Scenario:
     user_message: str
     reply: str
     expect: Expectation
-    acts: DialogueAct
+    social: SocialInterpretation
     history: tuple[tuple[str, str], ...] = ()
     reason: str | None = None
     criteria: tuple[str, ...] = ()
@@ -168,9 +170,11 @@ def _parse_scenario(entry: Any, path: Path) -> Scenario:
     if not isinstance(entry, dict):
         raise EvaluationError(f"scenario must be a mapping in {path}: {entry!r}")
     try:
-        acts = DialogueAct.model_validate(entry.get("acts") or {})
+        social = SocialInterpretation.model_validate(entry.get("social") or {})
     except Exception as exc:  # noqa: BLE001 - the file is hand-written
-        raise EvaluationError(f"invalid acts in {entry.get('id')!r}: {exc}") from exc
+        raise EvaluationError(
+            f"invalid social interpretation in {entry.get('id')!r}: {exc}"
+        ) from exc
 
     unknown = set(entry.get("criteria") or ()) - set(CRITERIA)
     if unknown:
@@ -188,7 +192,7 @@ def _parse_scenario(entry: Any, path: Path) -> Scenario:
         user_message=str(entry.get("user_message", "")),
         reply=str(entry["reply"]),
         expect=expect,
-        acts=acts,
+        social=social,
         history=history,
         reason=entry.get("reason"),
         criteria=tuple(entry.get("criteria") or ()),
@@ -208,7 +212,7 @@ class StructuralEvaluator:
         for scenario in scenarios:
             verdict = self._guard.review(
                 scenario.reply,
-                acts=scenario.acts,
+                allows_question=SurfacePlanner.question_budget(scenario.social) > 0,
                 user_text=scenario.user_message,
                 recent_turns=scenario.turns(),
             )

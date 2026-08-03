@@ -10,6 +10,11 @@ context:
   recent_turn_max_chars: 600
 
 generation:
+  # Phase 3 §34: realizer は appraisal より高くてよい。
+  # 高すぎると grounding repair が増えるので、実機評価で決める。
+  realizer_temperature: 0.85
+  # Phase 3 §25: 2〜5 例。多いと真似になる。
+  reference_limit: 4
   temperature: 0.8
   max_tokens: 400
   # spec 28.2: parse/schema 失敗のみ再試行する

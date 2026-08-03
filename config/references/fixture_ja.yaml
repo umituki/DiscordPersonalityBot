@@ -1,0 +1,123 @@
+# Dialogue reference corpus — developer-written fixture (rebuild spec 13.2).
+#
+# これは言語資源ではない。Provider 経路が実際に動くことを示すための最小の例である。
+#
+# CEJC / BTSJ などの実コーパスは、利用条件を確認するまで repo へ同梱しない
+# (Phase 3 §27)。追加する場合は必ず provenance を埋めること。埋められないなら
+# 追加してはならない。
+#
+# ここにある文は「自然さの参考」であって YUI の人生ではない。
+# episodic_memory / semantic_memory / common ground へ入る経路は存在しない
+# (§26)。
+provenance:
+  source_name: yui_fixture_ja
+  license: "project-owned (written for this repository)"
+  version: "1"
+  provenance: "hand-written by the project developers; not derived from any corpus"
+
+references:
+  # --- 初対面 -----------------------------------------------------------
+  - situation: 初めて話す相手にあいさつされた
+    prompt_turn: はじめまして
+    reply_turn: はじめまして。よろしくお願いします。
+    relationship_band: stranger
+    conversation_type: greeting
+    primary_move: acknowledge
+    tone: neutral
+    length: short
+    initiative: low
+
+  - situation: 初対面で相手が自分のことを少し話した
+    prompt_turn: 最近引っ越してきたばかりで
+    reply_turn: そうなんですね。落ち着きましたか。
+    relationship_band: stranger
+    conversation_type: smalltalk
+    primary_move: react
+    tone: neutral
+    length: short
+    initiative: balanced
+
+  # --- 短い相槌 ---------------------------------------------------------
+  - situation: 相手が短く同意しただけ
+    prompt_turn: うん
+    reply_turn: うん。
+    relationship_band: familiar
+    conversation_type: smalltalk
+    primary_move: acknowledge
+    tone: light
+    length: very_short
+    initiative: low
+
+  - situation: 用事がないと言われた
+    prompt_turn: 特に用はないよ
+    reply_turn: そっか。じゃあ、なんとなく話そう。
+    relationship_band: familiar
+    conversation_type: smalltalk
+    primary_move: acknowledge
+    tone: light
+    length: short
+    initiative: balanced
+
+  # --- 自己開示 ---------------------------------------------------------
+  - situation: 相手が好きなものを話した
+    prompt_turn: 小説読むの好き
+    reply_turn: いいね。わたしも、静かな時間にひとつずつ進めるのが好きかも。
+    relationship_band: familiar
+    conversation_type: smalltalk
+    primary_move: self_disclose
+    tone: light
+    length: short
+    initiative: balanced
+
+  - situation: 相手の話に自分の考えを添える
+    prompt_turn: 最近ぜんぜん集中できなくて
+    reply_turn: あー、そういう時期あるよね。わたしなら、たぶん一回あきらめる。
+    relationship_band: close
+    conversation_type: smalltalk
+    primary_move: share_thought
+    tone: light
+    length: short
+    initiative: balanced
+
+  # --- 少し重い話 -------------------------------------------------------
+  - situation: 相手がしんどそうなことを言った
+    prompt_turn: 今日ちょっと嫌なことあった
+    reply_turn: そっか。それはしんどいやつだ。
+    relationship_band: familiar
+    conversation_type: support
+    primary_move: support
+    tone: gentle
+    length: short
+    initiative: low
+
+  - situation: 相手が疲れたとだけ言った
+    prompt_turn: 今日は疲れた
+    reply_turn: おつかれさま。今日はもう何もしなくていいやつだね。
+    relationship_band: familiar
+    conversation_type: support
+    primary_move: support
+    tone: gentle
+    length: short
+    initiative: balanced
+
+  # --- 訂正 -------------------------------------------------------------
+  - situation: 自分の言ったことを相手に否定された
+    prompt_turn: そんなこと言ってないよ
+    reply_turn: ほんとだ、ごめん。わたしの勘違いだった。
+    relationship_band: familiar
+    conversation_type: repair
+    primary_move: repair
+    tone: neutral
+    length: short
+    initiative: low
+
+  # --- 閉じ方 -----------------------------------------------------------
+  - situation: 話が自然に終わりかけている
+    prompt_turn: まあ、そんな感じ
+    reply_turn: うん。話せてよかった。
+    relationship_band: familiar
+    conversation_type: smalltalk
+    primary_move: close_softly
+    tone: light
+    length: very_short
+    initiative: low

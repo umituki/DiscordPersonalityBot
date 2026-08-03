@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from app.clock import FixedClock
-from app.conversation.models import DialogueAct
+from app.conversation.social_interpretation import SocialInterpretation
 from app.conversation.text import looks_like_question
 from app.llm.errors import LLMTimeoutError
 from app.llm.ollama import OllamaClient
@@ -374,21 +374,21 @@ async def test_queue_wait_is_measured_separately_from_inference(
 
 
 # --- dialogue fallback (patch spec 3.5) -------------------------------------
-def test_the_dialogue_fallback_does_not_invent_an_intention() -> None:
-    fallback = DialogueAct.minimal()
+def test_the_social_fallback_does_not_invent_an_intention() -> None:
+    fallback = SocialInterpretation.minimal()
 
-    assert fallback.acknowledge is True
-    assert fallback.ask_followup is False
-    assert fallback.challenge is False
-    assert fallback.topic_shift is False
-    assert fallback.goal == "maintain_connection"
+    assert fallback.primary_move == "acknowledge"
+    assert fallback.question == "none"
+    assert fallback.topic_direction == "stay"
+    assert fallback.self_disclosure == "none"
+    assert fallback.source == "default"
 
 
 def test_a_direct_question_is_answered_even_by_the_fallback() -> None:
-    fallback = DialogueAct.minimal(direct_question=True)
+    fallback = SocialInterpretation.minimal(direct_question=True)
 
-    assert fallback.answer is True
-    assert fallback.ask_followup is False
+    assert fallback.primary_move == "answer"
+    assert fallback.question == "none"
 
 
 @pytest.mark.parametrize(

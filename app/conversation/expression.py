@@ -31,7 +31,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-from app.conversation.models import DialogueAct
 from app.state.snapshot import StateSnapshot
 
 MODULE = "expression_context"
@@ -118,14 +117,11 @@ class ExpressionContext:
         return not self.lines
 
     @classmethod
-    def from_snapshot(
-        cls,
-        snapshot: StateSnapshot | None,
-        *,
-        acts: DialogueAct | None = None,
-    ) -> ExpressionContext:
+    def from_snapshot(cls, snapshot: StateSnapshot | None) -> ExpressionContext:
+        """How she is, in words. The turn's intention is rendered separately by
+        the social interpretation, so it does not belong here too."""
         if snapshot is None:
-            return cls(lines=_dialogue_lines(acts))
+            return cls()
 
         lines: list[str] = []
         lines.extend(_emotion_lines(snapshot))
@@ -137,7 +133,6 @@ class ExpressionContext:
         lines.extend(_adaptation_lines(snapshot))
         lines.extend(_world_lines(snapshot))
         lines.extend(_user_model_lines(snapshot))
-        lines.extend(_dialogue_lines(acts))
         return cls(lines=tuple(lines))
 
 
@@ -251,12 +246,6 @@ def _user_model_lines(snapshot: StateSnapshot) -> Iterable[str]:
             continue
         yield f"相手について（推測）: {value.value.strip()}"
         return
-
-
-def _dialogue_lines(acts: DialogueAct | None) -> tuple[str, ...]:
-    if acts is None:
-        return ()
-    return (f"いまの会話のねらい: {acts.goal}",)
 
 
 __all__ = ["ExpressionContext", "MODULE"]

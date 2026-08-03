@@ -54,9 +54,10 @@ pytestmark = pytest.mark.invariant
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 8, 2, 12, 0, tzinfo=timezone.utc)
 
-ACTS = (
-    '{"acknowledge": true, "self_disclose": true, "goal": "maintain_connection", '
-    '"mode": "smalltalk", "question_need": "none", "reciprocity": "high"}'
+SOCIAL = (
+    '{"primary_move": "acknowledge", "initiative": "balanced", "question": "none", '
+    '"tone": "light", "response_energy": "normal", "topic_direction": "stay", '
+    '"user_state_hint": "unknown", "self_disclosure": "none", "reason": ""}'
 )
 
 #: The reply repeats what she remembered, so Stage 4 can see that it rests on
@@ -85,8 +86,8 @@ class PipelineClient:
     async def generate(self, request):
         schema = (request.format_schema or {}).get("title", "")
         self.purposes.append(request.purpose)
-        if schema == "DialogueAct":
-            text = ACTS
+        if schema == "SocialInterpretation":
+            text = SOCIAL
         elif schema == "MemoryRelevanceBatch":
             text = self._judge(request.messages[0].content)
         elif schema == "ReplyDraft":

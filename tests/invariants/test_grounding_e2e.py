@@ -47,9 +47,11 @@ pytestmark = pytest.mark.invariant
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 8, 2, 12, 0, tzinfo=timezone.utc)
 
-ACTS = (
-    '{"acknowledge": true, "self_disclose": true, "goal": "maintain_connection", '
-    '"mode": "smalltalk", "question_need": "none", "reciprocity": "high"}'
+SOCIAL = (
+    '{"primary_move": "acknowledge", "secondary_move": "self_disclose", '
+    '"initiative": "balanced", "question": "none", "tone": "light", '
+    '"response_energy": "normal", "topic_direction": "stay", '
+    '"user_state_hint": "unknown", "self_disclosure": "light", "reason": ""}'
 )
 
 #: The fabrication. No Activity was ever completed; no Event says so.
@@ -62,13 +64,17 @@ STILL_FABRICATED = '{"text": "さっき本を読んだところ。"}'
 
 class SequencedClient:
     def __init__(self, *, acts: list[str], replies: list[str]) -> None:
-        self._acts = list(acts)
+        self._social = list(acts)
         self._replies = list(replies)
         self.purposes: list[str] = []
 
     async def generate(self, request):
         schema = request.format_schema or {}
-        queue = self._acts if schema.get("title") == "DialogueAct" else self._replies
+        queue = (
+            self._social
+            if schema.get("title") == "SocialInterpretation"
+            else self._replies
+        )
         self.purposes.append(request.purpose)
         if not queue:
             raise AssertionError(f"unscripted call: {request.purpose}")
@@ -96,7 +102,7 @@ def grounded_conversation(
     """The real service, with the grounding guard wired as bootstrap wires it."""
 
     def build(*, replies: list[str], activities=None):
-        client = SequencedClient(acts=[ACTS] * 4, replies=replies)
+        client = SequencedClient(acts=[SOCIAL] * 6, replies=replies)
         generator = StructuredGenerator(
             client, prompts=prompt_registry, clock=clock, max_attempts=1
         )

@@ -38,6 +38,7 @@ from app.conversation.events import (
     YuiReplySuppressedPayload,
 )
 from app.conversation.policy import ConversationPolicy
+from app.conversation.surface import RelationshipBand, relationship_band
 from app.events.model import Event
 from app.grounding.context import GroundingContextBuilder
 from app.observability.trace import ConversationTrace, ConversationTracer
@@ -138,6 +139,9 @@ class ConversationService:
         #: Patch spec 19.2: where the USER's wait went, stage by stage. Optional
         #: because observability must never be a precondition for answering.
         self._tracer = tracer
+        #: The band she is currently in, kept so the hysteresis of §16 has a
+        #: previous value to resist moving away from.
+        self._band: RelationshipBand = "stranger"
         self._clock = clock or SystemClock()
 
     # --- inbound -----------------------------------------------------------
@@ -273,6 +277,7 @@ class ConversationService:
             event_id=event.event_id,
             tool_success_ids=tool_success_ids,
             grounding=grounding_context,
+            relationship_band=self._relationship_band(outcome.post_commit_snapshot),
             common_ground=(
                 self._common_ground.render(conversation.conversation_id)
                 if self._common_ground is not None
@@ -402,6 +407,23 @@ class ConversationService:
             self._memory.observe, sent, conversation_id=conversation.conversation_id
         )
         await self.run_memory_maintenance()
+
+    # --- relationship (rebuild spec Phase 3 §15, §16) ----------------------
+    def _relationship_band(self, snapshot) -> str:
+        """How close they are, as a band rather than as 0.41.
+
+        The realizer never sees the number. The band is remembered between
+        turns so the hysteresis has something to hold onto — otherwise a
+        familiarity hovering on a boundary would swing her between 丁寧語 and
+        タメ口 from one message to the next.
+        """
+        familiarity = 0.0
+        if snapshot is not None:
+            value = snapshot.get("relationship", "familiarity")
+            number = None if value is None else value.numeric
+            familiarity = 0.0 if number is None else float(number)
+        self._band = relationship_band(familiarity, current=self._band)
+        return self._band
 
     # --- tracing (patch spec 19.2) -----------------------------------------
     def start_trace(self, message: InboundMessage) -> ConversationTrace | None:

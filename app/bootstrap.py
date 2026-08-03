@@ -56,6 +56,10 @@ from app.events.store import EventStore
 from app.consolidation.events import DEEP_CONSOLIDATION_REVIEW
 from app.conversation.engine import ConversationEngine
 from app.conversation.common_ground import CommonGroundTracker
+from app.conversation.references import FixtureReferenceProvider, NullReferenceProvider
+from app.conversation.repetition import SurfaceRepetitionMonitor
+from app.conversation.social_interpretation import SocialInterpreter
+from app.conversation.surface import SurfacePlanner
 from app.conversation.guard import OutputGuard, OutputGuardPolicy
 from app.grounding.claims import ClaimExtractor, ClaimGroundingGuard
 from app.grounding.context import GroundingContextBuilder
@@ -458,6 +462,18 @@ class Application:
         # no way to run without them.
         claim_extractor = ClaimExtractor(grounding_policy)
         claim_guard = ClaimGroundingGuard(claim_extractor)
+        # Rebuild spec 13.2, Phase 3 §27-§28. A corpus is optional; a broken
+        # one must not stop her speaking, so a failed load degrades to no
+        # references rather than to no startup.
+        references = NullReferenceProvider()
+        corpus_path = resolved_config.references_dir / "fixture_ja.yaml"
+        if corpus_path.is_file():
+            try:
+                references = FixtureReferenceProvider.load(corpus_path)
+            except Exception:  # noqa: BLE001 - references are never load-bearing
+                logger.exception("dialogue reference corpus failed to load")
+        components["dialogue_reference_source"] = references.provenance.source_name
+
         conversation_engine = ConversationEngine(
             identity=identity,
             prompts=prompts,
@@ -465,6 +481,12 @@ class Application:
             guard=guard,
             policy=conversation_policy,
             grounding=claim_guard,
+            interpreter=SocialInterpreter(
+                identity=identity, prompts=prompts, structured=structured
+            ),
+            planner=SurfacePlanner(),
+            references=references,
+            repetition=SurfaceRepetitionMonitor(),
             clock=resolved_clock,
         )
 

@@ -222,10 +222,10 @@ async def test_engine_builds_identity_and_history_into_the_prompt(
     assert generation.context.includes("identity")
     assert generation.context.includes("current_message")
     assert "ただいま" in generation.context.get("recent_conversation").content
-    assert generation.prompt_version == "conversation_reply@v6"
-    # Spec 16.1: the acts were decided before the sentence was written.
-    assert generation.acts.chosen
-    assert generation.context.includes("dialogue_acts")
+    assert generation.prompt_version == "conversation_reply@v7"
+    # Rebuild spec 10: the social reading was decided before the sentence.
+    assert generation.social.moves
+    assert generation.context.includes("social_intent")
 
 
 async def test_engine_suppresses_a_guard_violation(

@@ -31,6 +31,13 @@ class ContextPolicy(_Frozen):
 
 class GenerationPolicy(_Frozen):
     temperature: float = Field(default=0.8, ge=0.0, le=2.0)
+    #: Phase 3 §34. The realizer may be warmer than a judgement call: it needs
+    #: variety, and grounding is what keeps the extra freedom honest. Too high
+    #: and every other reply needs a repair, so the real value comes from
+    #: measurement on hardware.
+    realizer_temperature: float = Field(default=0.85, ge=0.0, le=2.0)
+    #: Phase 3 §25. Two to five examples. More and the model copies them.
+    reference_limit: int = Field(default=4, ge=0, le=5)
     max_tokens: int = Field(default=400, gt=0)
     max_attempts: int = Field(default=2, ge=1)
     timeout_s: float = Field(default=90.0, gt=0)

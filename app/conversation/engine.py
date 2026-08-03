@@ -1,15 +1,24 @@
-"""Reply generation (spec 35 Phase 3, patch spec 8-10).
+"""Reply generation (rebuild spec 10-14, Phase 3).
 
-One reply is produced in four steps, in this order:
+One reply is produced in this order:
 
-    dialogue decision  → what kind of turn is this at all (spec 16.1)
-    expression context → how she currently is, in words (patch spec 9)
-    generation         → the sentence, plus the Output Guard
-    quality guard      → is this a reply a person would send (patch spec 10)
+    social interpretation → what does this turn ask of me?     (one model call)
+    surface plan          → how much room does the answer get? (Python only)
+    style hints           → what have I been overusing lately?
+    dialogue references   → how do people actually say this?   (no model call)
+    realization           → the Japanese, plus the Output Guard
+    quality + grounding   → would a person send this, and is it true?
 
-The order is the point. Deciding the acts after the sentence exists would make
-the decision a description of whatever the model wrote, and checking quality
-before the acts are known would leave nothing to check the prose against.
+The order is the point. Deciding the intention after the sentence exists would
+make the decision a description of whatever the model wrote, and checking the
+prose before the intention is known leaves nothing to check it against.
+
+Where the line falls: everything above ``realization`` decides *meaning and
+size*. None of it writes Japanese. Python does not append 「ね」 and does not
+prepend 「うん、」 — rules of that shape produce text that is locally correct and
+globally strange, and each fix needs another condition. The realizer writes the
+sentence; the stages around it decide what the sentence is for and box in what
+it is allowed to claim.
 """
 
 from __future__ import annotations
@@ -23,8 +32,21 @@ from app.clock import Clock, SystemClock, to_iso
 from app.context.builder import BuiltContext, ContextBuilder, Requirement
 from app.conversation.expression import ExpressionContext
 from app.conversation.guard import OutputGuard
-from app.conversation.models import ConversationTurn, DialogueAct, ReplyDraft
+from app.conversation.models import ConversationTurn, ReplyDraft
 from app.conversation.quality import ConversationQualityGuard, QualityVerdict
+from app.conversation.references import (
+    DialogueReference,
+    DialogueReferenceProvider,
+    DialogueReferenceQuery,
+    NullReferenceProvider,
+    render_references,
+)
+from app.conversation.repetition import StyleHints, SurfaceRepetitionMonitor
+from app.conversation.social_interpretation import (
+    SocialInterpretation,
+    SocialInterpreter,
+)
+from app.conversation.surface import RelationshipBand, SurfacePlan, SurfacePlanner
 from app.conversation.text import looks_like_question
 from app.grounding.claims import ClaimGroundingGuard, GroundingVerdict
 from app.grounding.models import GroundingContext
@@ -75,6 +97,9 @@ NO_HISTORY = "(まだ記録されたやりとりはない)"
 NO_MEMORIES = "(いま思い出せることはない)"
 NO_COMMON_GROUND = "(この会話でまだ前提になっていることはない)"
 NO_CORRECTION = "(訂正すべきことはない)"
+NO_STYLE_HINTS = "(とくに繰り返しはない)"
+NO_REFERENCES = "(参考にできる会話例はない)"
+NO_GROUNDING = "(いま確かなことは特にない)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,9 +109,14 @@ class ReplyGeneration:
     outcome: StructuredOutcome[ReplyDraft]
     context: BuiltContext
     prompt_version: str
-    #: Decided before the sentence was written (spec 16.1).
-    acts: DialogueAct = DialogueAct.minimal()
-    acts_source: str = "default"
+    #: Decided before the sentence was written (rebuild spec 10).
+    social: SocialInterpretation = SocialInterpretation()
+    #: How much room the answer got (rebuild spec 14). Python, no model call.
+    surface: SurfacePlan = SurfacePlan()
+    #: The examples handed to the realizer. Never memories (spec 13.3).
+    references: tuple[DialogueReference, ...] = ()
+    #: What she has been overusing lately. Advice, not a rule.
+    style_hints: StyleHints = StyleHints()
     #: How she was, in words rather than numbers (patch spec 9).
     expression: ExpressionContext = ExpressionContext()
     #: The last quality verdict, on whichever text is being returned.
@@ -118,6 +148,10 @@ class ConversationEngine:
         policy: ConversationPolicy,
         quality: ConversationQualityGuard | None = None,
         grounding: ClaimGroundingGuard | None = None,
+        interpreter: SocialInterpreter | None = None,
+        planner: SurfacePlanner | None = None,
+        references: DialogueReferenceProvider | None = None,
+        repetition: SurfaceRepetitionMonitor | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._identity = identity
@@ -125,6 +159,17 @@ class ConversationEngine:
         self._structured = structured
         self._guard = guard
         self._policy = policy
+        #: Rebuild spec 10. The one social reading of the turn.
+        self._interpreter = interpreter or SocialInterpreter(
+            identity=identity, prompts=prompts, structured=structured
+        )
+        #: Rebuild spec 14. Python only — a second model call to decide "short
+        #: and casual" would double the wait for a lookup (§32).
+        self._planner = planner or SurfacePlanner()
+        #: Spec 13.2. Optional by design: with no corpus the realizer runs on
+        #: an empty tuple, and speaking must never depend on one (§28).
+        self._references = references or NullReferenceProvider()
+        self._repetition = repetition or SurfaceRepetitionMonitor()
         #: Rebuild spec 15. Optional only so a caller that has no context to
         #: resolve against can still draft; when it is absent no claim is
         #: checked, which is why bootstrap always supplies one.
@@ -143,6 +188,79 @@ class ConversationEngine:
     def identity(self) -> Identity:
         return self._identity
 
+    async def plan_turn(
+        self,
+        *,
+        user_text: str,
+        recent_turns: Sequence[ConversationTurn] = (),
+        snapshot: StateSnapshot | None = None,
+        grounding: GroundingContext | None = None,
+        common_ground: str = "",
+        correction: str = "",
+        relationship_band: RelationshipBand = "acquaintance",
+        run_id: str | None = None,
+        event_id: str | None = None,
+        trace: "ConversationTrace | None" = None,
+    ) -> tuple[
+        SocialInterpretation, SurfacePlan, StyleHints, tuple[DialogueReference, ...]
+    ]:
+        """Everything decided before a word is written.
+
+        Split out so the debug preview runs exactly this and nothing else
+        (§46): a preview that took a different path would be a preview of a
+        different system. It writes nothing and sends nothing.
+        """
+        _mark(trace, "social_interpretation_started_at")
+        social = await self._interpreter.interpret(
+            user_text=user_text,
+            recent_conversation=self._render_history(recent_turns),
+            state_summary=self._state_summary(snapshot),
+            common_ground=common_ground,
+            relationship_band=relationship_band,
+            run_id=run_id,
+            event_id=event_id,
+        )
+        # §7: Common Ground is the authority on correction. If the tracker has
+        # already retracted a claim, this turn is a repair whatever the model
+        # made of 「違うよ」 — the decision belongs where the evidence is.
+        social = social.with_correction(correction)
+        _mark(trace, "social_interpretation_ended_at")
+
+        surface = self._planner.plan(
+            social,
+            user_text=user_text,
+            band=relationship_band,
+            # §22: an experience may only be disclosed as an experience when
+            # something says it happened.
+            grounded_experience=_has_lived_evidence(grounding),
+        )
+        hints = self._repetition.review(recent_turns)
+
+        _mark(trace, "reference_retrieval_started_at")
+        references = await self._retrieve_references(social, surface)
+        _mark(trace, "reference_retrieval_ended_at")
+        return social, surface, hints, references
+
+    async def _retrieve_references(
+        self, social: SocialInterpretation, surface: SurfacePlan
+    ) -> tuple[DialogueReference, ...]:
+        """Spec 13.2, §28. A corpus that is missing or broken is not an outage."""
+        query = DialogueReferenceQuery(
+            relationship_band=surface.relationship_band,
+            conversation_type=_conversation_type(social),
+            primary_move=social.primary_move,
+            tone=social.tone,
+            length=surface.length,
+            initiative=social.initiative,
+        )
+        try:
+            return await self._references.retrieve(
+                query, limit=self._policy.generation.reference_limit
+            )
+        except Exception:  # noqa: BLE001 - references are never load-bearing
+            logger.exception("dialogue reference lookup failed; continuing without")
+            return ()
+
     async def draft_reply(
         self,
         *,
@@ -156,25 +274,31 @@ class ConversationEngine:
         grounding: GroundingContext | None = None,
         common_ground: str = "",
         correction: str = "",
+        relationship_band: RelationshipBand = "acquaintance",
         trace: "ConversationTrace | None" = None,
     ) -> ReplyGeneration:
-        # Spec 16.1: decide what kind of response this is *before* writing it.
-        _mark(trace, "dialogue_started_at")
-        acts, acts_source = await self._choose_acts(
+        plan = await self.plan_turn(
             user_text=user_text,
             recent_turns=recent_turns,
             snapshot=snapshot,
+            grounding=grounding,
+            common_ground=common_ground,
+            correction=correction,
+            relationship_band=relationship_band,
             run_id=run_id,
             event_id=event_id,
+            trace=trace,
         )
-        _mark(trace, "dialogue_ended_at")
+        social, surface, hints, references = plan
 
         # Patch spec 9: the reply expresses the state the event produced, in
         # qualitative bands. Never a dump of the state table.
-        expression = ExpressionContext.from_snapshot(snapshot, acts=acts)
+        expression = ExpressionContext.from_snapshot(snapshot)
 
         template = self._prompts.get(PROMPT_ID)
-        context = self._build_context(user_text, recent_turns, memories, acts, expression)
+        context = self._build_context(
+            user_text, recent_turns, memories, social, surface, expression
+        )
 
         system_content = template.render(
             identity=context.get("identity").content,
@@ -193,7 +317,12 @@ class ConversationEngine:
                 if context.includes("relevant_memories")
                 else NO_MEMORIES
             ),
-            dialogue_acts=acts.render(),
+            # Rebuild spec 15.1: what she may speak of as having happened.
+            grounding_facts=_render_grounding(grounding),
+            social_intent=social.render(),
+            surface_plan=surface.render(),
+            style_hints=hints.render() or NO_STYLE_HINTS,
+            references=render_references(references) or NO_REFERENCES,
             # Rebuild spec 11. Empty is the honest reading when this
             # conversation has not asserted anything yet.
             common_ground=common_ground or NO_COMMON_GROUND,
@@ -201,6 +330,7 @@ class ConversationEngine:
             current_time=to_iso(self._clock.now()),
         )
 
+        _mark(trace, "realization_started_at")
         outcome = await self._structured.generate(
             ReplyDraft,
             (
@@ -218,19 +348,25 @@ class ConversationEngine:
             ),
             run_id=run_id,
             event_id=event_id,
-            temperature=self._policy.generation.temperature,
+            # §34: warmer than the appraisal on purpose. The appraisal wants
+            # stability; this wants a sentence that does not read like the last
+            # one. Grounding is what keeps the extra freedom honest.
+            temperature=self._policy.generation.realizer_temperature,
             max_tokens=self._policy.generation.max_tokens,
             priority="P0",  # a waiting USER outranks background work (spec 33)
             prompt_id=PROMPT_ID,
             prompt_version=template.prompt_version,
         )
+        _mark(trace, "realization_ended_at")
 
         generation = ReplyGeneration(
             outcome=outcome,
             context=context,
             prompt_version=template.prompt_version,
-            acts=acts,
-            acts_source=acts_source,
+            social=social,
+            surface=surface,
+            references=references,
+            style_hints=hints,
             expression=expression,
         )
         if not outcome.accepted or outcome.value is None:
@@ -273,7 +409,10 @@ class ConversationEngine:
         """
         text = generation.text or ""
         quality = self._quality.review(
-            text, acts=generation.acts, user_text=user_text, recent_turns=recent_turns
+            text,
+            allows_question=generation.surface.allows_question,
+            user_text=user_text,
+            recent_turns=recent_turns,
         )
         grounded = self._check_grounding(text, grounding)
         if quality.accepted and grounded.accepted:
@@ -284,7 +423,8 @@ class ConversationEngine:
             rejected_text=text,
             verdict=quality,
             grounded=grounded,
-            acts=generation.acts,
+            social=generation.social,
+            surface=generation.surface,
             user_text=user_text,
             recent_turns=recent_turns,
             expression=expression,
@@ -298,7 +438,7 @@ class ConversationEngine:
             second_text = repaired.value.text.strip()
             second = self._quality.review(
                 second_text,
-                acts=generation.acts,
+                allows_question=generation.surface.allows_question,
                 user_text=user_text,
                 recent_turns=recent_turns,
             )
@@ -364,7 +504,8 @@ class ConversationEngine:
         rejected_text: str,
         verdict: QualityVerdict,
         grounded: GroundingVerdict,
-        acts: DialogueAct,
+        social: SocialInterpretation,
+        surface: SurfacePlan,
         user_text: str,
         recent_turns: Sequence[ConversationTurn],
         expression: ExpressionContext,
@@ -378,7 +519,7 @@ class ConversationEngine:
             identity=self._identity.render_for_prompt(),
             expression=expression.render(),
             recent_conversation=self._render_history(recent_turns) or NO_HISTORY,
-            dialogue_acts=acts.render(),
+            dialogue_acts=social.render() + "\n" + surface.render(),
             user_message=user_text,
             rejected_reply=rejected_text,
             problems=self._describe_problems(verdict, grounded),
@@ -423,42 +564,6 @@ class ConversationEngine:
             )
         return "\n".join(part for part in parts if part.strip())
 
-    # --- dialogue acts (spec 16.1) -----------------------------------------
-    async def _choose_acts(
-        self,
-        *,
-        user_text: str,
-        recent_turns: Sequence[ConversationTurn],
-        snapshot: StateSnapshot | None,
-        run_id: str | None,
-        event_id: str | None,
-    ) -> tuple[DialogueAct, str]:
-        template = self._prompts.get(ACT_PROMPT_ID)
-        content = template.render(
-            identity=self._identity.render_for_prompt(),
-            recent_conversation=self._render_history(recent_turns) or NO_HISTORY,
-            user_message=user_text,
-            state_summary=self._state_summary(snapshot),
-        )
-        outcome = await self._structured.generate(
-            DialogueAct,
-            (LLMMessage(role="user", content=content),),
-            purpose=ACT_PURPOSE,
-            run_id=run_id,
-            event_id=event_id,
-            temperature=0.4,
-            max_tokens=200,
-            priority="P0",
-            prompt_id=ACT_PROMPT_ID,
-            prompt_version=template.prompt_version,
-        )
-        if outcome.accepted and outcome.value is not None and not outcome.value.is_empty:
-            return outcome.value, "llm"
-        # Without a decision, respond in the smallest defensible way rather
-        # than inventing an intention (spec 28.3, patch spec 3.5). A direct
-        # question is answered, because ignoring one is its own failure.
-        return DialogueAct.minimal(direct_question=looks_like_question(user_text)), "default"
-
     @staticmethod
     def _state_summary(snapshot: StateSnapshot | None) -> str:
         """A short, factual reading of current state for the act decision."""
@@ -479,7 +584,8 @@ class ConversationEngine:
         user_text: str,
         recent_turns: Sequence[ConversationTurn],
         memories: Sequence[RecalledMemory] = (),
-        acts: DialogueAct | None = None,
+        social: SocialInterpretation | None = None,
+        surface: SurfacePlan | None = None,
         expression: ExpressionContext | None = None,
     ) -> BuiltContext:
         builder = ContextBuilder()
@@ -526,10 +632,10 @@ class ConversationEngine:
                 priority=70,
                 source="dynamic_state",
             )
-        if acts is not None:
+        if social is not None:
             builder.add(
-                "dialogue_acts",
-                acts.render(),
+                "social_intent",
+                social.render() + ("\n" + surface.render() if surface else ""),
                 requirement=Requirement.REQUIRED,
                 priority=80,
                 source="dialogue_act_engine",
@@ -551,3 +657,42 @@ class ConversationEngine:
 
     def _structured_pipeline(self) -> ValidationPipeline:
         return ValidationPipeline([self._guard])
+
+
+def _conversation_type(social: SocialInterpretation) -> str:
+    """Which kind of exchange this is, for the reference lookup (§24)."""
+    if social.is_repair:
+        return "repair"
+    if social.primary_move == "support":
+        return "support"
+    if social.primary_move == "answer":
+        return "answer"
+    return "smalltalk"
+
+
+#: Evidence kinds that mean something actually happened to her, as opposed to
+#: something she knows or intends. Only these let her speak from experience.
+_LIVED_EVIDENCE = ("activity", "objective_event")
+
+
+def _has_lived_evidence(grounding: GroundingContext | None) -> bool:
+    """§22. 「わたしも昨日そうだった」 needs a yesterday that is on record."""
+    if grounding is None:
+        return False
+    return bool(grounding.of_kinds(_LIVED_EVIDENCE))
+
+
+def _render_grounding(grounding: GroundingContext | None, limit: int = 8) -> str:
+    """The facts she may speak of as hers (spec 15.1).
+
+    Deliberately short. This is not the whole grounding context — the guard
+    resolves against that — it is the handful she can actually refer to.
+    """
+    if grounding is None:
+        return NO_GROUNDING
+    lines = [
+        f"- {item.summary}"
+        for item in grounding.of_kinds(_LIVED_EVIDENCE + ("world_state", "tool_call"))
+        if item.summary.strip()
+    ]
+    return "\n".join(lines[:limit]) or NO_GROUNDING

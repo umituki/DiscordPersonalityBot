@@ -33,7 +33,13 @@ class Appraisal(BaseModel):
 #: Dialogue acts are decided before every reply (spec 16.1). Tests that care
 #: about the reply itself should not have to script that call, so the client
 #: answers it from here unless the script explicitly provides one.
-DEFAULT_ACTS = '{"acknowledge": true, "goal": "maintain_connection"}'
+#: Phase 3: every reply is preceded by one social interpretation call, so a
+#: script that only lists reply texts still needs an answer for it.
+DEFAULT_SOCIAL = (
+    '{"primary_move": "acknowledge", "initiative": "balanced", "question": "none", '
+    '"tone": "neutral", "response_energy": "normal", "topic_direction": "stay", '
+    '"user_state_hint": "unknown", "self_disclosure": "none", "reason": ""}'
+)
 
 
 class ScriptedClient:
@@ -41,20 +47,22 @@ class ScriptedClient:
 
     model = "test-model"
 
-    def __init__(self, script: list, *, acts_response: str | None = None) -> None:
+    def __init__(self, script: list, *, social_response: str | None = None) -> None:
         self._script = list(script)
-        self._acts_response = DEFAULT_ACTS if acts_response is None else acts_response
+        self._social_response = (
+            DEFAULT_SOCIAL if social_response is None else social_response
+        )
         self.requests: list = []
 
-    def _is_dialogue_act(self, request) -> bool:
+    def _is_social_interpretation(self, request) -> bool:
         schema = request.format_schema or {}
-        return schema.get("title") == "DialogueAct"
+        return schema.get("title") == "SocialInterpretation"
 
     async def generate(self, request):
         self.requests.append(request)
-        if self._is_dialogue_act(request) and self._acts_response is not None:
+        if self._is_social_interpretation(request) and self._social_response is not None:
             return LLMResponse(
-                text=self._acts_response, model=self.model, created_at=NOW, latency_ms=3
+                text=self._social_response, model=self.model, created_at=NOW, latency_ms=3
             )
         if not self._script:
             raise AssertionError("client called more times than scripted")
