@@ -63,15 +63,31 @@ class KnowledgeRepository:
         return None if row is None else _to_source(row)
 
     # --- knowledge ---------------------------------------------------------
-    def add_knowledge(self, item: KnowledgeItem) -> KnowledgeItem:
+    def add_knowledge(
+        self,
+        item: KnowledgeItem,
+        *,
+        source_type: str = "bundle",
+        source_url: str | None = None,
+        retrieved_at: datetime | None = None,
+        search_id: str | None = None,
+        acquisition_event_id: str | None = None,
+    ) -> KnowledgeItem:
+        """Record what the world claims, with where the claim came from.
+
+        Provenance is required rather than optional (Phase 11): Genesis has to
+        be able to ask "when could this have been known, and on whose word?",
+        and a row that cannot answer is a leak waiting to happen.
+        """
         self._db.execute(
             """
             INSERT INTO external_knowledge
                 (knowledge_id, statement, coverage_class, topic, geography, language,
                  available_from, available_until, valid_from, valid_until,
                  source_published_at, stability, truth_confidence, complexity, salience,
-                 source_id, version, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source_id, version, created_at,
+                 source_type, source_url, retrieved_at, search_id, acquisition_event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item.knowledge_id, item.statement, item.coverage_class, item.topic,
@@ -82,9 +98,24 @@ class KnowledgeRepository:
                 None if item.source_published_at is None else to_iso(item.source_published_at),
                 item.stability, item.truth_confidence, item.complexity, item.salience,
                 item.source_id, item.version, to_iso(item.created_at),
+                source_type,
+                source_url,
+                None if retrieved_at is None else to_iso(retrieved_at),
+                search_id,
+                acquisition_event_id,
             ),
         )
         return self.knowledge(item.knowledge_id)  # type: ignore[return-value]
+
+    def provenance(self, knowledge_id: str) -> dict | None:
+        """Where a piece of knowledge came from, for the leakage audit."""
+        row = self._db.query_one(
+            "SELECT knowledge_id, source_type, source_url, retrieved_at, search_id, "
+            "available_from, source_published_at, truth_confidence, acquisition_event_id "
+            "FROM external_knowledge WHERE knowledge_id = ?",
+            (knowledge_id,),
+        )
+        return None if row is None else dict(row)
 
     def knowledge(self, knowledge_id: str) -> KnowledgeItem | None:
         row = self._db.query_one(
@@ -461,3 +492,163 @@ def _to_job(row: sqlite3.Row) -> CoverageJob:
         completed_at=_optional_dt(row["completed_at"]),
         produced_count=int(row["produced_count"]),
     )
+
+
+class KnowledgeGapRepository:
+    """Gaps, and what was decided about each one (spec 17.1 — Phase 11).
+
+    The point of storing the *decision* is that "she searches for everything"
+    becomes a claim the database settles. A table of gaps with `recall`,
+    `defer` and `ignore` in it is the evidence that the selector is doing
+    something; a table where every row says `web_search` is the finding.
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def raise_gap(
+        self,
+        *,
+        topic: str,
+        known_part: str = "",
+        unknown_part: str = "",
+        uncertainty: float = 0.5,
+        relevance: float = 0.5,
+        curiosity: float = 0.0,
+        time_sensitive: bool = False,
+        raised_by: str = "conversation",
+        event_id: str | None = None,
+        now: datetime,
+    ) -> str:
+        gap_id = ids.new_id("gap")
+        self._db.execute(
+            """
+            INSERT INTO knowledge_gaps
+                (gap_id, topic, known_part, unknown_part, uncertainty, relevance,
+                 curiosity, time_sensitive, raised_at, raised_by, event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                gap_id, topic, known_part, unknown_part, uncertainty, relevance,
+                curiosity, 1 if time_sensitive else 0, to_iso(now), raised_by, event_id,
+            ),
+        )
+        return gap_id
+
+    def decide(self, gap_id: str, *, action: str, now: datetime) -> None:
+        self._db.execute(
+            "UPDATE knowledge_gaps SET chosen_action = ?, decided_at = ? "
+            "WHERE gap_id = ?",
+            (action, to_iso(now), gap_id),
+        )
+
+    def close(self, gap_id: str, *, now: datetime, status: str = "answered") -> None:
+        self._db.execute(
+            "UPDATE knowledge_gaps SET status = ?, decided_at = COALESCE(decided_at, ?) "
+            "WHERE gap_id = ?",
+            (status, to_iso(now), gap_id),
+        )
+
+    def get(self, gap_id: str) -> sqlite3.Row | None:
+        return self._db.query_one(
+            "SELECT * FROM knowledge_gaps WHERE gap_id = ?", (gap_id,)
+        )
+
+    def open_gaps(self, *, limit: int = 10) -> list[sqlite3.Row]:
+        return self._db.query_all(
+            "SELECT * FROM knowledge_gaps WHERE status = 'open' "
+            "ORDER BY relevance DESC, raised_at LIMIT ?",
+            (limit,),
+        )
+
+    def recent(self, *, limit: int = 20) -> list[sqlite3.Row]:
+        return self._db.query_all(
+            "SELECT gap_id, topic, relevance, chosen_action, status, raised_at "
+            "FROM knowledge_gaps ORDER BY raised_at DESC LIMIT ?",
+            (limit,),
+        )
+
+    def count(self, *, action: str | None = None) -> int:
+        if action is None:
+            return int(self._db.scalar("SELECT COUNT(*) FROM knowledge_gaps") or 0)
+        return int(
+            self._db.scalar(
+                "SELECT COUNT(*) FROM knowledge_gaps WHERE chosen_action = ?", (action,)
+            )
+            or 0
+        )
+
+    def actions_taken(self) -> dict[str, int]:
+        """How the seven options were actually distributed."""
+        rows = self._db.query_all(
+            "SELECT chosen_action, COUNT(*) AS n FROM knowledge_gaps "
+            "WHERE chosen_action != '' GROUP BY chosen_action"
+        )
+        return {row["chosen_action"]: row["n"] for row in rows}
+
+
+class SearchCallRepository:
+    """Every search, and the three different counts it produced.
+
+    `results`, `exposed` and `acquired` are separate columns because they are
+    separate facts. A row where all three are equal is a design failure, and
+    this table is where it becomes visible.
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def record(
+        self,
+        outcome,
+        *,
+        gap_id: str | None,
+        requested_at: datetime,
+        effective_now: datetime,
+        latency_ms: int = 0,
+        event_id: str | None = None,
+    ) -> None:
+        self._db.execute(
+            """
+            INSERT INTO search_calls
+                (search_id, gap_id, query, provider, requested_at, effective_now,
+                 outcome, detail, tool_call_id, results, future_rejected,
+                 exposed, acquired, latency_ms, event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                outcome.search_id, gap_id, outcome.query, outcome.provider,
+                to_iso(requested_at), to_iso(effective_now), outcome.outcome,
+                outcome.detail, outcome.tool_call_id, outcome.results,
+                outcome.future_rejected, outcome.exposed, outcome.acquired,
+                latency_ms, event_id,
+            ),
+        )
+
+    def recent(self, *, limit: int = 20) -> list[sqlite3.Row]:
+        return self._db.query_all(
+            "SELECT search_id, requested_at, query, provider, outcome, results, "
+            "future_rejected, exposed, acquired, latency_ms "
+            "FROM search_calls ORDER BY requested_at DESC LIMIT ?",
+            (limit,),
+        )
+
+    def count(self, *, outcome: str | None = None) -> int:
+        if outcome is None:
+            return int(self._db.scalar("SELECT COUNT(*) FROM search_calls") or 0)
+        return int(
+            self._db.scalar(
+                "SELECT COUNT(*) FROM search_calls WHERE outcome = ?", (outcome,)
+            )
+            or 0
+        )
+
+    def totals(self) -> dict[str, int]:
+        """The four counters the phase gate reads."""
+        row = self._db.query_one(
+            "SELECT COALESCE(SUM(results), 0) AS results, "
+            "COALESCE(SUM(future_rejected), 0) AS future_rejected, "
+            "COALESCE(SUM(exposed), 0) AS exposed, "
+            "COALESCE(SUM(acquired), 0) AS acquired FROM search_calls"
+        )
+        return {} if row is None else dict(row)

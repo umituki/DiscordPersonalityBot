@@ -200,6 +200,46 @@ def _build_registry() -> dict[str, AdminCommand]:
             ),
         ),
         AdminCommand(
+            "knowledge",
+            "why a topic would or would not be looked up",
+            lambda s, a: s.knowledge_find(" ".join(a)),
+            subcommand="find",
+        ),
+        AdminCommand(
+            "search",
+            "recent searches: what was asked, what came back, what was kept",
+            _listing(
+                "search recent", "searches", "recent",
+                (
+                    "requested_at",
+                    "query",
+                    "provider",
+                    "outcome",
+                    "results",
+                    "future_rejected",
+                    "exposed",
+                    "acquired",
+                ),
+            ),
+            subcommand="recent",
+        ),
+        AdminCommand(
+            "gaps",
+            "knowledge gaps and what was decided about each",
+            _listing(
+                "gaps", "gaps", "recent",
+                ("raised_at", "topic", "relevance", "chosen_action", "status"),
+            ),
+        ),
+        AdminCommand(
+            "tools",
+            "recent tool calls",
+            _listing(
+                "tools", "tools", "recent",
+                ("tool_name", "requested_by", "success", "source", "started_at"),
+            ),
+        ),
+        AdminCommand(
             "growth",
             "consolidation runs",
             _listing(

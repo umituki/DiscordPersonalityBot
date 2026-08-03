@@ -355,6 +355,8 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     "proactive_contact",
     # Phase 10.
     "diary",
+    # Phase 11: the formal entrance for information from outside.
+    "web_search",
 })
 
 

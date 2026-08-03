@@ -90,6 +90,9 @@ class DebugSources:
     #: built yet, and an *undeclared* name is a typo.
     diary: Any = None
     life_days: Any = None
+    gaps: Any = None
+    searches: Any = None
+    tools: Any = None
 
 
 class DebugQueryService:
@@ -332,6 +335,54 @@ class DebugQueryService:
         return DebugResult.of(
             "proactive dryrun",
             summary="nothing was decided, sent or recorded",
+            rows=rows,
+        )
+
+    def knowledge_find(self, query: str) -> DebugResult:
+        """What is known about a topic, and where it came from.
+
+        Provenance is the point: for the Genesis leakage audit, "what does she
+        know" is much less useful than "when could she have known it, and on
+        whose word". Read-only — it does not search.
+        """
+        repository = self._sources.knowledge
+        if repository is None:
+            return DebugResult(
+                command="knowledge find", summary="knowledge is not wired yet"
+            )
+        needle = (query or "").strip()
+        rows: list[dict[str, Any]] = []
+        for item in repository.all_knowledge(limit=200):
+            if needle and needle not in item.statement and needle not in item.topic:
+                continue
+            provenance = repository.provenance(item.knowledge_id) or {}
+            rows.append(
+                safe_row(
+                    {
+                        "statement": item.statement,
+                        "topic": item.topic,
+                        "available_from": _iso(item.available_from),
+                        "source_type": provenance.get("source_type", ""),
+                        "source_url": provenance.get("source_url") or "",
+                        "retrieved_at": provenance.get("retrieved_at") or "",
+                        "confidence": round(item.truth_confidence, 3),
+                    },
+                    fields=(
+                        "statement",
+                        "topic",
+                        "available_from",
+                        "source_type",
+                        "source_url",
+                        "retrieved_at",
+                        "confidence",
+                    ),
+                )
+            )
+            if len(rows) >= MAX_LIMIT:
+                break
+        return DebugResult.of(
+            "knowledge find",
+            summary=f"{len(rows)} item(s) matching {needle!r}" if needle else f"{len(rows)} item(s)",
             rows=rows,
         )
 

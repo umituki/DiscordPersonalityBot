@@ -616,6 +616,69 @@ view is not that act.
 
 ---
 
+## Phase 11 — Search / Knowledge
+
+| Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| EPI-17.1 | A gap is a situation with seven answers, not a search trigger | `app/runtime/knowledge.py` (`KnowledgeCandidates`), `app/epistemics/actions.py` | `test_the_selector_has_all_seven_options`, `test_a_gap_answerable_from_memory_is_not_searched` | `test_the_builder_only_produces_a_candidate_for_web_search` | `test_the_decision_is_recorded_either_way` | `!yui gaps` | E2E_VERIFIED |
+| SRCH-32.2 | ToolManager success is the only authority that a search ran | `app/knowledge/investigation.py` (`_run_tool`), `app/tools/builtin.py` | `test_the_failure_modes_are_distinct` | `test_the_search_goes_through_the_tool_manager` | `test_the_whole_chain_runs_from_the_loop` | `!yui tools` | E2E_VERIFIED |
+| SRCH-TIME | `published_at > effective_now` is unusable, in Python | `app/knowledge/search.py` (`reject_the_future`, `SearchQuery`) | `test_a_result_from_the_future_is_unusable`, `test_an_undated_result_is_also_refused`, `test_the_query_cannot_be_built_without_a_moment` | `test_a_past_dated_search_sees_only_the_past` | `test_the_gate_runs_on_a_real_search` | `search_calls.future_rejected` | E2E_VERIFIED |
+| SRCH-SEP | Search request ≠ search success ≠ knowledge acquisition | `app/knowledge/investigation.py`, migration 0027 | `test_a_search_is_not_an_acquisition` | `test_the_two_events_are_different` | `test_the_whole_chain_runs_from_the_loop` | `!yui search recent` | E2E_VERIFIED |
+| SRCH-FAIL | The failure modes are distinct, and none is knowledge | `app/knowledge/search.py` (`SearchOutcome`), `_failure_from` | `test_the_failure_modes_are_distinct`, `test_no_provider_is_not_no_results` | `test_a_failed_search_acquires_nothing` | `test_no_results_is_not_a_fact_about_the_world`, `test_a_failed_search_path_is_exercised_too` | `search_calls.outcome` | E2E_VERIFIED |
+| SRCH-BELIEF | A search result is evidence, never an overwrite | `app/knowledge/investigation.py` (`_offer_as_evidence`) | `test_a_search_result_argues_rather_than_decrees` | `test_acquired_knowledge_reaches_the_belief_engine` | — | `beliefs` / `belief_evidence` | E2E_VERIFIED |
+| SRCH-PROV | Every acquired fact knows where it came from | migration 0027, `KnowledgeRepository.add_knowledge` | — | `test_every_acquired_fact_knows_where_it_came_from` | `test_knowledge_find_shows_provenance` | `!yui knowledge find` | E2E_VERIFIED |
+| SRCH-GATE | A live search backend against the real web | — | — | — | — | — | DEFERRED_TO_FINAL_REAL_MACHINE_GATE |
+
+### Phase 11 gate (spec 4.7)
+
+1. **Spec IDs implemented.** 17.1, 32.1, 32.2, 32.3, plus the provenance and
+   temporal requirements the OWNER set for this phase.
+2. **Runtime trigger.** `GapSource` in the Phase 6 loop. The candidate builder
+   runs the Epistemic Action Selector and produces a candidate *only* when the
+   answer was `web_search`.
+3. **Events produced.** `SEARCH_PERFORMED` (one per search, whatever came
+   back) and `KNOWLEDGE_ACQUIRED` (one per thing actually learned).
+4. **Rows written.** `knowledge_gaps` (with the chosen action),
+   `search_calls` (results / future_rejected / exposed / acquired as four
+   separate columns), `external_knowledge` with provenance,
+   `knowledge_exposure_opportunities`, `knowledge_acquisitions`.
+5. **State change.** Through the processor. Acquired facts go to the Belief
+   Engine as *evidence*, never as an overwrite.
+6. **Debug.** `!yui search recent`, `!yui gaps`, `!yui tools`,
+   `!yui knowledge`, `!yui knowledge find <query>` — the last showing
+   provenance, which is the view the Genesis leakage audit will use.
+7. **Restart.** Gaps, searches and provenance are all rows. An open gap
+   survives and is picked up again.
+8. **Unit tests.** 1307 pass in total; 29 are new in
+   `test_search_knowledge.py`. Three tool tests were updated because
+   `web_search` gained a required `effective_now` — the argument was added
+   at the tool, not worked around at the callers.
+9. **Integration / E2E.** `test_the_whole_chain_runs_from_the_loop` drives the
+   real loop and asserts the phase's counters.
+10. **Deferred.** `SRCH-GATE` — a live backend against the real web.
+
+**The counters the phase is judged on**, all asserted in one test against the
+wired application: search attempts > 0, results > 0, future-rejected > 0,
+exposed > 0, acquired > 0, failed-search path > 0 — and `acquired < results`,
+because a pipeline where every result becomes knowledge has no funnel in it.
+The fixture deliberately contains an entry dated 2099, so the temporal gate
+fires on every run rather than only in the test written for it.
+
+**Why the tool wrapper matters.** The provider is reached *through*
+`web_search`, not beside it. That keeps 32.2 true — a search that never ran
+cannot be described as one that did — and it is why a provider outage arrives
+as a failed tool call rather than as an empty result set. `_failure_from` maps
+the tool's error string back to the search taxonomy so "the network was down"
+survives the round trip instead of flattening into a generic error.
+
+**`effective_now` has no default anywhere in the chain.** Not in `SearchQuery`,
+not in `InvestigationService.investigate`, not in the tool's required
+arguments. A caller that forgets it fails loudly. This is the single most
+important thing Phase 12 inherits: a parameter that quietly falls back to
+today's clock is how a 2012 Genesis reads about 2025.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -629,7 +692,7 @@ statuses is exactly the failure this ledger exists to prevent.
 | 8 | NPC / Groups / Goals / Habits | STRUCTURALLY_COMPLETE |
 | 9 | Proactive contact | STRUCTURALLY_COMPLETE |
 | 10 | Diary | STRUCTURALLY_COMPLETE |
-| 11 | Search / Knowledge | NOT_STARTED |
+| 11 | Search / Knowledge | STRUCTURALLY_COMPLETE |
 | 12 | Genesis v2 | NOT_STARTED |
 | 13 | Full FIRST BOOT | NOT_STARTED |
 | 14 | Shadow runtime evaluation | NOT_STARTED |
@@ -656,7 +719,7 @@ The contracts are the source of truth; this is a snapshot for reading.
 | goal_action | E2E_VERIFIED |
 | habit_action | E2E_VERIFIED |
 | proactive_contact | E2E_VERIFIED |
-| web_search | CODE_ONLY |
+| web_search | E2E_VERIFIED |
 | genesis | CODE_ONLY |
 | admin_debug_readonly | E2E_VERIFIED |
 | admin_backup | E2E_VERIFIED |

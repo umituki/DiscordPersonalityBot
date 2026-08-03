@@ -45,7 +45,9 @@ from app.events.model import Event, SystemStartedPayload, SystemStoppedPayload
 from app.epistemics.actions import EpistemicActionSelector
 from app.knowledge.builder import KnowledgeBuilder
 from app.knowledge.coverage import CoveragePlanner
+from app.knowledge.investigation import InvestigationService
 from app.knowledge.providers import BundleProvider, ProviderRegistry
+from app.knowledge.search import FixtureSearchProvider
 from app.knowledge.policy import KnowledgePolicy
 from app.knowledge.service import KnowledgeService
 from app.simulation.engine import PastSimulationEngine
@@ -57,6 +59,7 @@ from app.jobs.scheduler import Scheduler
 from app.runtime.autonomous import AutonomousRuntime
 from app.runtime.agency import AgencyActions, AgencyCandidates, GoalSource, HabitSource
 from app.diary.service import DiaryContextBuilder, DiaryService
+from app.runtime.knowledge import GapSource, KnowledgeActions, KnowledgeCandidates
 from app.runtime.life import ActivitySource, LifeActions, SleepSource
 from app.runtime.proactive import (
     ProactiveActions,
@@ -98,7 +101,7 @@ from app.social.attachment import AttachmentEngine
 from app.social.belief_policy import BeliefSelfPolicy
 from app.social.beliefs import BeliefEngine
 from app.social.self_model import SelfEngine
-from app.tools.builtin import register_builtin_tools
+from app.tools.builtin import register_builtin_tools, register_search_provider
 from app.tools.manager import ToolManager, ToolRegistry
 from app.world.policy import WorldPolicy
 from app.world.service import WorldService
@@ -155,6 +158,7 @@ from app.storage.repositories import (
     GroupRepository,
     HealthRepository,
     JobRepository,
+    KnowledgeGapRepository,
     KnowledgeRepository,
     LifeDayRepository,
     HabitRepository,
@@ -171,6 +175,7 @@ from app.storage.repositories import (
     ProactiveDeliberationRepository,
     ProcessingRunRepository,
     RuntimeTickRepository,
+    SearchCallRepository,
     SelfRepository,
     SimulationRepository,
     SleepRepository,
@@ -238,6 +243,10 @@ class Application:
     runtime: AutonomousRuntime
     runtime_ticks: RuntimeTickRepository
     diary: DiaryService
+    investigation: InvestigationService
+    gaps: KnowledgeGapRepository
+    knowledge_repo: KnowledgeRepository
+    searches: SearchCallRepository
     diaries: DiaryRepository
     life_days: LifeDayRepository
     proactive_deliberation: ProactiveDeliberation
@@ -796,6 +805,38 @@ class Application:
         owner_user_id = resolved_config.secrets.discord_owner_user_id
         channel_id = resolved_config.secrets.discord_channel_id
 
+        # --- search and knowledge (spec 17, 32 — Phase 11) -------------------
+        # The formal entrance for information from outside. The provider is
+        # reached through the tool, never beside it, so ToolManager stays the
+        # only authority on whether a search actually ran (32.2).
+        gap_repo = KnowledgeGapRepository(db)
+        search_repo = SearchCallRepository(db)
+        search_provider = FixtureSearchProvider.load(
+            resolved_config.knowledge_dir / "search_fixture.yaml"
+        )
+        register_search_provider(tool_registry, search_provider, clock=resolved_clock)
+        investigation = InvestigationService(
+            selector=epistemic_selector,
+            provider=search_provider,
+            tools=tool_manager,
+            knowledge=knowledge_service,
+            knowledge_repo=knowledge_repo,
+            searches=search_repo,
+            gaps=gap_repo,
+            beliefs=belief_engine,
+            processor=processor,
+            clock=resolved_clock,
+        )
+        KnowledgeActions(
+            investigation,
+            gap_repo,
+            candidates=KnowledgeCandidates(gap_repo, investigation, clock=resolved_clock),
+            clock=resolved_clock,
+        ).register(
+            runtime_registry,
+            sources=(GapSource(gap_repo, world_service, clock=resolved_clock),),
+        )
+
         # --- diary (spec 26 — Phase 10) --------------------------------------
         # 26.3's constraint shapes the wiring: the service is handed to the
         # sleep action, which awaits it and then goes to sleep regardless.
@@ -997,6 +1038,7 @@ class Application:
                     npc_interactions=npc_interaction_repo,
                     groups=group_repo,
                     knowledge=knowledge_repo,
+                    tools=tool_call_repo,
                     acquisitions=acquisition_repo,
                     health=health_repo,
                     manifests=manifest_repo,
@@ -1008,6 +1050,8 @@ class Application:
                     proactive_engine=proactive_engine,
                     proactive_source=proactive_source,
                     diary=diary_repo,
+                    gaps=gap_repo,
+                    searches=search_repo,
                     life_days=life_day_repo,
                 ),
                 clock=resolved_clock,
@@ -1115,6 +1159,10 @@ class Application:
             runtime=autonomous_runtime,
             runtime_ticks=runtime_tick_repo,
             diary=diary_service,
+            investigation=investigation,
+            gaps=gap_repo,
+            knowledge_repo=knowledge_repo,
+            searches=search_repo,
             diaries=diary_repo,
             life_days=life_day_repo,
             proactive_deliberation=proactive_deliberation,

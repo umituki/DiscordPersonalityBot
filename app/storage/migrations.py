@@ -1708,6 +1708,74 @@ _0026_DIARY = Migration(
 )
 
 
+_0027_SEARCH_AND_PROVENANCE = Migration(
+    version=27,
+    name="search_and_provenance",
+    statements=(
+        # Rebuild spec 32 — Phase 11.
+        #
+        # A gap is a *situation*, not a trigger. Recording it separately from
+        # what was done about it is what makes 未知 = 自動 Web Search ではない
+        # checkable: the table shows gaps that were deferred, ignored, answered
+        # from memory and asked about, next to the ones that were searched.
+        """
+        CREATE TABLE knowledge_gaps (
+            gap_id        TEXT PRIMARY KEY,
+            topic         TEXT NOT NULL,
+            known_part    TEXT NOT NULL DEFAULT '',
+            unknown_part  TEXT NOT NULL DEFAULT '',
+            uncertainty   REAL NOT NULL DEFAULT 0.5,
+            relevance     REAL NOT NULL DEFAULT 0.5,
+            curiosity     REAL NOT NULL DEFAULT 0.0,
+            time_sensitive INTEGER NOT NULL DEFAULT 0,
+            raised_at     TEXT NOT NULL,
+            raised_by     TEXT NOT NULL DEFAULT 'conversation',
+            event_id      TEXT,
+            chosen_action TEXT NOT NULL DEFAULT '',
+            decided_at    TEXT,
+            status        TEXT NOT NULL DEFAULT 'open'
+        )
+        """,
+        "CREATE INDEX idx_gaps_status ON knowledge_gaps (status, relevance DESC)",
+        # Search request ≠ search success ≠ knowledge acquisition. Three
+        # different things, so the row carries all three counts: what came
+        # back, what the temporal gate threw out, what got past exposure. A
+        # provider returning a hundred results and a hundred acquisitions on
+        # the same row is a design failure this table makes visible.
+        """
+        CREATE TABLE search_calls (
+            search_id      TEXT PRIMARY KEY,
+            gap_id         TEXT,
+            query          TEXT NOT NULL,
+            provider       TEXT NOT NULL DEFAULT '',
+            requested_at   TEXT NOT NULL,
+            effective_now  TEXT NOT NULL,
+            outcome        TEXT NOT NULL DEFAULT 'provider_error',
+            detail         TEXT NOT NULL DEFAULT '',
+            tool_call_id   TEXT,
+            results        INTEGER NOT NULL DEFAULT 0,
+            future_rejected INTEGER NOT NULL DEFAULT 0,
+            exposed        INTEGER NOT NULL DEFAULT 0,
+            acquired       INTEGER NOT NULL DEFAULT 0,
+            latency_ms     INTEGER NOT NULL DEFAULT 0,
+            event_id       TEXT
+        )
+        """,
+        "CREATE INDEX idx_search_time ON search_calls (requested_at DESC)",
+        "CREATE INDEX idx_search_outcome ON search_calls (outcome, requested_at DESC)",
+        # Provenance. Genesis depends on being able to ask "when could this
+        # have been known, and on whose word?", and a knowledge row that cannot
+        # answer that is a leak waiting to happen twelve phases later.
+        "ALTER TABLE external_knowledge ADD COLUMN source_type TEXT NOT NULL DEFAULT 'bundle'",
+        "ALTER TABLE external_knowledge ADD COLUMN source_url TEXT",
+        "ALTER TABLE external_knowledge ADD COLUMN retrieved_at TEXT",
+        "ALTER TABLE external_knowledge ADD COLUMN search_id TEXT",
+        "ALTER TABLE external_knowledge ADD COLUMN acquisition_event_id TEXT",
+        "CREATE INDEX idx_knowledge_provenance ON external_knowledge (source_type, retrieved_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1735,6 +1803,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0024_LIFE_DRIVEN_BY_THE_RUNTIME,
     _0025_PROACTIVE_DELIBERATIONS,
     _0026_DIARY,
+    _0027_SEARCH_AND_PROVENANCE,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

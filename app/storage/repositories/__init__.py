@@ -61,7 +61,9 @@ _EXPORTS: dict[str, str] = {
     "AcquisitionRepository": "knowledge",
     "ActivityRepository": "world",
     "JobRepository": "world",
+    "KnowledgeGapRepository": "knowledge",
     "KnowledgeRepository": "knowledge",
+    "SearchCallRepository": "knowledge",
     "ProactiveRepository": "world",
     "SimulationRepository": "simulation",
     "SleepRepository": "world",
@@ -95,7 +97,9 @@ __all__ = [
     "GroupRepository",
     "HabitRepository",
     "JobRepository",
+    "KnowledgeGapRepository",
     "KnowledgeRepository",
+    "SearchCallRepository",
     "LLMCallRepository",
     "ManifestRepository",
     "HealthRepository",
@@ -169,7 +173,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         AcquisitionRepository,
         CoverageJobRepository,
         ExposureRepository,
+        KnowledgeGapRepository,
         KnowledgeRepository,
+        SearchCallRepository,
     )
     from app.storage.repositories.llm_calls import LLMCallRepository
     from app.storage.repositories.manifests import ManifestRepository

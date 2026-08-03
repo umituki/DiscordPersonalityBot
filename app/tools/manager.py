@@ -89,6 +89,16 @@ class ToolRegistry:
             raise ValueError(f"tool already registered: {spec.name}")
         self._tools[spec.name] = RegisteredTool(spec=spec, implementation=implementation)
 
+    def replace(self, spec: ToolSpec, implementation: ToolImplementation) -> None:
+        """Swap a registered tool's backend (Phase 11).
+
+        Used to give ``web_search`` a real provider in place of the stub that
+        always fails. Deliberately a separate method from ``register``: silently
+        overwriting a tool is how two subsystems end up disagreeing about what
+        a name means, so replacing one has to be something the caller asked for.
+        """
+        self._tools[spec.name] = RegisteredTool(spec=spec, implementation=implementation)
+
     def get(self, name: str) -> RegisteredTool | None:
         return self._tools.get(name)
 

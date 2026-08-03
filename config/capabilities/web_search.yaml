@@ -1,14 +1,21 @@
-# Capability Contract (rebuild spec 4.3): web_search
+# Capability Contract (rebuild spec 4.3, 17, 32 — Phase 11)
 capability: "web_search"
-trigger: "epistemic gap the selector answers with search"
-runtime_entry: "EpistemicActionSelector"
-candidate_source: "SearchProvider via ToolManager"
-hard_gate: "ToolManager success is the only authority (spec 32.2)"
-actual_action: "tool call"
-success_event: "INFORMATION_ENCOUNTERED"
-persistence: "tool_calls, knowledge_exposure_opportunities, knowledge_acquisitions"
-recovery: "a failed search leaves the question unresolved, never a fabricated answer"
-observability: "!yui llm / tool_calls"
-acceptance_test: "test_search_slice"
-status: "CODE_ONLY"
-note: "rebuild spec 32; selector exists, no provider is wired"
+trigger: "an open knowledge gap the EpistemicActionSelector answered with web_search — one of seven possible answers, not the default"
+runtime_entry: "AutonomousRuntime.tick → GapSource → KnowledgeCandidates.investigate (runs the selector) → DecisionEngine.choose → KnowledgeActions.investigate → InvestigationService.investigate"
+candidate_source: "knowledge_gaps rows; a gap answered with recall, infer, ask_user, defer, ignore or avoid produces no search candidate at all"
+hard_gate: "32.2 ToolManager success is the only authority; and reject_the_future — published_at > effective_now is unusable, in Python, on every result, before anything downstream sees one"
+actual_action: "SearchProvider.search, reached through the web_search tool rather than beside it"
+success_event: "SEARCH_PERFORMED (a search happened, whatever came back) and KNOWLEDGE_ACQUIRED (one per thing actually learned, normally far fewer)"
+persistence: "search_calls with results/future_rejected/exposed/acquired as separate columns; external_knowledge with source_type, source_url, retrieved_at, search_id; knowledge_exposure_opportunities; knowledge_acquisitions"
+recovery: "a failed search acquires nothing and leaves the gap open; no_results is recorded as a fact about the search, never about the world"
+observability: "!yui search recent / !yui gaps / !yui knowledge find / !yui tools"
+acceptance_test: "tests/invariants/test_search_knowledge.py"
+status: "E2E_VERIFIED"
+note: >
+  Three separations carry this capability: search request ≠ search success ≠
+  knowledge acquisition; external information ≠ what she permanently knows; and
+  no results ≠ it does not exist. A test asserts acquired < results, because a
+  pipeline where every result becomes knowledge has no funnel in it. The
+  provider is a fixture rather than a live backend — a real search API is a
+  final-gate item — but it is a real provider honouring effective_now and every
+  failure mode, so the code path is the one a live backend would take.

@@ -29,6 +29,13 @@ from app.storage.repositories.tools import ToolCallRepository
 
 pytestmark = pytest.mark.invariant
 
+#: Phase 11 made ``effective_now`` a required argument of ``web_search``: a
+#: caller that omits it is refused rather than quietly searching from today.
+#: These tests are about what happens when a search *runs* and fails, so they
+#: supply it — except `test_missing_arguments_are_refused`, which is about
+#: omitting arguments and now has one more to omit.
+WHEN = "2026-01-01T09:00:00+00:00"
+
 
 @pytest.fixture
 def tool_calls(db) -> ToolCallRepository:
@@ -65,7 +72,7 @@ async def test_a_successful_call_is_recorded_and_usable(tools, tool_calls) -> No
 
 async def test_a_failed_call_is_never_a_success(tools, tool_calls) -> None:
     """Spec 17.3: an unavailable search stays a failure."""
-    result = await tools.execute(request_for(WEB_SEARCH, query="明日の天気"))
+    result = await tools.execute(request_for(WEB_SEARCH, query="明日の天気", effective_now=WHEN))
 
     assert result.success is False
     assert result.is_usable is False
@@ -122,7 +129,7 @@ async def test_a_disabled_permission_class_blocks_execution(registry, tool_calls
         registry, tool_calls, clock=clock, allowed_permissions=("read_only",)
     )
 
-    refused = await read_only_manager.execute(request_for(WEB_SEARCH, query="x"))
+    refused = await read_only_manager.execute(request_for(WEB_SEARCH, query="x", effective_now=WHEN))
     allowed = await read_only_manager.execute(request_for(CURRENT_TIME))
 
     assert isinstance(refused, ToolRefusal)
@@ -167,7 +174,7 @@ async def test_every_outcome_becomes_an_event(tools, make_event) -> None:
 
     success = tools.result_event(parent, await tools.execute(request_for(CURRENT_TIME)))
     failure = tools.result_event(
-        parent, await tools.execute(request_for(WEB_SEARCH, query="x"))
+        parent, await tools.execute(request_for(WEB_SEARCH, query="x", effective_now=WHEN))
     )
     refusal = tools.result_event(parent, await tools.execute(request_for("nope")))
 
@@ -196,7 +203,7 @@ async def test_the_guard_only_believes_executed_calls(
     class Draft:
         text = "調べてみたら、そう書いてあった。"
 
-    failed = await tools.execute(request_for(WEB_SEARCH, query="x"))
+    failed = await tools.execute(request_for(WEB_SEARCH, query="x", effective_now=WHEN))
     assert failed.success is False
 
     rejected = guard.check(

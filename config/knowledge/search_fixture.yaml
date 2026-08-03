@@ -1,0 +1,45 @@
+# A fixture search backend (rebuild spec 32 — Phase 11).
+#
+# Deliberately a real provider rather than a mock: it honours effective_now,
+# it can be told to fail in each of the ways a live backend fails, and the
+# end-to-end test therefore exercises the same code path a live one would.
+#
+# Note the last entry. It is dated in the future on purpose, so that every run
+# of the fixture E2E exercises the temporal hard gate rather than only the
+# happy path.
+entries:
+  - statement: "深海には光の届かない層がある。"
+    topic: "海"
+    source_name: "fixture ocean reference"
+    source_url: "https://example.invalid/ocean"
+    published_at: "2020-04-01T00:00:00Z"
+    available_from: "2020-04-01T00:00:00Z"
+    salience: 0.6
+    complexity: 0.4
+    confidence: 0.8
+  - statement: "海流は熱を運ぶことで気候に影響する。"
+    topic: "海"
+    source_name: "fixture ocean reference"
+    source_url: "https://example.invalid/currents"
+    published_at: "2018-09-12T00:00:00Z"
+    available_from: "2018-09-12T00:00:00Z"
+    salience: 0.5
+    complexity: 0.7
+    confidence: 0.7
+  - statement: "潮の満ち引きは月の引力による。"
+    topic: "海"
+    source_name: "fixture ocean reference"
+    published_at: "2015-01-05T00:00:00Z"
+    available_from: "2015-01-05T00:00:00Z"
+    salience: 0.4
+    complexity: 0.3
+    confidence: 0.9
+  - statement: "2099年の海洋観測衛星が新しい層を発見した。"
+    topic: "海"
+    source_name: "fixture future reference"
+    source_url: "https://example.invalid/future"
+    published_at: "2099-01-01T00:00:00Z"
+    available_from: "2099-01-01T00:00:00Z"
+    salience: 0.9
+    complexity: 0.5
+    confidence: 0.6
