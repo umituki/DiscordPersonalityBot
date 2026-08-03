@@ -1,0 +1,30 @@
+# Capability Contract (rebuild spec 4.3, 47, 28.4 — Phase 14)
+capability: "shadow_evaluation"
+trigger: "any of the four autonomous capabilities reaching the moment it would commit its external effect"
+runtime_entry: "ProactiveDeliberation.deliberate, ConversationEngine.plan_turn, SocialActions.contact_npc and KnowledgeActions.investigate, each calling ShadowController.decide"
+candidate_source: "not a candidate source. The capability decides for itself whether it wants to act; this decides only whether it may"
+hard_gate: "the effect happens in LIVE and in no other mode. OFF does not deliberate at all (28.4), which is why the check is `runs()` before the gates and `acts` after them"
+actual_action: "for SHADOW, doing nothing — and that is the deliverable. The evidence is what is missing downstream: no interaction row, no search call, no sent message, no silence"
+success_event: "no event. A decision not to act is not something that happened to her, and appraising one would put the evaluation in her autobiography"
+persistence: "shadow_decisions, with `would_act` and `acted` as separate columns; proactive contact keeps its own detailed deliberation record as well"
+recovery: "nothing to recover — a shadowed decision leaves the world exactly as it was, and the gap it did not close is still open"
+observability: "yui shadow status/list/suppressed/review, and !yui shadow, !yui shadow recent, !yui shadow suppressed"
+acceptance_test: "tests/invariants/test_shadow_runtime.py"
+status: "E2E_VERIFIED"
+note: >
+  The test this capability turns on is not that ShadowController returns the
+  right string — it is that all four capabilities actually ask. A mode nobody
+  reads is the Phase 11 bug wearing a different hat, so one test drives the
+  wired application through each of the four and fails by name on any that
+  leaves no row.
+
+  Two asymmetries are deliberate. `web_search` is gated before the provider is
+  called rather than before the result is kept: a search that ran and was then
+  discarded has already done the thing spec 47 is about. And
+  `intentional_silence` is shadowed only where the mode is the deciding factor
+  — a turn the veto required an answer to is answered in every mode, because
+  the veto is a hard gate and a mode is not.
+
+  What is deferred to the final gate is the OWNER review itself. The surface
+  exists and the rows accumulate; a human reading a real week of them is not
+  something a test can assert.

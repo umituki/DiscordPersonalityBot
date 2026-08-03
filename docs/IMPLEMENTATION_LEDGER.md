@@ -857,6 +857,51 @@ generation.
 
 ---
 
+## Phase 14 — Shadow Runtime Evaluation (rebuild spec 47, 28.4)
+
+| ID | Requirement | Where | Unit | Integration | Failure | Persistence | Status |
+|---|---|---|---|---|---|---|---|
+| SH-01 | Four capabilities, three modes, one authority | `app/runtime/shadow.py` | `test_the_capabilities_are_the_specs_four`, `test_an_unknown_capability_is_refused`, `test_a_nonsense_mode_is_refused` | `test_the_proactive_mode_comes_from_the_controller` | — | — | E2E_VERIFIED |
+| SH-02 | Every capability actually asks | the four call sites | — | `test_every_capability_actually_asks` | — | `shadow_decisions` | E2E_VERIFIED |
+| SH-03 | 初期運用は SHADOW, and an unlisted capability defaults to it | `app/config.py`, `ShadowController` | `test_a_capability_nobody_specified_is_shadow` | `test_the_shipped_default_is_shadow_for_all_four` | — | — | E2E_VERIFIED |
+| SH-04 | OFF deliberates nothing | `ShadowController.runs` | `test_off_does_not_deliberate` | — | — | — | E2E_VERIFIED |
+| SH-05 | A shadowed NPC contact moves no relationship | `SocialActions.contact_npc` | — | `test_a_live_npc_contact_commits` | `test_a_shadowed_npc_contact_commits_nothing` | `npc_interactions` | E2E_VERIFIED |
+| SH-06 | A shadowed search never reaches the provider | `KnowledgeActions.investigate` | — | `test_a_live_search_reaches_the_provider` | `test_a_shadowed_search_never_reaches_the_provider` | `search_calls` | E2E_VERIFIED |
+| SH-07 | A shadowed proactive message is not sent | `ProactiveDeliberation.deliberate` | — | — | `test_a_shadowed_proactive_message_is_not_sent` | `proactive_deliberations` | E2E_VERIFIED |
+| SH-08 | A shadowed silence speaks instead, and says what it would have done | `ResponseIntentGate.decide`, `ConversationEngine` | `test_a_shadowed_silence_speaks_instead`, `test_a_live_silence_stays_silent` | `test_the_wired_engine_reads_the_silence_mode` | `test_a_broken_controller_does_not_break_a_turn` | `shadow_decisions` | E2E_VERIFIED |
+| SH-09 | The veto outranks the mode | `ResponseIntentGate` | `test_a_veto_still_speaks_in_every_mode` | — | `test_only_mode_decided_silences_are_recorded` | — | E2E_VERIFIED |
+| SH-10 | Wanted and acted are separate facts | migration 0031 | `test_wanted_and_acted_are_separate_facts` | `test_the_tally_shows_an_unevaluated_capability` | — | `shadow_decisions` | E2E_VERIFIED |
+| SH-11 | The record survives, and a review does not rewrite it | `ShadowDecisionRepository` | `test_a_review_note_does_not_rewrite_the_decision` | `test_the_record_survives_a_restart` | — | `shadow_decisions.reviewed_at` | E2E_VERIFIED |
+| SH-12 | Reviewable from Admin, and not switchable from it | `!yui shadow*`, `yui shadow` | `test_the_admin_plane_cannot_switch_a_capability_on`, `test_every_shadow_command_runs` | `test_the_shadow_views_are_wired` | `test_the_shadow_views_change_nothing`, `test_review_needs_something_to_review` | — | E2E_VERIFIED |
+
+**Phase 14 completion (rebuild spec 47):**
+
+1. **Files.** `app/runtime/shadow.py`, `app/storage/repositories/shadow.py`,
+   migration 0031, the four call sites, `app/config.py`, the admin registry and
+   the `shadow` CLI.
+2. **Behaviour.** Each of the four dangerous capabilities deliberates in full
+   and asks one authority whether the last step may happen.
+3. **Tests.** 1461 pass in total; 30 in `test_shadow_runtime.py`.
+4. **Invariants.** A capability with no call site fails by name. SHADOW leaves
+   no interaction row, no search call, no sent message and no silence.
+5. **Deferred.** The OWNER review itself — the surface exists and the rows
+   accumulate; a human reading a real week of them is not a test.
+
+**The test that matters is the one that enumerates.** Checking that
+`ShadowController` returns "SHADOW" proves nothing about the system: the Phase 11
+lesson was that a SearchProvider nobody calls is not a capability, and a mode
+nobody reads is the same bug wearing a different hat. So one test drives the
+wired application through all four and fails by name on any that leaves no row.
+
+**Two asymmetries, both deliberate.** `web_search` is gated before the provider
+is called rather than before the result is kept — a search that ran and was then
+discarded has already done the thing spec 47 exists to prevent. And
+`intentional_silence` is recorded only where the mode was the deciding factor: a
+turn the veto required an answer to is answered in every mode, and recording
+those would credit the mode with restraint that was Python's.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -873,7 +918,7 @@ statuses is exactly the failure this ledger exists to prevent.
 | 11 | Search / Knowledge | STRUCTURALLY_COMPLETE |
 | 12 | Genesis v2 | STRUCTURALLY_COMPLETE |
 | 13 | Full FIRST BOOT | STRUCTURALLY_COMPLETE |
-| 14 | Shadow runtime evaluation | NOT_STARTED |
+| 14 | Shadow runtime evaluation | STRUCTURALLY_COMPLETE |
 | 15 | Live | NOT_STARTED |
 
 ---
@@ -903,6 +948,7 @@ The contracts are the source of truth; this is a snapshot for reading.
 | admin_backup | E2E_VERIFIED |
 | autonomous_runtime | E2E_VERIFIED |
 | first_boot | E2E_VERIFIED |
+| shadow_evaluation | E2E_VERIFIED |
 
 `natural_conversation_realization` is the first `E2E_VERIFIED` capability: a
 real inbound message drives interpretation, planning, reference lookup,

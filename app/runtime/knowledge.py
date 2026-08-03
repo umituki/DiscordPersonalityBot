@@ -119,17 +119,35 @@ class KnowledgeActions:
         gaps: Any,
         *,
         candidates: KnowledgeCandidates | None = None,
+        shadow: Any = None,
         clock: Clock | None = None,
     ) -> None:
         self._investigation = investigation
         self._gaps = gaps
         self._candidates = candidates or KnowledgeCandidates(gaps, investigation)
+        #: Spec 47, Phase 14. A search is the one autonomous act that leaves
+        #: this machine, so SHADOW has to stop *before* the provider is called
+        #: rather than before the result is kept.
+        self._shadow = shadow
         self._clock = clock or SystemClock()
 
     async def investigate(self, candidate: ActionCandidate, now: datetime) -> bool:
         row = self._gaps.get(candidate.reason)
         if row is None:
             return False
+        if self._shadow is not None:
+            verdict = self._shadow.decide(
+                "web_search",
+                would_act=True,
+                subject=row["topic"],
+                reason=candidate.reason,
+                detail={"gap_id": row["gap_id"], "relevance": row["relevance"]},
+                now=now,
+            )
+            if not verdict.acts:
+                # The gap stays open, which is correct: nothing was learned,
+                # and a shadowed search is not an answer to it.
+                return False
         outcome = await self._investigation.investigate(
             gap_from_row(row),
             # In ordinary running she searches from now. A past simulation

@@ -86,6 +86,22 @@ class Recorder:
         return self._message_id
 
 
+def _shadow(application, mode):
+    """A controller for one capability's mode (Phase 14).
+
+    The deliberation no longer knows its own mode: it asks the
+    ShadowController, so that "is proactive contact live" has one answer per
+    process rather than one per object holding a copy.
+    """
+    from app.runtime.shadow import ShadowController
+
+    return ShadowController(
+        modes={"proactive_contact": mode},
+        repository=application.shadow_decisions,
+        clock=application.clock,
+    )
+
+
 def _deliberation(application, *, mode="SHADOW", judge=None, sender=None):
     return ProactiveDeliberation(
         engine=application.proactive,
@@ -93,7 +109,7 @@ def _deliberation(application, *, mode="SHADOW", judge=None, sender=None):
             application.event_store, application.state, clock=application.clock
         ),
         deliberations=application.proactive_deliberations,
-        mode=mode,
+        shadow=_shadow(application, mode),
         structured=judge,
         prompts=application.prompts if judge is not None else None,
         guard=application.guard,
@@ -371,7 +387,7 @@ async def test_the_null_sender_is_the_default(application, clock) -> None:
         engine=application.proactive,
         source=ProactiveSource(application.event_store, application.state),
         deliberations=application.proactive_deliberations,
-        mode="LIVE",
+        shadow=_shadow(application, "LIVE"),
         structured=judge,
         prompts=application.prompts,
         guard=application.guard,

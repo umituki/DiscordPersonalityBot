@@ -26,7 +26,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
 from app.clock import Clock, SystemClock, to_iso
 from app.context.builder import BuiltContext, ContextBuilder, Requirement
@@ -179,6 +179,7 @@ class ConversationEngine:
         references: DialogueReferenceProvider | None = None,
         repetition: SurfaceRepetitionMonitor | None = None,
         intent_gate: ResponseIntentGate | None = None,
+        shadow: Any = None,
         clock: Clock | None = None,
     ) -> None:
         self._identity = identity
@@ -200,6 +201,11 @@ class ConversationEngine:
         #: Rebuild spec 12. Python authority over whether a speech act happens
         #: at all; the model only ever proposes.
         self._intent_gate = intent_gate or ResponseIntentGate()
+        #: Spec 47, Phase 14. Optional silence is one of the four shadowed
+        #: capabilities. The mode is consulted *before* the reply is realized,
+        #: because turning a silence into a reply afterwards would mean a
+        #: second planning round for the commonest case.
+        self._shadow = shadow
         #: Rebuild spec 15. Optional only so a caller that has no context to
         #: resolve against can still draft; when it is absent no claim is
         #: checked, which is why bootstrap always supplies one.
@@ -267,9 +273,13 @@ class ConversationEngine:
         # Rebuild spec 12.4: decided here, before anything the USER can see.
         _mark(trace, "response_intent_started_at")
         intent = self._intent_gate.decide(
-            social, user_text=user_text, correction=correction
+            social,
+            user_text=user_text,
+            correction=correction,
+            silence_allowed=self._silence_allowed(),
         )
         _mark(trace, "response_intent_ended_at")
+        self._record_silence_shadow(intent, user_text)
         if not intent.speaks:
             # Nothing downstream is needed: no references to calibrate against,
             # because there is no sentence to calibrate.
@@ -291,6 +301,49 @@ class ConversationEngine:
             references=references,
             intent=intent,
         )
+
+    # --- shadowed silence (rebuild spec 47) ---------------------------------
+    def _silence_allowed(self) -> bool:
+        """Whether an optional silence may actually happen.
+
+        A missing controller means yes: the gate's own rules are the authority
+        on silence, and Phase 14 only adds a way to hold them back.
+        """
+        if self._shadow is None:
+            return True
+        try:
+            return self._shadow.live("intentional_silence")
+        except Exception:  # noqa: BLE001 - a broken mode must not break a turn
+            logger.exception("could not read the silence shadow mode")
+            return True
+
+    def _record_silence_shadow(self, intent, user_text: str) -> None:
+        """Record the turns where the mode was the deciding factor.
+
+        Narrower than "she thought about being quiet". A turn where the veto
+        fired, or where nothing made silence natural, was decided by the gate
+        before the mode was ever consulted — recording those as shadow
+        decisions would credit the mode with restraint that was Python's, and
+        bury the handful of rows the OWNER actually has to read.
+        """
+        if self._shadow is None:
+            return
+        from app.conversation.response_intent import ResponseIntent
+
+        if intent.proposed is not ResponseIntent.INTENTIONAL_SILENCE:
+            return
+        if intent.source not in ("llm", "shadow"):
+            return
+        try:
+            self._shadow.decide(
+                "intentional_silence",
+                would_act=True,
+                subject=user_text[:120],
+                reason=intent.reason,
+                detail={"intent": intent.intent.value, "source": intent.source},
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("could not record a silence shadow decision")
 
     async def _retrieve_references(
         self, social: SocialInterpretation, surface: SurfacePlan

@@ -98,6 +98,10 @@ class DebugSources:
     generation_audits: Any = None
     genesis_experiences: Any = None
     first_boot: Any = None
+    #: Phase 14. The controller answers "what mode", the repository answers
+    #: "what has she nearly done".
+    shadow: Any = None
+    shadow_decisions: Any = None
 
 
 class DebugQueryService:
@@ -522,6 +526,42 @@ class DebugQueryService:
             summary=f"{view.status}"
             + (" (recovery required)" if view.recovery_required else ""),
             rows=rows,
+        )
+
+    def shadow(self) -> DebugResult:
+        """The shadow review surface (spec 47).
+
+        Two things at once, because they answer different questions: the modes
+        say what is switched on, and the tally says whether shadow mode has
+        actually seen anything. A capability in SHADOW with `wanted = 0` has
+        not been evaluated — it has merely been enabled, and reporting the
+        first as the second is how a review gets skipped.
+        """
+        controller = self._sources.shadow
+        repository = self._sources.shadow_decisions
+        if controller is None or repository is None:
+            return DebugResult(command="shadow", summary="shadow modes are not wired yet")
+        modes = controller.as_dict()
+        rows = [{"capability": name, "mode": mode} for name, mode in sorted(modes.items())]
+        seen = {row["capability"] for row in repository.tally()}
+        for row in rows:
+            row["evaluated"] = row["capability"] in seen
+        tally = [
+            {
+                "capability": row["capability"],
+                "mode": row["mode"],
+                "considered": row["considered"],
+                "wanted": row["wanted"] or 0,
+                "acted": row["acted"] or 0,
+                "last_at": row["last_at"],
+            }
+            for row in repository.tally()
+        ]
+        unreviewed = repository.unreviewed_count()
+        return DebugResult.of(
+            "shadow",
+            summary=f"{len(rows)} capability(ies); {unreviewed} decision(s) awaiting review",
+            rows=rows + tally,
         )
 
     def genesis(self) -> DebugResult:

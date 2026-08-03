@@ -362,6 +362,9 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     # Phase 13: the one gate that decides whether she exists at all. Verified
     # against a two-month fixture life; the nineteen-year run is GEN-GATE.
     "first_boot",
+    # Phase 14: all four capabilities proven to ask, and proven not to act
+    # when the answer is no.
+    "shadow_evaluation",
 })
 
 

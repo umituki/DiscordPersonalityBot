@@ -239,18 +239,37 @@ class SocialActions:
         world: Any,
         processor: Any,
         candidates: SocialCandidates,
+        shadow: Any = None,
         clock: Clock | None = None,
     ) -> None:
         self._society = society
         self._world = world
         self._processor = processor
         self._candidates = candidates
+        #: Spec 47, Phase 14. Autonomous NPC contact is one of the four; in
+        #: SHADOW she gets as far as choosing who to talk to and stops there.
+        self._shadow = shadow
         self._clock = clock or SystemClock()
 
     async def contact_npc(self, candidate: ActionCandidate, now: datetime) -> bool:
         npc = self._npc_named(candidate.reason)
         if npc is None:
             return False
+        if self._shadow is not None:
+            # Asked after the person is chosen, so the record says who she
+            # would have talked to rather than merely that she wanted company.
+            verdict = self._shadow.decide(
+                "npc_contact",
+                would_act=True,
+                subject=npc.name,
+                reason=candidate.reason,
+                detail={"npc_id": npc.npc_id, "tier": npc.tier},
+                now=now,
+            )
+            if not verdict.acts:
+                # Nothing is committed: no interaction row, no event, no
+                # promotion. A shadowed contact must not move the relationship.
+                return False
         record = self._society.interact(
             npc.npc_id,
             kind="conversation",

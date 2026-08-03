@@ -44,7 +44,7 @@ from app.runtime.social import (
     NPCSource,
 )
 from app.society.events import GROUP_ACTIVITY, NPC_INTERACTION
-from tests.support import use_offline_model
+from tests.support import live_shadow, use_offline_model
 
 pytestmark = pytest.mark.invariant
 
@@ -61,7 +61,9 @@ def application(temp_config, clock):
             )
         }
     )
-    built = Application.build(owned, clock=clock, configure_logs=False)
+    # Phase 14 ships these capabilities in SHADOW; this file is about the
+    # mechanism, so it says which mode it means.
+    built = Application.build(live_shadow(owned), clock=clock, configure_logs=False)
     use_offline_model(built)
     try:
         yield built

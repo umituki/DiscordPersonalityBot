@@ -76,6 +76,17 @@ class RuntimeSection(_Section):
     #: LIVE actually sends. 初期運用は SHADOW, so that is the default — a
     #: proactive message is the one thing she does that the USER cannot undo.
     proactive_mode: Literal["OFF", "SHADOW", "LIVE"] = "SHADOW"
+    #: Spec 47, Phase 14. The other three capabilities that act without being
+    #: asked. 初期運用は SHADOW for all of them: each deliberates in full and
+    #: records what it would have done, and the OWNER decides from the record
+    #: rather than from a promise.
+    #:
+    #: `silence_mode` shadows *optional* silence only — a turn Python required
+    #: an answer to is answered in every mode, because the veto is a hard gate
+    #: and a mode is not.
+    silence_mode: Literal["OFF", "SHADOW", "LIVE"] = "SHADOW"
+    npc_contact_mode: Literal["OFF", "SHADOW", "LIVE"] = "SHADOW"
+    search_mode: Literal["OFF", "SHADOW", "LIVE"] = "SHADOW"
     #: Spec 21, RUNTIME-004. Whether her life runs on its own between messages.
     #: Off by default so that a test, a CLI command or a migration run does not
     #: silently start a background loop that acts while nobody is watching; the

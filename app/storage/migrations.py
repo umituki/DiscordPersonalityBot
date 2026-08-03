@@ -2043,6 +2043,49 @@ _0030_FIRST_BOOT = Migration(
 )
 
 
+_0031_SHADOW_DECISIONS = Migration(
+    version=31,
+    name="shadow_decisions",
+    statements=(
+        # Rebuild spec 47 — Phase 14.
+        #
+        # One review surface for all four shadowed capabilities. Proactive
+        # contact already keeps its own detailed deliberation record — the
+        # draft, the judgment, the anti-feedback gate — and that stays where it
+        # is; this is the index across capabilities, which is what "shadow
+        # decisions を Admin から確認可能にする" actually needs. Reading four
+        # different tables to answer "what would she have done this week" is
+        # how a review does not happen.
+        #
+        # `would_act` and `acted` are separate columns for the same reason
+        # `results` and `acquired` are separate in Phase 11: the interesting
+        # number is the gap between them.
+        """
+        CREATE TABLE shadow_decisions (
+            shadow_id    TEXT PRIMARY KEY,
+            capability   TEXT NOT NULL,
+            mode         TEXT NOT NULL,
+            decided_at   TEXT NOT NULL,
+            would_act    INTEGER NOT NULL DEFAULT 0,
+            acted        INTEGER NOT NULL DEFAULT 0,
+            subject      TEXT NOT NULL DEFAULT '',
+            reason       TEXT NOT NULL DEFAULT '',
+            detail_json  TEXT NOT NULL DEFAULT '',
+            gates_json   TEXT NOT NULL DEFAULT '',
+            run_id       TEXT,
+            event_id     TEXT,
+            reviewed_at  TEXT,
+            review_note  TEXT NOT NULL DEFAULT ''
+        )
+        """,
+        "CREATE INDEX idx_shadow_capability ON shadow_decisions "
+        "(capability, decided_at DESC)",
+        "CREATE INDEX idx_shadow_suppressed ON shadow_decisions "
+        "(would_act, acted, decided_at DESC)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -2074,6 +2117,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0028_GENESIS_V2,
     _0029_GENESIS_EXPERIENCES,
     _0030_FIRST_BOOT,
+    _0031_SHADOW_DECISIONS,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

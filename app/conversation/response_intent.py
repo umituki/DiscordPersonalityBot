@@ -156,6 +156,7 @@ class ResponseIntentGate:
         user_text: str,
         correction: str = "",
         conversation_turns: int = 0,
+        silence_allowed: bool = True,
     ) -> IntentDecision:
         proposed = _INCLINATIONS.get(social.wants_to_speak)
         if proposed is None:
@@ -194,6 +195,19 @@ class ResponseIntentGate:
                 source="veto",
                 proposed=proposed,
                 reason="黙るほどの理由がない",
+            )
+
+        if not silence_allowed:
+            # Spec 47, Phase 14. She got all the way here: no veto fired, and
+            # staying quiet would have been a natural thing to do. The mode is
+            # the only reason she speaks, and `proposed` keeps the record of
+            # what she would have done — which is what the shadow evaluation
+            # is reading.
+            return IntentDecision(
+                intent=ResponseIntent.BRIEF_REPLY,
+                source="shadow",
+                proposed=proposed,
+                reason="沈黙は SHADOW のため実行しない",
             )
 
         return IntentDecision(

@@ -42,6 +42,7 @@ from app.conversation.events import YUI_MESSAGE_SENT, YuiMessageSentPayload
 from app.events.model import Event
 from app.llm.types import LLMMessage
 from app.llm.validation import ValidationContext
+from app.runtime.shadow import ShadowController
 from app.world.models import Opportunity
 
 logger = logging.getLogger(__name__)
@@ -257,7 +258,7 @@ class ProactiveDeliberation:
         engine: Any,
         source: ProactiveSource,
         deliberations: Any,
-        mode: ProactiveMode = "SHADOW",
+        shadow: ShadowController,
         structured: Any = None,
         prompts: Any = None,
         guard: Any = None,
@@ -269,7 +270,9 @@ class ProactiveDeliberation:
         self._engine = engine
         self._source = source
         self._deliberations = deliberations
-        self._mode: ProactiveMode = mode
+        #: Phase 14: the mode is the ShadowController's to know. Keeping a copy
+        #: here would give "is proactive contact live" two answers.
+        self._shadow = shadow
         self._structured = structured
         self._prompts = prompts
         self._guard = guard
@@ -280,27 +283,34 @@ class ProactiveDeliberation:
 
     @property
     def mode(self) -> ProactiveMode:
-        return self._mode
+        return self._shadow.mode(PROACTIVE_CONTACT)  # type: ignore[return-value]
 
     async def deliberate(
         self, opportunity: Opportunity, view: Any, *, now: datetime | None = None
     ) -> ProactiveOutcome:
         moment = now or self._clock.now()
         kind, _, detail = opportunity.detail.partition(":")
+        mode = self.mode
 
         outcome = ProactiveOutcome(
             deliberation_id=ids.new_id(DELIBERATION),
             considered_at=moment,
-            mode=self._mode,
+            mode=mode,
             trigger_kind=kind,
             trigger_detail=detail,
         )
 
-        if self._mode == "OFF":
+        if not self._shadow.runs(PROACTIVE_CONTACT):
+            # 28.4: OFF sends nothing and deliberates nothing. No gate, no
+            # model call, no draft — the answer is already known.
             outcome = outcome.model_copy(
                 update={"gate_reason": "proactive contact is switched off"}
             )
             self._record(outcome)
+            self._shadow.decide(
+                PROACTIVE_CONTACT, would_act=False, subject=kind,
+                reason="switched off", now=moment,
+            )
             return outcome
 
         # --- 28.1, first and unconditionally ---------------------------------
@@ -343,12 +353,25 @@ class ProactiveDeliberation:
                 "would_send": bool(draft) and verdict == "clean",
             }
         )
-        if not outcome.would_send:
-            self._record(outcome)
-            return outcome
-
-        if self._mode != "LIVE":
-            # SHADOW: recorded in full, and nothing left the process.
+        # Asked here, at the last step and nowhere earlier: everything above
+        # really happened, so the SHADOW row records a decision she actually
+        # made rather than a simulation of one.
+        verdict = self._shadow.decide(
+            PROACTIVE_CONTACT,
+            would_act=outcome.would_send,
+            subject=kind,
+            reason=outcome.judgment_reason or outcome.gate_reason,
+            detail=outcome.draft,
+            gates={
+                "gate_passed": outcome.gate_passed,
+                "guard_verdict": outcome.guard_verdict,
+                "unanswered": outcome.unanswered,
+            },
+            now=moment,
+        )
+        if not verdict.acts:
+            # Either she decided not to, or the mode did. Both are recorded,
+            # and the columns keep them apart.
             self._record(outcome)
             return outcome
 

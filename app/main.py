@@ -127,6 +127,25 @@ def _parser() -> argparse.ArgumentParser:
         help="the moment her past ends. Defaults to now",
     )
 
+    shadow = subparsers.add_parser(
+        "shadow", help="review what she would have done (spec 47)"
+    )
+    shadow.add_argument(
+        "action",
+        choices=("status", "list", "suppressed", "review"),
+        help=(
+            "status: the mode of each capability and whether shadow has seen "
+            "anything; list: recent decisions; suppressed: the ones she wanted "
+            "and was not allowed; review: record the OWNER's verdict on one"
+        ),
+    )
+    shadow.add_argument(
+        "--capability", default="", help="narrow to one of the four"
+    )
+    shadow.add_argument("--id", default="", metavar="SHADOW_ID", help="for review")
+    shadow.add_argument("--note", default="", help="the OWNER's verdict")
+    shadow.add_argument("--limit", type=int, default=20)
+
     repair = subparsers.add_parser(
         "repair", help="rebuild a broken Genesis in a shadow database (23.4)"
     )
@@ -690,6 +709,74 @@ async def _first_boot(
         application.db.close()
 
 
+def _shadow(
+    config_path: Path | None,
+    *,
+    action: str,
+    capability: str,
+    shadow_id: str,
+    note: str,
+    limit: int,
+    root: Path | None = None,
+) -> int:
+    """The OWNER review surface (spec 46, 47).
+
+    Shadow mode is only worth running if somebody reads the result, and a
+    review that has to be assembled by hand from four tables does not happen.
+    """
+    config = load_config(config_path, root_dir=root)
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        repository = application.shadow_decisions
+        if action == "status":
+            for name, mode in sorted(application.shadow.as_dict().items()):
+                sys.stdout.write(_line(f"{name:22} {mode}"))
+            sys.stdout.write(_line(""))
+            for row in repository.tally():
+                sys.stdout.write(
+                    _line(
+                        f"{row['capability']:22} {row['mode']:7} "
+                        f"considered {row['considered']:4} "
+                        f"wanted {row['wanted'] or 0:4} acted {row['acted'] or 0:4}"
+                    )
+                )
+            waiting = repository.unreviewed_count()
+            sys.stdout.write(_line(f"\n{waiting} decision(s) awaiting review"))
+            return 0
+        if action in ("list", "suppressed"):
+            rows = (
+                repository.suppressed(limit=limit)
+                if action == "suppressed"
+                else repository.recent(capability=capability, limit=limit)
+            )
+            if not rows:
+                sys.stdout.write(_line("(nothing recorded)"))
+                return 0
+            for row in rows:
+                mark = "reviewed" if row["reviewed_at"] else "-"
+                sys.stdout.write(
+                    _line(
+                        f"{row['shadow_id']} {row['decided_at']} "
+                        f"{row['capability']} {row['mode']} "
+                        f"would={bool(row['would_act'])} acted={bool(row['acted'])} "
+                        f"{mark} {row['subject'][:60]}"
+                    )
+                )
+            return 0
+        if not shadow_id or not note:
+            sys.stdout.write(_line("review needs --id and --note"))
+            return 2
+        if repository.get(shadow_id) is None:
+            sys.stdout.write(_line(f"no such decision: {shadow_id}"))
+            return 1
+        repository.review(shadow_id, note=note, now=application.clock.now())
+        sys.stdout.write(_line(f"reviewed {shadow_id}"))
+        return 0
+    finally:
+        application.db.close()
+
+
 def _anchors_from(application: Application, birth: str, present: str):
     from app.genesis.anchors import LifeAnchors
 
@@ -741,6 +828,16 @@ def main(argv: list[str] | None = None) -> int:
                     present=args.present,
                     root=args.root,
                 )
+            )
+        if args.command == "shadow":
+            return _shadow(
+                args.config,
+                action=args.action,
+                capability=args.capability,
+                shadow_id=args.id,
+                note=args.note,
+                limit=args.limit,
+                root=args.root,
             )
         if args.command == "repair":
             return _repair(

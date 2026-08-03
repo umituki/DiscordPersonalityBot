@@ -44,6 +44,13 @@ ANSWERS: dict[str, str] = {
         '{"summary": "その時期のこと。よく歩いていた。", "topics": ["散歩"], '
         '"novelty": 0.7, "felt_significance": 0.6}'
     ),
+    # Phase 9's 28.2 judgment. "yes" on purpose: a double that always declines
+    # would let a broken proactive chain pass every test by never reaching the
+    # end of it.
+    "ProactiveJudgment": (
+        '{"wants_to_say": "yes", "about": "昨日の話のつづき", '
+        '"because": "unfinished_conversation"}'
+    ),
     "ExperienceNarration": (
         '{"summary": "川沿いを歩いた", "topics": ["散歩"], '
         '"felt_significance": 0.5, "involves_other_person": false}'
@@ -93,6 +100,30 @@ def use_offline_model(
     client = OfflineModelClient(overrides)
     application.structured._client = client  # noqa: SLF001
     return client
+
+
+def live_shadow(config, **overrides: str):
+    """A config with the spec 47 capabilities switched on.
+
+    From Phase 14 the four autonomous capabilities ship in SHADOW: they
+    deliberate in full and stop before acting. A test whose subject is one of
+    those mechanisms — does contacting an NPC go through the Society Service,
+    does a search reach the provider — has to say which mode it is testing,
+    the same way it already says who the OWNER is.
+
+    Tests about shadow mode itself must not use this, and neither must tests
+    about whether the default is safe.
+    """
+    modes = {
+        "proactive_mode": "LIVE",
+        "silence_mode": "LIVE",
+        "npc_contact_mode": "LIVE",
+        "search_mode": "LIVE",
+    }
+    modes.update(overrides)
+    return config.model_copy(
+        update={"runtime": config.runtime.model_copy(update=modes)}
+    )
 
 
 def mark_born(application) -> str:
@@ -188,6 +219,7 @@ __all__ = [
     "ANSWERS",
     "OfflineModelClient",
     "PassingReranker",
+    "live_shadow",
     "mark_born",
     "relevance_answer",
     "use_offline_model",

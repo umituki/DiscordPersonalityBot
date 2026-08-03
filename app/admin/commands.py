@@ -264,6 +264,45 @@ def _build_registry() -> dict[str, AdminCommand]:
                 ),
             ),
         ),
+        AdminCommand(
+            "shadow",
+            "which autonomous capabilities are live, and what shadow has seen",
+            lambda s, a: s.shadow(),
+        ),
+        AdminCommand(
+            "shadow",
+            "recent shadow decisions, whatever the outcome",
+            _listing(
+                "shadow recent", "shadow_decisions", "recent",
+                (
+                    "decided_at",
+                    "capability",
+                    "mode",
+                    "would_act",
+                    "acted",
+                    "subject",
+                    "reason",
+                ),
+            ),
+            subcommand="recent",
+        ),
+        AdminCommand(
+            "shadow",
+            "what she would have done and was not allowed to",
+            _listing(
+                "shadow suppressed", "shadow_decisions", "suppressed",
+                (
+                    "decided_at",
+                    "capability",
+                    "mode",
+                    "subject",
+                    "reason",
+                    "detail_json",
+                    "reviewed_at",
+                ),
+            ),
+            subcommand="suppressed",
+        ),
         AdminCommand("genesis", "rebuild epoch and Genesis status", lambda s, a: s.genesis()),
         AdminCommand(
             "firstboot",

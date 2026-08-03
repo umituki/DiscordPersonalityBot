@@ -69,6 +69,7 @@ from app.runtime.proactive import (
     ProactiveDeliberation,
     ProactiveSource,
 )
+from app.runtime.shadow import ShadowController
 from app.runtime.social import GroupSource, NPCSource, SocialActions, SocialCandidates
 from app.runtime.sources import Registry as RuntimeRegistry, SchedulerSource
 from app.events.store import EventStore
@@ -185,6 +186,7 @@ from app.storage.repositories import (
     ProcessingRunRepository,
     RuntimeTickRepository,
     SearchCallRepository,
+    ShadowDecisionRepository,
     SelfRepository,
     SimulationRepository,
     SleepRepository,
@@ -269,6 +271,8 @@ class Application:
     life_days: LifeDayRepository
     proactive_deliberation: ProactiveDeliberation
     proactive_deliberations: ProactiveDeliberationRepository
+    shadow: ShadowController
+    shadow_decisions: ShadowDecisionRepository
     growth_policy: GrowthPolicy
     adaptations: AdaptationEngine
     growth: GrowthEngine
@@ -532,6 +536,20 @@ class Application:
                 logger.exception("dialogue reference corpus failed to load")
         components["dialogue_reference_source"] = references.provenance.source_name
 
+        # Rebuild spec 47, Phase 14. One controller, four capabilities: the
+        # mode for each of them is read once, here, so that "is proactive
+        # contact live" cannot have two answers in one process.
+        shadow_decisions = ShadowDecisionRepository(db)
+        shadow = ShadowController(
+            modes={
+                "proactive_contact": resolved_config.runtime.proactive_mode,
+                "intentional_silence": resolved_config.runtime.silence_mode,
+                "npc_contact": resolved_config.runtime.npc_contact_mode,
+                "web_search": resolved_config.runtime.search_mode,
+            },
+            repository=shadow_decisions,
+            clock=resolved_clock,
+        )
         conversation_engine = ConversationEngine(
             identity=identity,
             prompts=prompts,
@@ -545,6 +563,7 @@ class Application:
             planner=SurfacePlanner(),
             references=references,
             repetition=SurfaceRepetitionMonitor(),
+            shadow=shadow,
             clock=resolved_clock,
         )
 
@@ -808,6 +827,7 @@ class Application:
             world=world_service,
             processor=processor,
             candidates=SocialCandidates(society_service, state_repo),
+            shadow=shadow,
             clock=resolved_clock,
         ).register(
             runtime_registry,
@@ -885,6 +905,7 @@ class Application:
             investigation,
             gap_repo,
             candidates=KnowledgeCandidates(gap_repo, investigation, clock=resolved_clock),
+            shadow=shadow,
             clock=resolved_clock,
         ).register(
             runtime_registry,
@@ -932,7 +953,7 @@ class Application:
             engine=proactive_engine,
             source=proactive_source,
             deliberations=proactive_deliberations,
-            mode=resolved_config.runtime.proactive_mode,
+            shadow=shadow,
             structured=structured,
             prompts=prompts,
             guard=guard,
@@ -1136,6 +1157,8 @@ class Application:
                     admin_actions=admin_action_repo,
                     runtime_ticks=runtime_tick_repo,
                     proactive_deliberations=proactive_deliberations,
+                    shadow=shadow,
+                    shadow_decisions=shadow_decisions,
                     proactive_engine=proactive_engine,
                     proactive_source=proactive_source,
                     diary=diary_repo,
@@ -1269,6 +1292,8 @@ class Application:
             diaries=diary_repo,
             life_days=life_day_repo,
             proactive_deliberation=proactive_deliberation,
+            shadow=shadow,
+            shadow_decisions=shadow_decisions,
             proactive_deliberations=proactive_deliberations,
             growth_policy=growth_policy,
             adaptations=adaptation_engine,
