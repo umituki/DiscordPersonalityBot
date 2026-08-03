@@ -1,0 +1,91 @@
+{
+  "generated_at": "2026-08-03T17:45:00+00:00",
+  "result": "FAIL",
+  "acceptance_code_commit": "92c26ca679d34d5a236985080f85e4af349e8f27",
+  "branch": "agent/complete-final-capabilities",
+  "deterministic_preflight": {
+    "result": "PASS",
+    "repository_clean": true,
+    "schema": "32/32",
+    "capabilities": "20/20 E2E_VERIFIED",
+    "pytest": "1546 passed, 1 cache warning in 454.69s",
+    "light_artifact": "artifacts/acceptance/LIGHT_RUN_LATEST.json",
+    "final_precheck": "artifacts/acceptance/FINAL_PRECHECK_20260803T174431Z.json"
+  },
+  "model": {
+    "provider": "Ollama",
+    "model": "qwen3.5:9b",
+    "num_ctx": 8192,
+    "temperature": 0.7
+  },
+  "controls": {
+    "same_code_head": true,
+    "fresh_database_each_attempt": true,
+    "worktree_only": true,
+    "discord_transport_used": false,
+    "runtime_live": false,
+    "autonomous": false
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "evidence": "logs/acceptance/REAL_CONVERSATION_20260803T172943Z.json",
+      "llm_calls": 56,
+      "automatic_hard_fail": true,
+      "suppressed": 1,
+      "major_findings": [
+        "final no-recall question was suppressed",
+        "false general memory capability survived repair",
+        "unsupported quiet-time and reading self-experience"
+      ]
+    },
+    {
+      "attempt": 2,
+      "evidence": "logs/acceptance/REAL_CONVERSATION_20260803T173221Z.json",
+      "llm_calls": 56,
+      "automatic_hard_fail": true,
+      "suppressed": 1,
+      "major_findings": [
+        "age reply was falsely classified as a Memory claim and suppressed",
+        "unsupported quiet-time and page-turning self-experience"
+      ]
+    },
+    {
+      "attempt": 3,
+      "evidence": "logs/acceptance/REAL_CONVERSATION_20260803T173454Z.json",
+      "llm_calls": 54,
+      "automatic_hard_fail": false,
+      "human_hard_fail": true,
+      "suppressed": 0,
+      "major_findings": [
+        "unsupported self-experience in turns 5 and 6",
+        "structured-output residue in turn 12",
+        "correction was not cleanly accepted"
+      ]
+    }
+  ],
+  "gates": {
+    "conversation_acceptance": "FAIL",
+    "real_ollama_memory": "NOT_STARTED",
+    "one_year_genesis": "NOT_STARTED",
+    "nineteen_year_full_genesis": "NOT_STARTED"
+  },
+  "full_genesis_estimate": {
+    "applies_to": "19-year Full Genesis only",
+    "estimated_calls": "about 1,900-2,100",
+    "estimated_duration": "about 8 hours"
+  },
+  "quality_backlog": [
+    "register shifts",
+    "awkward wording around missing records",
+    "unsolicited rest or dismissal advice",
+    "near-duplicate adjacent wording"
+  ],
+  "safety": {
+    "pr_merged": false,
+    "runtime_live_changed": false,
+    "discord_live_started": false,
+    "one_year_genesis_started": false,
+    "full_genesis_started": false
+  }
+}
