@@ -61,6 +61,9 @@ STAGES: tuple[str, ...] = (
     "dialogue_ended_at",
     "social_interpretation_started_at",
     "social_interpretation_ended_at",
+    # Rebuild spec 12.4, Phase 4. Typing does not start before this decides.
+    "response_intent_started_at",
+    "response_intent_ended_at",
     "reference_retrieval_started_at",
     "reference_retrieval_ended_at",
     "reply_started_at",

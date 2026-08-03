@@ -42,6 +42,11 @@ from app.conversation.references import (
     render_references,
 )
 from app.conversation.repetition import StyleHints, SurfaceRepetitionMonitor
+from app.conversation.response_intent import (
+    IntentDecision,
+    ResponseIntent,
+    ResponseIntentGate,
+)
 from app.conversation.social_interpretation import (
     SocialInterpretation,
     SocialInterpreter,
@@ -103,6 +108,25 @@ NO_GROUNDING = "(いま確かなことは特にない)"
 
 
 @dataclass(frozen=True, slots=True)
+class TurnPlan:
+    """Everything decided before a word is written (Phase 3 §46, Phase 4).
+
+    The intent is part of the plan rather than a later step, because §12.4
+    requires it settled before the typing indicator goes up.
+    """
+
+    social: SocialInterpretation
+    surface: SurfacePlan
+    style_hints: StyleHints
+    references: tuple[DialogueReference, ...]
+    intent: IntentDecision
+
+    @property
+    def speaks(self) -> bool:
+        return self.intent.speaks
+
+
+@dataclass(frozen=True, slots=True)
 class ReplyGeneration:
     """Everything one reply attempt produced, accepted or not."""
 
@@ -117,6 +141,8 @@ class ReplyGeneration:
     references: tuple[DialogueReference, ...] = ()
     #: What she has been overusing lately. Advice, not a rule.
     style_hints: StyleHints = StyleHints()
+    #: Phase 4: what was decided about speaking at all.
+    intent: IntentDecision = IntentDecision(intent=ResponseIntent.NORMAL_REPLY)
     #: How she was, in words rather than numbers (patch spec 9).
     expression: ExpressionContext = ExpressionContext()
     #: The last quality verdict, on whichever text is being returned.
@@ -152,6 +178,7 @@ class ConversationEngine:
         planner: SurfacePlanner | None = None,
         references: DialogueReferenceProvider | None = None,
         repetition: SurfaceRepetitionMonitor | None = None,
+        intent_gate: ResponseIntentGate | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._identity = identity
@@ -170,6 +197,9 @@ class ConversationEngine:
         #: an empty tuple, and speaking must never depend on one (§28).
         self._references = references or NullReferenceProvider()
         self._repetition = repetition or SurfaceRepetitionMonitor()
+        #: Rebuild spec 12. Python authority over whether a speech act happens
+        #: at all; the model only ever proposes.
+        self._intent_gate = intent_gate or ResponseIntentGate()
         #: Rebuild spec 15. Optional only so a caller that has no context to
         #: resolve against can still draft; when it is absent no claim is
         #: checked, which is why bootstrap always supplies one.
@@ -201,9 +231,7 @@ class ConversationEngine:
         run_id: str | None = None,
         event_id: str | None = None,
         trace: "ConversationTrace | None" = None,
-    ) -> tuple[
-        SocialInterpretation, SurfacePlan, StyleHints, tuple[DialogueReference, ...]
-    ]:
+    ) -> TurnPlan:
         """Everything decided before a word is written.
 
         Split out so the debug preview runs exactly this and nothing else
@@ -236,10 +264,33 @@ class ConversationEngine:
         )
         hints = self._repetition.review(recent_turns)
 
+        # Rebuild spec 12.4: decided here, before anything the USER can see.
+        _mark(trace, "response_intent_started_at")
+        intent = self._intent_gate.decide(
+            social, user_text=user_text, correction=correction
+        )
+        _mark(trace, "response_intent_ended_at")
+        if not intent.speaks:
+            # Nothing downstream is needed: no references to calibrate against,
+            # because there is no sentence to calibrate.
+            return TurnPlan(
+                social=social,
+                surface=surface,
+                style_hints=hints,
+                references=(),
+                intent=intent,
+            )
+
         _mark(trace, "reference_retrieval_started_at")
         references = await self._retrieve_references(social, surface)
         _mark(trace, "reference_retrieval_ended_at")
-        return social, surface, hints, references
+        return TurnPlan(
+            social=social,
+            surface=surface,
+            style_hints=hints,
+            references=references,
+            intent=intent,
+        )
 
     async def _retrieve_references(
         self, social: SocialInterpretation, surface: SurfacePlan
@@ -275,21 +326,28 @@ class ConversationEngine:
         common_ground: str = "",
         correction: str = "",
         relationship_band: RelationshipBand = "acquaintance",
+        plan: TurnPlan | None = None,
         trace: "ConversationTrace | None" = None,
     ) -> ReplyGeneration:
-        plan = await self.plan_turn(
-            user_text=user_text,
-            recent_turns=recent_turns,
-            snapshot=snapshot,
-            grounding=grounding,
-            common_ground=common_ground,
-            correction=correction,
-            relationship_band=relationship_band,
-            run_id=run_id,
-            event_id=event_id,
-            trace=trace,
-        )
-        social, surface, hints, references = plan
+        # The caller may have planned already — the conversation service does,
+        # because it has to know whether she is speaking at all before the
+        # typing indicator goes up (spec 12.4). Re-planning here would spend a
+        # second interpretation call on a decision already made.
+        if plan is None:
+            plan = await self.plan_turn(
+                user_text=user_text,
+                recent_turns=recent_turns,
+                snapshot=snapshot,
+                grounding=grounding,
+                common_ground=common_ground,
+                correction=correction,
+                relationship_band=relationship_band,
+                run_id=run_id,
+                event_id=event_id,
+                trace=trace,
+            )
+        social, surface = plan.social, plan.surface
+        hints, references = plan.style_hints, plan.references
 
         # Patch spec 9: the reply expresses the state the event produced, in
         # qualitative bands. Never a dump of the state table.
@@ -367,6 +425,7 @@ class ConversationEngine:
             surface=surface,
             references=references,
             style_hints=hints,
+            intent=plan.intent,
             expression=expression,
         )
         if not outcome.accepted or outcome.value is None:

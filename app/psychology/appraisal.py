@@ -54,7 +54,9 @@ SIMULATED_ORIGIN = "simulated_past"
 #: on a foregone conclusion while the USER waits. The psychological effect of
 #: her own act belongs to the decision and to the USER's reaction, not to the
 #: text she just produced.
-SELF_AUTHORED_EVENT_TYPES = frozenset({"YUI_MESSAGE_SENT", "YUI_REPLY_SUPPRESSED"})
+SELF_AUTHORED_EVENT_TYPES = frozenset(
+    {"YUI_MESSAGE_SENT", "YUI_REPLY_SUPPRESSED", "YUI_INTENTIONAL_SILENCE"}
+)
 
 
 class AppraisalEngine:

@@ -12,6 +12,7 @@ from app.events.model import EventPayload, register_payload
 USER_MESSAGE_RECEIVED = "USER_MESSAGE_RECEIVED"
 YUI_MESSAGE_SENT = "YUI_MESSAGE_SENT"
 YUI_REPLY_SUPPRESSED = "YUI_REPLY_SUPPRESSED"
+YUI_INTENTIONAL_SILENCE = "YUI_INTENTIONAL_SILENCE"
 
 
 @register_payload(USER_MESSAGE_RECEIVED)
@@ -53,3 +54,24 @@ class YuiReplySuppressedPayload(EventPayload):
     detail: str
     in_reply_to_event_id: str | None = None
     attempts: int = 0
+
+
+@register_payload(YUI_INTENTIONAL_SILENCE)
+class YuiIntentionalSilencePayload(EventPayload):
+    """She decided not to speak (rebuild spec 12.3).
+
+    Deliberately its own event type. ``YUI_REPLY_SUPPRESSED`` means a draft was
+    refused; an LLM timeout, a validation failure and a Discord error all mean
+    something went wrong. This means nothing went wrong: a person read the turn
+    and chose to leave it. Collapsing the four into one would make "she is
+    quiet" and "she is broken" the same row.
+    """
+
+    intent: str
+    reason_code: str
+    reason: str = ""
+    #: What the model wanted, when Python overruled it — or when it did not.
+    proposed_intent: str | None = None
+    #: The hard-gate rule that fired, if one did. Empty on a plain silence.
+    veto: str | None = None
+    in_reply_to_event_id: str | None = None

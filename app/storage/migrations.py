@@ -1532,6 +1532,19 @@ _0021_REALIZATION_TRACE = Migration(
 )
 
 
+_0022_RESPONSE_INTENT_TRACE = Migration(
+    version=22,
+    name="response_intent_trace",
+    statements=(
+        # Rebuild spec 12.4, Phase 4. The decision to speak happens before the
+        # typing indicator, so it needs its own stage: without it, the time
+        # spent deciding to stay quiet would be invisible.
+        "ALTER TABLE conversation_traces ADD COLUMN response_intent_started_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN response_intent_ended_at TEXT",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1554,6 +1567,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0019_COMMON_GROUND,
     _0020_RETRIEVAL_STAGES,
     _0021_REALIZATION_TRACE,
+    _0022_RESPONSE_INTENT_TRACE,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

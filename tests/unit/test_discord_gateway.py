@@ -232,7 +232,11 @@ async def test_typing_stops_when_generation_raises(service_factory, clock) -> No
         channel=channel, author=FakeAuthor(), content="やっほー", created_at=clock.now()
     )
 
-    async def explode(_inbound, **kwargs):
+    async def explode(_inbound, *, on_speaking=None, **kwargs):
+        # The failure happens *after* the decision to speak, which is the case
+        # this test is about: the indicator is up, and it has to come down.
+        if on_speaking is not None:
+            await on_speaking()
         raise RuntimeError("the model is gone")
 
     class Trace:
@@ -308,3 +312,29 @@ async def test_typing_is_not_recorded_as_an_experience(
 
     types = {event.event_type for event in event_store.recent()}
     assert not any("TYPING" in event_type for event_type in types)
+
+
+async def test_a_failure_before_the_decision_shows_no_typing_at_all(
+    service_factory, clock
+) -> None:
+    """Rebuild spec 12.4. The indicator is a promise that a reply is coming.
+
+    If the turn falls over before that promise is made, it must never have been
+    shown — three dots for a message that never arrives is worse than silence.
+    """
+
+    async def explode(_inbound, *, on_speaking=None, **kwargs):
+        raise RuntimeError("the model is gone")
+
+    service = service_factory(['{"text": "うん。"}'])
+    service.handle_inbound = explode  # type: ignore[method-assign]
+    gateway = DiscordGateway(service, token="fake-token", clock=clock)
+    channel = TypingChannel()
+    message = FakeMessage(
+        channel=channel, author=FakeAuthor(), content="やっほー", created_at=clock.now()
+    )
+
+    with pytest.raises(RuntimeError):
+        await gateway.handle_message(message)
+
+    assert channel.events == []

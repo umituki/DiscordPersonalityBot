@@ -16,6 +16,14 @@ running system.
 | `CODE_ONLY` | the code exists and nothing drives it |
 | `WIRED` | a real trigger reaches it from the running system |
 | `E2E_VERIFIED` | a test drives the whole path and asserts the rows/events it wrote |
+| `DEFERRED_TO_FINAL_REAL_MACHINE_GATE` | needs a real Ollama host or a long run; deliberately postponed to the single final acceptance, and **not** a claim that it passed |
+
+`DEFERRED_TO_FINAL_REAL_MACHINE_GATE` is an OWNER decision recorded here, not a
+weakening of `E2E_VERIFIED`. A requirement in that state has its structure
+finished — trigger, wiring, gates, events, persistence, recovery, debug and a
+fixture end-to-end test — and only its *generation-quality* verification
+outstanding. It never means the code is unfinished, and it never means the test
+passed.
 
 **Only `E2E_VERIFIED` counts as complete.** A requirement is not `E2E_VERIFIED`
 because a unit test passes, because `Application.build()` constructs the object,
@@ -62,7 +70,7 @@ epoch row says `genesis_status=pending`.
 | APP-001 | Appraisal output is meaning categories, not raw floats | `app/psychology/models.py` (`AppraisalCandidate`), `app/psychology/appraisal.py`, `config/prompts/appraisal/v2.md` | `test_a_number_is_not_an_appraisal_answer`, `test_a_candidate_maps_to_every_dimension` | `test_appraisal_reads_the_event` | `test_a_categorical_reading_drives_the_real_pipeline` | `config/prompts/appraisal/v2.md` | E2E_VERIFIED |
 | APP-002 | The schema makes impossible values unreachable | `app/psychology/models.py` (`AgencyLabel`, `ValenceLabel`) | `test_agency_cannot_be_negative`, `test_an_invented_category_is_refused` | `test_degraded_appraisal_does_not_corrupt_state` | `test_an_off_scale_number_never_reaches_state` | `llm_calls` rows (`purpose='appraisal'`) | E2E_VERIFIED |
 | APP-003 | Category→numeric mapping is stable and lives in policy | `app/psychology/policy.py` (`AppraisalScales`), `config/policies/psychology.yaml` | `test_the_scale_does_not_depend_on_who_is_reading`, `test_a_scale_missing_a_label_is_refused` | `test_the_mapping_lives_in_the_policy_file` | `test_a_categorical_reading_drives_the_real_pipeline` | `config/policies/psychology.yaml` | E2E_VERIFIED |
-| APP-004 | 100 real-Ollama turns: parse/schema failure < 2%, uncaught exceptions 0 | — | — | — | — | — | NOT_STARTED (needs a real Ollama host) |
+| APP-004 | 100 real-Ollama turns: parse/schema failure < 2%, uncaught exceptions 0 | — | — | — | — | — | DEFERRED_TO_FINAL_REAL_MACHINE_GATE |
 | GROUND-001 | The model's own prose is never evidence | `app/grounding/context.py` (`SELF_AUTHORED_EVENT_TYPES`), `app/grounding/claims.py` | `test_yuis_own_sentence_is_not_evidence_for_itself`, `test_the_guard_cannot_reach_the_conversation` | `test_the_users_own_message_can_still_be_evidence` | `test_a_failed_repair_suppresses_the_send` | `failures` rows (`reason_code` starts `unsupported_`) | E2E_VERIFIED |
 | GROUND-002 | An unsupported claim gets one repair | `app/conversation/engine.py` (`_review_and_repair`) | `test_a_completed_activity_supports_the_claim` | `test_an_unsupported_claim_is_rewritten_once` | `test_an_unsupported_claim_is_rewritten_once` | `llm_calls` rows (`purpose='conversation_repair'`) | E2E_VERIFIED |
 | GROUND-003 | A failed repair suppresses the send | `app/conversation/engine.py`, `app/conversation/service.py` (`_suppress`) | `test_a_different_activity_does_not_support_it` | `test_a_failed_repair_suppresses_the_send` | `test_a_failed_repair_suppresses_the_send` | `YUI_REPLY_SUPPRESSED` events | E2E_VERIFIED |
@@ -194,7 +202,7 @@ the safe direction, and both are what the real-Ollama gate would measure.
 | REAL-13.4 | The realizer receives every input and emits only `{"text": ...}` | `config/prompts/conversation_reply/v7.md`, `app/conversation/models.py` (`ReplyDraft`) | `test_engine_builds_identity_and_history_into_the_prompt` | `test_scenario_g_an_uncertain_memory_is_hedged_without_internal_words` | `test_the_whole_realization_path_fires` | `llm_calls` (`purpose='conversation_reply'`) | E2E_VERIFIED |
 | NAT-3.36 | Naturalness is measured, never enforced at runtime | `app/evaluation/naturalness.py` | `test_the_reply_path_does_not_import_the_evaluator`, `test_the_evaluator_returns_rates_rather_than_a_verdict` | `test_a_reply_that_always_ends_in_a_question_is_visible` | — | `app/evaluation/naturalness.py` | WIRED (measured offline; no runtime trigger by design) |
 | OBS-3.47 | The stages Phase 3 added are separately timed | `app/observability/trace.py`, migration 0021 | `test_every_stage_of_the_spec_is_markable` | `test_a_whole_turn_is_traced` | `test_the_trace_shows_the_stages_phase_three_added` | `python -m app.main latency` | E2E_VERIFIED |
-| GATE-3 | Real-Ollama regression for Phases 1+2+3 | — | — | — | — | — | NOT_STARTED (needs a real Ollama host) |
+| GATE-3 | Real-Ollama regression for Phases 1+2+3 | — | — | — | — | — | DEFERRED_TO_FINAL_REAL_MACHINE_GATE |
 
 ### Phase 3 gate (spec 4.7)
 
@@ -243,6 +251,52 @@ provenance fields are mandatory.
 
 ---
 
+## Phase 4 — Response Intent / Intentional Silence
+
+| Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| SIL-12.1 | Four response intents, only one of which sends nothing | `app/conversation/response_intent.py` | `test_only_intentional_silence_says_nothing` | `test_a_speaking_inclination_is_taken_as_it_stands` | `test_a_chosen_silence_runs_the_whole_path` | `python -m app.main conversation-plan` | E2E_VERIFIED |
+| SIL-12.2a | Python holds a hard veto the model cannot argue with | `app/conversation/response_intent.py` (`_veto`) | `test_a_required_response_is_never_left_silent` | `test_a_pending_correction_is_always_spoken` | `test_a_vetoed_turn_answers_and_records_no_silence` | `YUI_INTENTIONAL_SILENCE.veto` | E2E_VERIFIED |
+| SIL-12.2b | Silence is allowed only where it is a natural thing to do | `app/conversation/response_intent.py` (`_silence_is_natural`) | `test_a_bare_backchannel_may_be_left`, `test_wanting_silence_is_not_enough_on_its_own` | `test_a_closing_conversation_may_be_left` | `test_a_chosen_silence_runs_the_whole_path` | `conversation-plan` | E2E_VERIFIED |
+| SIL-12.3 | `YUI_INTENTIONAL_SILENCE` is never confused with a failure | `app/conversation/events.py`, `app/conversation/service.py` (`_stay_silent`) | `test_silence_and_suppression_are_different_things` | `test_the_silence_event_records_who_decided` | `test_a_chosen_silence_runs_the_whole_path` | events / `failures` (empty) | E2E_VERIFIED |
+| SIL-12.3b | Silence is never the failure mode | `app/conversation/response_intent.py`, `SocialInterpretation.minimal` | `test_an_unreadable_inclination_answers`, `test_a_degraded_interpretation_answers` | `test_a_correction_reading_always_wants_to_speak` | `test_a_vetoed_turn_answers_and_records_no_silence` | `IntentDecision.source` | E2E_VERIFIED |
+| SIL-12.4 | Typing starts only once a reply is certain | `app/interfaces/discord/gateway.py` (`on_speaking`), migration 0022 | `test_a_failure_before_the_decision_shows_no_typing_at_all` | `test_speaking_still_shows_typing` | `test_silence_shows_no_typing_indicator` | `conversation_traces.response_intent_*` | E2E_VERIFIED |
+| SIL-GATE | Real-model silence scenarios; 0 inappropriate silences on required-response cases | — | — | — | — | — | DEFERRED_TO_FINAL_REAL_MACHINE_GATE |
+
+### Phase 4 gate (spec 4.7)
+
+1. **Spec IDs implemented.** SIL-12.1, SIL-12.2a, SIL-12.2b, SIL-12.3,
+   SIL-12.3b, SIL-12.4.
+2. **Runtime trigger.** An accepted USER message; the gate runs inside
+   `ConversationEngine.plan_turn`, which the service calls on every turn.
+3. **Events produced.** `YUI_INTENTIONAL_SILENCE` — its own type, its own
+   payload, its own reason codes.
+4. **Rows written.** The silence event, and `conversation_traces` with
+   `outcome='intentional_silence'` plus `response_intent_started_at` /
+   `_ended_at`. Deliberately *not* written: a conversation turn, a failure
+   record, a `YUI_MESSAGE_SENT`.
+5. **State change.** The silence event goes through the normal processor run,
+   so world/needs advance as they would for any event; her own act is not
+   appraised (patch spec 5.3).
+6. **Debug.** `conversation-plan` prints the intent, its source, what the model
+   proposed and which veto fired.
+7. **Restart.** `test_a_silence_survives_a_restart` reopens the store and the
+   trace repository and finds both.
+8. **Unit tests.** 1098 pass in total; 34 are new in this phase.
+9. **Integration / E2E.** `tests/invariants/test_intentional_silence_e2e.py`
+   drives the real service and the real gateway, including the typing rule.
+10. **Deferred.** Real-model silence scenarios —
+    `DEFERRED_TO_FINAL_REAL_MACHINE_GATE`, per the OWNER instruction. Not run,
+    not claimed.
+
+One judgement call worth stating: the model's inclination rides along in the
+existing SocialInterpretation call rather than costing a second one (Phase 3
+§32). The *decision* is still a separate object with separate authority, its own
+veto, its own event and its own persistence — what is shared is the round trip,
+not the responsibility.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -250,7 +304,6 @@ statuses is exactly the failure this ledger exists to prevent.
 
 | Phase | Subject | Status |
 |---|---|---|
-| 4 | Response intent / intentional silence | NOT_STARTED |
 | 5 | Admin / debug router | NOT_STARTED |
 | 6 | Autonomous Runtime | NOT_STARTED |
 | 7 | Activity / Sleep / Scheduler | NOT_STARTED |
@@ -274,7 +327,7 @@ The contracts are the source of truth; this is a snapshot for reading.
 |---|---|
 | normal_reply | WIRED |
 | natural_conversation_realization | E2E_VERIFIED |
-| intentional_silence | NOT_STARTED |
+| intentional_silence | E2E_VERIFIED |
 | activity | NOT_STARTED |
 | sleep | NOT_STARTED |
 | diary | NOT_STARTED |

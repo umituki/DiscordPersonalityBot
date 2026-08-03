@@ -72,6 +72,12 @@ UserStateHint = Literal[
 #: experience she cannot evidence is not hers to disclose (§22).
 SelfDisclosure = Literal["none", "light", "moderate"]
 
+#: Rebuild spec 12, Phase 4. What the model *feels like* doing. It rides along
+#: here rather than costing a second call (Phase 3 §32), and it is an
+#: inclination, not a decision: :class:`~app.conversation.response_intent.
+#: ResponseIntentGate` holds the authority and the veto.
+SpeechInclination = Literal["speak", "brief", "leave_space", "silence"]
+
 MOVE_DESCRIPTIONS: dict[str, str] = {
     "acknowledge": "相手の言ったことを受け止める",
     "answer": "聞かれたことに答える",
@@ -105,6 +111,8 @@ class SocialInterpretation(BaseModel):
     topic_direction: TopicDirection = "stay"
     user_state_hint: UserStateHint = "unknown"
     self_disclosure: SelfDisclosure = "none"
+    #: Phase 4. A proposal only — Python decides whether a speech act happens.
+    wants_to_speak: SpeechInclination = "speak"
     reason: str = ""
     #: Provenance, not a model field: where this reading came from.
     source: Literal["llm", "default", "correction"] = Field(
@@ -150,6 +158,7 @@ class SocialInterpretation(BaseModel):
                 initiative="balanced",
                 question="none",
                 response_energy="normal",
+                wants_to_speak="speak",
                 source="default",
             )
         return cls(
@@ -157,6 +166,9 @@ class SocialInterpretation(BaseModel):
             initiative="low",
             question="none",
             response_energy="low",
+            # A degraded reading answers. Going quiet because the model failed
+            # would make a fault indistinguishable from restraint (spec 12.3).
+            wants_to_speak="speak",
             source="default",
         )
 
@@ -179,6 +191,8 @@ class SocialInterpretation(BaseModel):
                 "question": "none",
                 "topic_direction": "stay",
                 "self_disclosure": "none",
+                # A retraction is said out loud. It is never left unsaid.
+                "wants_to_speak": "speak",
                 "source": "correction",
             }
         )
@@ -253,6 +267,7 @@ __all__ = [
     "SelfDisclosure",
     "SocialInterpretation",
     "SocialInterpreter",
+    "SpeechInclination",
     "Tone",
     "TopicDirection",
     "UserStateHint",

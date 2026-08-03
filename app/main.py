@@ -552,11 +552,13 @@ def _conversation_plan(
     configure_logging(level=config.logging.level, log_file=config.log_path)
     application = Application.build(config, auto_migrate=False, configure_logs=False)
     try:
-        social, surface, hints, references = asyncio.run(
+        plan = asyncio.run(
             application.conversation_engine.plan_turn(
                 user_text=message, relationship_band=band  # type: ignore[arg-type]
             )
         )
+        social, surface = plan.social, plan.surface
+        hints, references = plan.style_hints, plan.references
         sys.stdout.write(
             "social:\n"
             f"  primary_move: {social.primary_move}\n"
@@ -575,6 +577,9 @@ def _conversation_plan(
             f"  question_budget: {surface.question_budget}\n"
             f"  initiative: {surface.initiative}\n"
             f"  relationship_band: {surface.relationship_band}\n"
+            "\nintent:\n  "
+            + plan.intent.render().replace("\n", "\n  ")
+            + "\n"
             "\nreferences:\n"
             f"  {len(references)}\n"
             "\nstyle hints:\n"

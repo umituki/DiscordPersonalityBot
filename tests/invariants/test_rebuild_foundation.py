@@ -329,6 +329,10 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     # reference lookup, realization, the hard gates and delivery, and
     # tests/invariants/test_conversation_realization_e2e.py asserts the rows.
     "natural_conversation_realization",
+    # Phase 4: a chosen silence produces its own event, no turn, no failure
+    # row and no typing indicator, and tests/invariants/
+    # test_intentional_silence_e2e.py asserts each of those.
+    "intentional_silence",
 })
 
 

@@ -31,13 +31,16 @@ from app.conversation.common_ground import CommonGroundTracker, CorrectionOutcom
 from app.conversation.engine import ConversationEngine, ReplyGeneration
 from app.conversation.events import (
     USER_MESSAGE_RECEIVED,
+    YUI_INTENTIONAL_SILENCE,
     YUI_MESSAGE_SENT,
     YUI_REPLY_SUPPRESSED,
     UserMessageReceivedPayload,
+    YuiIntentionalSilencePayload,
     YuiMessageSentPayload,
     YuiReplySuppressedPayload,
 )
 from app.conversation.policy import ConversationPolicy
+from app.conversation.response_intent import IntentDecision, ResponseIntent
 from app.conversation.surface import RelationshipBand, relationship_band
 from app.events.model import Event
 from app.grounding.context import GroundingContextBuilder
@@ -89,6 +92,11 @@ class ConversationResult:
     #: memories the sent reply actually rests on. A memory that sat in context
     #: and left no mark on the sentence was available, not used.
     retrieval: object | None = None
+    #: Phase 4. What was decided about speaking at all, and why.
+    intent: IntentDecision | None = None
+    #: True when she chose not to speak. Distinct from ``suppressed``, which
+    #: means a draft existed and was refused (spec 12.3).
+    silent: bool = False
 
     @property
     def should_send(self) -> bool:
@@ -156,8 +164,19 @@ class ConversationService:
         return self._adapter.rejection_reason(message) is None
 
     async def handle_inbound(
-        self, message: InboundMessage, *, trace: ConversationTrace | None = None
+        self,
+        message: InboundMessage,
+        *,
+        trace: ConversationTrace | None = None,
+        on_speaking: "Awaitable[None] | None" = None,
     ) -> ConversationResult:
+        """Take one message all the way to an outbound reply, or to silence.
+
+        ``on_speaking`` is awaited at the moment it becomes true that she is
+        going to say something (rebuild spec 12.4). The Discord gateway hangs
+        the typing indicator off it, so an intentional silence never shows the
+        USER three dots for a message that is not coming.
+        """
         # Patch spec 19.2. The interface may have started the trace already —
         # the typing indicator goes up before this call — so one is adopted
         # when offered and started here otherwise.
@@ -264,26 +283,56 @@ class ConversationService:
                 now=event.occurred_at,
             )
 
-        self._mark(trace, "reply_started_at")
-        generation = await self._engine.draft_reply(
-            trace=trace,
+        # Rebuild spec 12: decide whether a speech act happens at all, before
+        # anything the USER can see. Everything up to here is reading; nothing
+        # up to here has told them a reply is coming.
+        plan = await self._engine.plan_turn(
             user_text=event.payload.text,
             recent_turns=recent,
-            memories=memories,
-            # Patch spec 9: she speaks as who she is *after* taking the message
-            # in, so the reply reads the state this event produced.
             snapshot=outcome.post_commit_snapshot,
-            run_id=outcome.run.run_id,
-            event_id=event.event_id,
-            tool_success_ids=tool_success_ids,
             grounding=grounding_context,
-            relationship_band=self._relationship_band(outcome.post_commit_snapshot),
             common_ground=(
                 self._common_ground.render(conversation.conversation_id)
                 if self._common_ground is not None
                 else ""
             ),
             correction=correction.render(),
+            relationship_band=self._relationship_band(outcome.post_commit_snapshot),
+            run_id=outcome.run.run_id,
+            event_id=event.event_id,
+            trace=trace,
+        )
+
+        if not plan.speaks:
+            await self._stay_silent(event, plan.intent)
+            self._finish(trace, outcome="intentional_silence")
+            return ConversationResult(
+                accepted=True,
+                event=event,
+                outcome=outcome,
+                trace=trace,
+                grounding_context=grounding_context,
+                retrieval=retrieval,
+                intent=plan.intent,
+                silent=True,
+            )
+
+        # Only now is it true that she is going to say something (spec 12.4).
+        if on_speaking is not None:
+            await on_speaking()
+
+        self._mark(trace, "reply_started_at")
+        generation = await self._engine.draft_reply(
+            trace=trace,
+            user_text=event.payload.text,
+            recent_turns=recent,
+            memories=memories,
+            snapshot=outcome.post_commit_snapshot,
+            run_id=outcome.run.run_id,
+            event_id=event.event_id,
+            tool_success_ids=tool_success_ids,
+            grounding=grounding_context,
+            plan=plan,
         )
         self._mark(trace, "reply_ended_at")
 
@@ -298,6 +347,7 @@ class ConversationService:
                 suppressed=True,
                 trace=trace,
                 retrieval=retrieval,
+                intent=plan.intent,
             )
 
         return ConversationResult(
@@ -308,6 +358,7 @@ class ConversationService:
             trace=trace,
             grounding_context=grounding_context,
             retrieval=retrieval,
+            intent=plan.intent,
             outbound=OutboundMessage(
                 channel_id=message.channel_id,
                 text=generation.text,
@@ -528,6 +579,48 @@ class ConversationService:
             ),
             now=self._clock.now(),
         )
+
+    # --- intentional silence (rebuild spec 12.3) ---------------------------
+    async def _stay_silent(self, event: Event, decision: IntentDecision) -> Event:
+        """Record a decision not to speak.
+
+        Its own event type, on purpose. A suppressed draft, an LLM timeout, a
+        validation failure and a Discord error are all things that went wrong;
+        this is a person choosing to leave a turn. If they shared a row, "she
+        is quiet" and "she is broken" would be the same observation.
+
+        No failure record is written, because nothing failed.
+        """
+        logger.info(
+            "intentional silence event_id=%s intent=%s source=%s",
+            event.event_id,
+            decision.intent.value,
+            decision.source,
+        )
+        silence = event.child(
+            event_type=YUI_INTENTIONAL_SILENCE,
+            category="social",
+            actor_type="yui",
+            source_type="response_intent_gate",
+            target_type="user",
+            target_id=event.actor_id,
+            priority="P2",
+            clock=self._clock,
+            payload=YuiIntentionalSilencePayload(
+                intent=decision.intent.value,
+                reason_code=(
+                    decision.veto.value if decision.veto else "chose_not_to_speak"
+                ),
+                reason=decision.reason[:500],
+                proposed_intent=(
+                    None if decision.proposed is None else decision.proposed.value
+                ),
+                veto=None if decision.veto is None else decision.veto.value,
+                in_reply_to_event_id=event.event_id,
+            ),
+        )
+        await self._processor.process(silence)
+        return silence
 
     # --- suppression -------------------------------------------------------
     async def _suppress(

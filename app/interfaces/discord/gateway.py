@@ -11,7 +11,7 @@ It performs no persistence and makes no psychological decision (spec 37:
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.clock import Clock, SystemClock, ensure_aware
@@ -103,11 +103,16 @@ class DiscordGateway:
         """Process one gateway message and send the reply, if any.
 
         The typing indicator wraps everything the USER is waiting for and
-        nothing else (patch spec 6). It starts once the message is known to be
-        one YUI will answer, and ``async with`` ends it on every exit — send
-        success, suppression, an LLM error, a Discord error, cancellation and
-        shutdown alike (6.3). It is never recorded: typing is transient UI, not
-        an experience (6.4). No artificial delay is added (6.5).
+        nothing else (patch spec 6). Rebuild spec 12.4 moves where it starts:
+        not when the message is admitted, but when the service has decided that
+        a reply is actually coming. An intentional silence must not show three
+        dots for a message that is never sent — that would be worse than a
+        reply, because it is a promise the system does not keep.
+
+        The stack ends it on every exit — send success, suppression, silence,
+        an LLM error, a Discord error, cancellation and shutdown alike (6.3).
+        It is never recorded: typing is transient UI, not an experience (6.4).
+        No artificial delay is added (6.5).
         """
         inbound = to_inbound(message)
         if not self._service.intends_to_reply(inbound):
@@ -122,9 +127,16 @@ class DiscordGateway:
         send_failed = False
         exceptional_exit = False
         try:
-            async with self._typing(message):
-                _mark(trace, "typing_started_at")
-                result = await self._service.handle_inbound(inbound, trace=trace)
+            async with AsyncExitStack() as stack:
+
+                async def start_typing() -> None:
+                    """Awaited by the service the moment silence is ruled out."""
+                    await stack.enter_async_context(self._typing(message))
+                    _mark(trace, "typing_started_at")
+
+                result = await self._service.handle_inbound(
+                    inbound, trace=trace, on_speaking=start_typing
+                )
                 if result.should_send and result.outbound is not None:
                     _mark(trace, "discord_send_started_at")
                     try:
@@ -149,6 +161,11 @@ class DiscordGateway:
                 self._service.finish_trace(trace, outcome="failed")
 
         assert result is not None
+        if result.silent:
+            # She chose not to speak. Nothing was sent and nothing failed
+            # (spec 12.3); the service has already recorded the decision.
+            self._service.finish_trace(trace, outcome="intentional_silence")
+            return result
         if not result.should_send or result.outbound is None:
             self._service.finish_trace(trace, outcome="suppressed")
             return result
