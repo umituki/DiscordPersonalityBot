@@ -38,6 +38,15 @@ def test_conversation_metrics_flags_replayed_prior_user_message():
     assert metrics["automatic_hard_fail"] is True
 
 
+def test_conversation_metrics_does_not_silently_pass_suppression():
+    metrics = conversation_metrics(
+        [{"prompt": "何歳？", "reply": None, "suppressed": True}]
+    )
+
+    assert metrics["suppressed"] == 1
+    assert metrics["automatic_hard_fail"] is True
+
+
 def test_conversation_metrics_accepts_varied_non_question_replies():
     metrics = conversation_metrics(
         [

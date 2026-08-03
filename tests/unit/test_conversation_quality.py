@@ -190,6 +190,37 @@ def test_replaying_a_recent_user_turn_under_yuis_name_is_rejected(
     assert QualityIssue.ECHOES_USER in verdict.issues
 
 
+def test_replaying_one_sentence_of_a_recent_user_turn_is_rejected(
+    quality, clock
+) -> None:
+    recent = (
+        turn(
+            clock,
+            "user",
+            "いや、今の説明は違うよ。私はそうは言っていない",
+            minutes=2,
+        ),
+    )
+    verdict = quality.review(
+        "いえ、私はそうは言っていないと記憶しています",
+        allows_question=NO_QUESTION,
+        user_text="前に好きだと言った食べ物、覚えてる？",
+        recent_turns=recent,
+    )
+    assert verdict.rejected
+    assert QualityIssue.ECHOES_USER in verdict.issues
+
+
+def test_arguing_with_an_explicit_correction_is_rejected(quality) -> None:
+    verdict = quality.review(
+        "わたしは今、そう思っていたつもりです。誤解があったのでしょうか？",
+        allows_question=MAY_ASK,
+        user_text="いや、今の説明は違うよ。私はそうは言っていない",
+    )
+    assert verdict.rejected
+    assert QualityIssue.CORRECTION_ARGUMENT in verdict.issues
+
+
 # --- the rejection is legible to the repair prompt --------------------------
 def test_the_rejection_is_described_in_words(quality) -> None:
     verdict = quality.review("初めまして、はじめまして。", allows_question=NO_QUESTION, user_text="初めまして～")

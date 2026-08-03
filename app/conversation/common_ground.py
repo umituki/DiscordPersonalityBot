@@ -221,7 +221,13 @@ class CommonGroundTracker:
 
         live = self.live_claims(conversation_id, limit=5)
         if not live:
-            # Nothing outstanding: 「詩？」 is just a question.
+            # A short challenge with nothing outstanding (「詩？」) is just a
+            # question.  An explicit denial is different: the USER has said
+            # our explanation is wrong even when that explanation did not
+            # contain one of Grounding's dangerous factual claim shapes.
+            # Dropping that signal made the real model argue back.
+            if signal.is_denial:
+                return CorrectionOutcome(signal=signal, retracted=True)
             return CorrectionOutcome()
 
         target = live[0]
@@ -276,12 +282,17 @@ class CorrectionOutcome:
 
     @property
     def happened(self) -> bool:
-        return self.signal.detected and self.claim is not None
+        return self.signal.detected and (self.claim is not None or self.retracted)
 
     def render(self) -> str:
         """What the reply prompt is told. Never a sentence to say."""
-        if not self.happened or self.claim is None:
+        if not self.happened:
             return ""
+        if self.claim is None:
+            return (
+                "相手が直前の説明を明示的に訂正した。事実関係を争わず、"
+                "短く認めて謝り、訂正を受け入れること。相手が誤解したとは言わない。"
+            )
         if self.retracted:
             return (
                 "直前に自分が言った「"

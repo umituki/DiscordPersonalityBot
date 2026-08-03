@@ -125,6 +125,7 @@ def conversation_metrics(turns: Sequence[dict[str, Any]]) -> dict[str, Any]:
     duplicate_replies = sorted(
         {reply for reply in normalized if normalized.count(reply) > 1}
     )
+    suppressed = sum(bool(turn.get("suppressed")) for turn in turns)
     replayed_user_messages: list[dict[str, Any]] = []
     prior_prompts: list[tuple[int, str]] = []
     for index, turn in enumerate(turns, start=1):
@@ -140,7 +141,7 @@ def conversation_metrics(turns: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "turns": len(turns),
         "outbound": sum(bool(reply) for reply in replies),
         "silent": sum(bool(turn.get("silent")) for turn in turns),
-        "suppressed": sum(bool(turn.get("suppressed")) for turn in turns),
+        "suppressed": suppressed,
         "question_turns": sum(question_flags),
         "max_consecutive_question_turns": maximum_streak,
         "duplicate_replies": duplicate_replies,
@@ -150,6 +151,7 @@ def conversation_metrics(turns: Sequence[dict[str, Any]]) -> dict[str, Any]:
             leaks
             or duplicate_replies
             or replayed_user_messages
+            or suppressed
             or maximum_streak >= 4
         ),
         "human_review_required": [

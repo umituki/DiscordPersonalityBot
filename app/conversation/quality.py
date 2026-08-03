@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from app.conversation.models import ConversationTurn
+from app.conversation.common_ground import detect_correction
 from app.conversation.text import looks_like_question
 
 MODULE = "conversation_quality_guard"
@@ -43,6 +44,7 @@ class QualityIssue:
     REPEATED_QUESTION = "repeated_question"
     UNWANTED_QUESTION = "unwanted_question"
     FORMULAIC = "formulaic_repetition"
+    CORRECTION_ARGUMENT = "correction_doubled_down"
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +106,16 @@ _PROBLEM_TEXT: dict[str, str] = {
     QualityIssue.REPEATED_QUESTION: "直前に自分がした質問をもう一度している。訊き直さない。",
     QualityIssue.UNWANTED_QUESTION: "質問しないと決めたのに質問している。質問文を外す。",
     QualityIssue.FORMULAIC: "決まり文句のくり返しになっている。",
+    QualityIssue.CORRECTION_ARGUMENT: (
+        "相手の訂正に反論している。説明で押し切らず、短く認めて訂正を受け入れる。"
+    ),
 }
+
+
+_CORRECTION_ARGUMENT = re.compile(
+    r"(?:(?:わたし|私)[^。！？!?\n]{0,32}?(?:思っていた|記憶して|覚えている|言っていない)|"
+    r"(?:誤解|勘違い)[^。！？!?\n]{0,16}?(?:あった|ある)(?:の|ん)?(?:でしょう|ですか))"
+)
 
 
 class ConversationQualityGuard:
@@ -154,6 +165,13 @@ class ConversationQualityGuard:
             if echoed:
                 issues.append(QualityIssue.ECHOES_USER)
                 details.append("the reply replays a recent USER turn")
+
+        if (
+            detect_correction(user_text).is_denial
+            and _CORRECTION_ARGUMENT.search(stripped)
+        ):
+            issues.append(QualityIssue.CORRECTION_ARGUMENT)
+            details.append("the reply argues with an explicit USER correction")
 
         if not allows_question and looks_like_question(stripped):
             # Patch spec 10.4 and 8.1, now spending the SurfacePlan's question
@@ -229,10 +247,17 @@ class ConversationQualityGuard:
         answering USER-2.  That exact failure made a correction sentence come
         back under YUI's name during the real-machine gate.
         """
+        reply = _normalise(text)
         recent_user = [turn for turn in recent_turns if turn.speaker == "user"]
         for turn in reversed(recent_user[-self._recent_question_window :]):
             if self._echoes_user(text, turn.content):
                 return turn.content
+            for sentence in _sentences(turn.content):
+                sentence_key = _normalise(sentence)
+                if len(sentence_key) >= self._min_echo_chars and sentence_key in reply:
+                    return sentence
+                if self._echoes_user(text, sentence):
+                    return sentence
         return None
 
     def _formulaic(self, text: str, recent_turns: Sequence[ConversationTurn]) -> str | None:
