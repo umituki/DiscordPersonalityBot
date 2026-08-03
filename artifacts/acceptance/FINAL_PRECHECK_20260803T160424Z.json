@@ -1,11 +1,11 @@
 {
-  "generated_at": "2026-08-03T15:18:25.158890+00:00",
+  "generated_at": "2026-08-03T16:04:24.885170+00:00",
   "result": "PASS",
   "preflight": {
-    "generated_at": "2026-08-03T15:18:25.039290+00:00",
+    "generated_at": "2026-08-03T16:04:24.784040+00:00",
     "result": "PASS",
     "repository": {
-      "commit": "02fbb154976b0046fbd48001ba941fa966556bb7",
+      "commit": "0c80ecf9faf43eec1fb266b9e0497558ee5a97d6",
       "branch": "agent/complete-final-capabilities",
       "dirty": true
     },

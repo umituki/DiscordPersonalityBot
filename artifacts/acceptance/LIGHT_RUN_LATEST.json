@@ -461,7 +461,7 @@
       "real proactive Discord send",
       "long real Shadow review",
       "blind human naturalness evaluation",
-      "GEN-GATE one-year Genesis (about 1,900-2,100 model calls; typically about 8 hours)"
+      "19-year Full Genesis / GEN-GATE (about 1,900-2,100 model calls; typically about 8 hours)"
     ]
   },
   "deferred_heavy_gates": [
@@ -471,6 +471,6 @@
     "real proactive Discord send",
     "long real Shadow review",
     "blind human naturalness evaluation",
-    "GEN-GATE one-year Genesis (about 1,900-2,100 model calls; typically about 8 hours)"
+    "19-year Full Genesis / GEN-GATE (about 1,900-2,100 model calls; typically about 8 hours)"
   ]
 }

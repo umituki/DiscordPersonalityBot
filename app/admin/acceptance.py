@@ -30,7 +30,7 @@ DEFERRED_HEAVY_GATES: tuple[str, ...] = (
     "real proactive Discord send",
     "long real Shadow review",
     "blind human naturalness evaluation",
-    "GEN-GATE one-year Genesis (about 1,900-2,100 model calls; typically about 8 hours)",
+    "19-year Full Genesis / GEN-GATE (about 1,900-2,100 model calls; typically about 8 hours)",
 )
 
 LIGHT_COVERAGE: tuple[str, ...] = (
@@ -269,7 +269,10 @@ def write_report(root: Path, preflight: dict[str, Any]) -> dict[str, Any]:
         "light_run": light,
         "blocker_category": "deferred_owner_or_real_machine_gates" if overall == "PASS" else "software_or_light_acceptance",
         "deferred_heavy_gates": list(DEFERRED_HEAVY_GATES),
-        "gen_gate_estimate": "about 1,900-2,100 model calls; typically about 8 hours",
+        "gen_gate_estimate": (
+            "19-year Full Genesis: about 1,900-2,100 model calls; "
+            "typically about 8 hours"
+        ),
         "next_command": "OWNER authorization is required before any real-machine or GEN-GATE run",
     }
     json_path = root / "artifacts" / "acceptance" / f"FINAL_PRECHECK_{stamp}.json"
@@ -357,7 +360,7 @@ def _markdown_report(payload: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## GEN-GATE estimate",
+            "## 19-year Full GEN-GATE estimate",
             "",
             f"- {payload['gen_gate_estimate']}",
             "- This report does not authorize or start it.",

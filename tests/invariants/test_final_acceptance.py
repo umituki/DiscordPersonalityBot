@@ -105,5 +105,6 @@ def test_report_requires_a_passing_light_run_and_writes_both_formats(tmp_path) -
     assert Path(result["json"]).is_file()
     markdown = Path(result["markdown"]).read_text(encoding="utf-8")
     assert "LiveReadiness blockers" in markdown
-    assert "GEN-GATE estimate" in markdown
+    assert "19-year Full GEN-GATE estimate" in markdown
+    assert "19-year Full Genesis: about 1,900-2,100 model calls" in markdown
     assert "does not authorize or start it" in markdown
