@@ -328,7 +328,8 @@ not the responsibility.
    and every listing command names its own source, method and printed fields.
 7. **Restart.** Not applicable — nothing is persisted. The read-only property
    is checked against a database seeded by real processor runs, not an empty one.
-8. **Unit tests.** 1132 pass in total; 34 are new in this phase.
+8. **Unit tests.** 1138 pass in total; 40 are new in this phase (36 in the
+   read-only E2E, 4 at the gateway boundary).
 9. **Integration / E2E.** `tests/invariants/test_admin_readonly_e2e.py` drives
    `application.admin_router` — the object the running system uses — rather
    than a parallel one assembled in the test.
