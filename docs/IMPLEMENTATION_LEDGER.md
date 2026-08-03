@@ -902,6 +902,47 @@ those would credit the mode with restraint that was Python's.
 
 ---
 
+## Phase 15 — Live (rebuild spec 50 Phase 15, 54)
+
+| ID | Requirement | Where | Unit | Integration | Failure | Persistence | Status |
+|---|---|---|---|---|---|---|---|
+| LV-01 | One gate at the door, asked one question | `LiveReadiness.character_plane_open` | `test_everything_satisfied_is_ready` | `test_the_gate_answers_the_gateways_question` | `test_a_broken_gate_stays_shut` | — | E2E_VERIFIED |
+| LV-02 | An unborn YUI cannot go live | `_first_boot_complete` | `test_no_first_boot_status_except_complete_opens_it` | — | `test_an_unborn_yui_cannot_go_live`, `test_a_first_boot_that_cannot_be_read_keeps_it_shut` | `first_boot_state` | E2E_VERIFIED |
+| LV-03 | A born YUI is still not automatically live | the whole checklist | — | `test_a_born_yui_is_still_not_automatically_live` | — | — | E2E_VERIFIED |
+| LV-04 | Going live is decided, never drifted into | `_explicitly_enabled` | `test_live_is_off_by_default` | — | `test_going_live_needs_somebody_to_decide_it` | `runtime.live` | E2E_VERIFIED |
+| LV-05 | §54: every required capability E2E_VERIFIED | `_capabilities_verified` | `test_an_unfinished_capability_blocks_going_live` | `test_the_wired_gate_names_what_is_missing` | `test_missing_contracts_block_rather_than_pass` | `config/capabilities/` | E2E_VERIFIED |
+| LV-06 | §54: no required dead subsystem | `_no_dead_subsystem` | — | — | `test_a_dead_subsystem_blocks_going_live` | `runtime_ticks.unclaimed_kinds` | E2E_VERIFIED |
+| LV-07 | A LIVE capability shadow never watched blocks | `_shadow_evaluated` | `test_considered_is_not_evaluated`, `test_shadowed_capabilities_need_no_evidence` | `test_a_live_capability_that_was_watched_passes` | `test_a_live_capability_that_was_never_watched_blocks`, `test_every_shadow_capability_is_covered_when_live` | `shadow_decisions` | E2E_VERIFIED |
+| LV-08 | The USER, the channel, the token and the schema | four checks | `test_no_owner_no_conversation`, `test_no_token_no_gateway`, `test_an_old_schema_blocks_going_live` | — | — | — | E2E_VERIFIED |
+| LV-09 | Advisory is not blocking | `Check.advisory` | `test_a_degraded_model_is_a_warning_not_a_refusal`, `test_no_backup_is_a_warning` | — | — | — | E2E_VERIFIED |
+| LV-10 | Readable from Admin and the CLI; switchable from neither | `!yui live`, `yui live-check` | `test_the_admin_plane_cannot_go_live`, `test_the_live_check_command_runs` | `test_the_live_view_is_wired` | `test_the_live_view_changes_nothing` | — | E2E_VERIFIED |
+
+**Phase 15 completion (rebuild spec 50 Phase 15):**
+
+1. **Files.** `app/live/readiness.py`, the `live` flag in `app/config.py`, the
+   gateway wiring in `app/main.py`, `!yui live` and `yui live-check`.
+2. **Behaviour.** The Discord character plane opens only when every blocking
+   condition on §54's machine-checkable list holds, and the OWNER has said so.
+3. **Tests.** 1493 pass in total; 32 in `test_live_readiness.py`.
+4. **Invariants.** No combination of conditions becoming true on their own adds
+   up to going live. A LIVE capability that shadow never observed blocks.
+5. **Deferred.** Going live itself — a real token, a real Discord connection, a
+   real USER — and §53's acceptance scenarios A–O, of which O is `GEN-GATE`.
+
+**Finishing the Genesis is not permission to talk to anyone.** That is the
+negative test the phase turns on. Nineteen years is the one condition that
+takes nineteen years to satisfy, and it is exactly the one that would feel like
+the finish line — so there is a test asserting that a born YUI with everything
+else unmet still finds the door shut.
+
+**The gate currently blocks, honestly.** `capabilities_verified` fails on this
+repository, because `normal_reply` is `WIRED` and `spontaneous_memory` is
+`NOT_STARTED`. That is the correct output, not a bug in the check: §54 requires
+all required IDs `E2E_VERIFIED`, and two of them are not. A gate that passed
+here would be a gate worth nothing.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -919,7 +960,7 @@ statuses is exactly the failure this ledger exists to prevent.
 | 12 | Genesis v2 | STRUCTURALLY_COMPLETE |
 | 13 | Full FIRST BOOT | STRUCTURALLY_COMPLETE |
 | 14 | Shadow runtime evaluation | STRUCTURALLY_COMPLETE |
-| 15 | Live | NOT_STARTED |
+| 15 | Live | STRUCTURALLY_COMPLETE |
 
 ---
 
@@ -949,6 +990,7 @@ The contracts are the source of truth; this is a snapshot for reading.
 | autonomous_runtime | E2E_VERIFIED |
 | first_boot | E2E_VERIFIED |
 | shadow_evaluation | E2E_VERIFIED |
+| live_character_mode | E2E_VERIFIED |
 
 `natural_conversation_realization` is the first `E2E_VERIFIED` capability: a
 real inbound message drives interpretation, planning, reference lookup,

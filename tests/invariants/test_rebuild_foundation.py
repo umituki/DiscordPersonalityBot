@@ -365,6 +365,9 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     # Phase 14: all four capabilities proven to ask, and proven not to act
     # when the answer is no.
     "shadow_evaluation",
+    # Phase 15: the go-live gate, proven to stay shut for every unmet
+    # condition on §54's list.
+    "live_character_mode",
 })
 
 

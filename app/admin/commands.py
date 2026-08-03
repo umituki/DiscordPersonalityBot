@@ -265,6 +265,11 @@ def _build_registry() -> dict[str, AdminCommand]:
             ),
         ),
         AdminCommand(
+            "live",
+            "the go-live checklist, and what is stopping it",
+            lambda s, a: s.live(),
+        ),
+        AdminCommand(
             "shadow",
             "which autonomous capabilities are live, and what shadow has seen",
             lambda s, a: s.shadow(),

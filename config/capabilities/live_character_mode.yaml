@@ -1,0 +1,35 @@
+# Capability Contract (rebuild spec 4.3, 50 Phase 15, 54)
+capability: "live_character_mode"
+trigger: "the OWNER setting runtime.live and starting the process. Never a schedule, never a chat message, never a state the system drifts into"
+runtime_entry: "app.main _build_gateway → DiscordGateway asking LiveReadiness.character_plane_open() before any USER message reaches the conversation service"
+candidate_source: "not a candidate source. Going live is a decision, and the gate only says whether the decision may take effect"
+hard_gate: "every blocking check in LiveReadiness — first boot COMPLETE, latest schema, explicitly enabled, OWNER and channel and token configured, every required capability E2E_VERIFIED, no unclaimed opportunity kind, and no LIVE capability that shadow never observed wanting to act"
+actual_action: "the Discord character plane opens; the USER can talk to her and she can answer"
+success_event: "no event of its own. The first real conversation is the evidence, and it produces the events it always would"
+persistence: "nothing new. Readiness is computed from what is already recorded — first_boot_state, the contracts, shadow_decisions, runtime_ticks, backups — so it can be asked at any time without side effects"
+recovery: "the gate is re-evaluated on every start and on every question. A database that stops being ready stops being live"
+observability: "yui live-check (non-zero while blocked) and !yui live"
+acceptance_test: "tests/invariants/test_live_readiness.py"
+status: "E2E_VERIFIED"
+note: >
+  Almost every test for this capability is negative, because the useful
+  property is not that the gate can open. It is that no combination of things
+  becoming true on their own adds up to going live: finishing a nineteen-year
+  Genesis — the one condition that takes nineteen years to satisfy — is
+  explicitly not enough by itself, and there is a test that says so.
+
+  The check the phase exists for is `shadow_evaluated`. Phase 14 built the
+  shadow machinery, and machinery nobody consults is the failure this project
+  keeps rediscovering. A capability switched straight from OFF to LIVE has had
+  exactly as much review as one that was never built, and the mode setting
+  alone cannot tell the difference — so the evidence is the record: she wanted
+  to, at least once, while somebody was watching.
+
+  Two checks are advisory rather than blocking. A degraded model is a bad first
+  conversation, not an unsafe one, and refusing to start would make the failure
+  harder to see. A missing backup is worth shouting about and not worth
+  refusing over, since the gate has no way to take one.
+
+  What is deferred to the final real-machine acceptance is the going-live
+  itself: a real token, a real Discord connection, a real USER. The gate is
+  verified; the doorway it guards has not been walked through.

@@ -102,6 +102,8 @@ class DebugSources:
     #: "what has she nearly done".
     shadow: Any = None
     shadow_decisions: Any = None
+    #: Phase 15. The go-live gate, read-only like everything here.
+    live: Any = None
 
 
 class DebugQueryService:
@@ -525,6 +527,34 @@ class DebugQueryService:
             "firstboot",
             summary=f"{view.status}"
             + (" (recovery required)" if view.recovery_required else ""),
+            rows=rows,
+        )
+
+    def live(self) -> DebugResult:
+        """The go-live checklist (spec 50 Phase 15, 54).
+
+        Read-only, and deliberately so: throwing the switch is a configuration
+        change the OWNER makes on the machine, not something a chat message can
+        do. This says what is stopping it.
+        """
+        gate = self._sources.live
+        if gate is None:
+            return DebugResult(command="live", summary="the go-live gate is not wired yet")
+        report = gate.check()
+        rows = [
+            {
+                "check": check.name,
+                "ok": check.passed,
+                "blocking": check.blocks,
+                "detail": check.detail,
+            }
+            for check in report.checks
+        ]
+        return DebugResult.of(
+            "live",
+            summary=(
+                "READY" if report.ready else f"NOT READY ({len(report.blockers)} blocker(s))"
+            ),
             rows=rows,
         )
 

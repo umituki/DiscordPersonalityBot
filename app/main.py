@@ -127,6 +127,10 @@ def _parser() -> argparse.ArgumentParser:
         help="the moment her past ends. Defaults to now",
     )
 
+    subparsers.add_parser(
+        "live-check",
+        help="whether Discord Character mode may start (spec 50 Phase 15, 54)",
+    )
     shadow = subparsers.add_parser(
         "shadow", help="review what she would have done (spec 47)"
     )
@@ -191,7 +195,10 @@ def _build_gateway(application: Application, config: AppConfig) -> DiscordGatewa
         token=config.secrets.require_discord_token(),
         # Rebuild spec 30, Phase 5: admin is routed before conversation.
         admin=application.admin_router,
-        first_boot=application.first_boot,
+        # Rebuild spec 50 Phase 15: the gate at the door is now the go-live
+        # gate, which asks the FIRST BOOT Authority first and then everything
+        # else §54 requires. One object, one question, a stricter answer.
+        first_boot=application.live,
         clock=application.clock,
     )
 
@@ -709,6 +716,30 @@ async def _first_boot(
         application.db.close()
 
 
+def _live_check(config_path: Path | None, root: Path | None = None) -> int:
+    """The go-live checklist (spec 50 Phase 15).
+
+    Non-zero while anything blocks, so it is usable as a gate in whatever the
+    OWNER uses to start the process.
+    """
+    config = load_config(config_path, root_dir=root)
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        report = application.live.check()
+        sys.stdout.write(_line(report.describe()))
+        if not report.ready:
+            sys.stdout.write(
+                _line(
+                    "\nblocked by: "
+                    + ", ".join(check.name for check in report.blockers)
+                )
+            )
+        return 0 if report.ready else 1
+    finally:
+        application.db.close()
+
+
 def _shadow(
     config_path: Path | None,
     *,
@@ -829,6 +860,8 @@ def main(argv: list[str] | None = None) -> int:
                     root=args.root,
                 )
             )
+        if args.command == "live-check":
+            return _live_check(args.config, args.root)
         if args.command == "shadow":
             return _shadow(
                 args.config,

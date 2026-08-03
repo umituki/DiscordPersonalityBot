@@ -66,6 +66,9 @@ REQUIRED_CAPABILITIES: tuple[str, ...] = (
     # Rebuild spec 47, Phase 14. The mode every other dangerous capability
     # asks before it does the irreversible part.
     "shadow_evaluation",
+    # Rebuild spec 50 Phase 15. The last gate: whether a real person may talk
+    # to her at all.
+    "live_character_mode",
 )
 
 #: Every field 4.3's example carries. All of them are required: a contract with

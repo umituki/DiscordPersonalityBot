@@ -69,6 +69,7 @@ from app.runtime.proactive import (
     ProactiveDeliberation,
     ProactiveSource,
 )
+from app.live.readiness import LiveReadiness
 from app.runtime.shadow import ShadowController
 from app.runtime.social import GroupSource, NPCSource, SocialActions, SocialCandidates
 from app.runtime.sources import Registry as RuntimeRegistry, SchedulerSource
@@ -127,6 +128,7 @@ from app.observability.logging import configure_logging
 from app.observability.trace import ConversationTracer
 from app.reliability.resources import ResourceManager
 from app.storage.backup import BackupService, looks_cloud_synced
+from app.versioning.capabilities import load_contracts
 from app.resources.identity import Identity, load_identity
 from app.orchestrator.processor import EventProcessor
 from app.state.arbitrator import StateArbitrator
@@ -140,6 +142,7 @@ from app.storage.repositories import (
     AcquisitionRepository,
     ActivityRepository,
     AdminActionRepository,
+    BackupRepository,
     AdaptationRepository,
     BeliefRepository,
     CandidateRepository,
@@ -258,6 +261,7 @@ class Application:
     investigation: InvestigationService
     genesis_runner: GenesisRunner
     first_boot: FirstBootOrchestrator
+    live: LiveReadiness
     first_boot_state: FirstBootRepository
     genesis_runs: GenesisRunRepository
     genesis_experiences: GenesisExperienceRepository
@@ -1110,6 +1114,35 @@ class Application:
             clock=resolved_clock,
         )
 
+        # Rebuild spec 50 Phase 15. The go-live gate. Reads everything and
+        # owns nothing: first boot, the contracts, the shadow record, the
+        # model, the backups. The Discord gateway asks *this* at the door now,
+        # and it still asks exactly one object exactly one question — Phase 15
+        # makes the answer stricter, not plural.
+        try:
+            contracts = load_contracts()
+        except Exception:  # noqa: BLE001 - a missing contract is a blocker, not a crash
+            logger.exception("could not load the capability contracts")
+            contracts = None
+        live_readiness = LiveReadiness(
+            first_boot=first_boot,
+            shadow=shadow,
+            shadow_decisions=shadow_decisions,
+            contracts=contracts,
+            backups=BackupRepository(db),
+            ticks=runtime_tick_repo,
+            owner_id=owner_user_id or "",
+            channel_id=channel_id or "",
+            token=(
+                None
+                if resolved_config.secrets.discord_bot_token is None
+                else "set"
+            ),
+            schema_version=current_schema,
+            latest_schema=LATEST_VERSION,
+            enabled=resolved_config.runtime.live,
+        )
+
         # The conversation path exists only when the single USER is identified
         # (spec 1.2). Without it, YUI has no one to talk to and stays offline.
         # Rebuild spec 30, Phase 5. Built before the conversation service so
@@ -1159,6 +1192,7 @@ class Application:
                     proactive_deliberations=proactive_deliberations,
                     shadow=shadow,
                     shadow_decisions=shadow_decisions,
+                    live=live_readiness,
                     proactive_engine=proactive_engine,
                     proactive_source=proactive_source,
                     diary=diary_repo,
@@ -1280,6 +1314,7 @@ class Application:
             investigation=investigation,
             genesis_runner=genesis_runner,
             first_boot=first_boot,
+            live=live_readiness,
             first_boot_state=first_boot_repo,
             genesis_runs=genesis_run_repo,
             genesis_experiences=genesis_experience_repo,

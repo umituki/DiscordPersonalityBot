@@ -87,6 +87,10 @@ class RuntimeSection(_Section):
     silence_mode: Literal["OFF", "SHADOW", "LIVE"] = "SHADOW"
     npc_contact_mode: Literal["OFF", "SHADOW", "LIVE"] = "SHADOW"
     search_mode: Literal["OFF", "SHADOW", "LIVE"] = "SHADOW"
+    #: Spec 50 Phase 15. Discord Character mode 開始 — the switch the OWNER
+    #: throws once, deliberately. Everything else on the go-live checklist can
+    #: become true on its own; this one cannot, which is the point of having it.
+    live: bool = False
     #: Spec 21, RUNTIME-004. Whether her life runs on its own between messages.
     #: Off by default so that a test, a CLI command or a migration run does not
     #: silently start a background loop that acts while nobody is watching; the
