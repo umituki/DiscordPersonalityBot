@@ -98,37 +98,15 @@ def test_an_explicit_other_persons_activity_is_not_yuis_action(
     assert guard.review("彼女は静かに過ごしました。", GroundingContext()).accepted
 
 
-def test_unbounded_memory_capacity_needs_actual_memory_evidence(
+def test_surface_extractor_defers_memory_claims_to_semantic_review(
     guard: ClaimGroundingGuard,
 ) -> None:
-    verdict = guard.review(
+    variants = (
         "記録に残っている間は、いつでも思い出すことができます。",
-        GroundingContext(),
-    )
-    assert verdict.blocking
-    assert verdict.blocking[0].claim.kind == "yui_memory_claim"
-
-
-def test_never_forgetting_recorded_things_needs_memory_evidence(
-    guard: ClaimGroundingGuard,
-) -> None:
-    verdict = guard.review(
         "記録に残っている限りは、忘れることなく語り続けています。",
-        GroundingContext(),
-    )
-    assert verdict.blocking
-    assert verdict.blocking[0].claim.kind == "yui_memory_claim"
-
-
-def test_bare_remembering_claim_needs_memory_evidence(
-    guard: ClaimGroundingGuard,
-) -> None:
-    verdict = guard.review(
         "あ、覚えてますよ。その時みたいに喜んでくれていいですね。",
-        GroundingContext(),
     )
-    assert verdict.blocking
-    assert verdict.blocking[0].claim.kind == "yui_memory_claim"
+    assert all(guard.review(text, GroundingContext()).accepted for text in variants)
 
 
 def test_honest_memory_limit_is_not_a_memory_claim(
@@ -366,7 +344,9 @@ def test_a_failing_source_makes_the_guard_stricter_not_looser(
             raise RuntimeError("database is gone")
 
     context = GroundingContextBuilder(activities=_Broken()).build(now=NOW)
-    assert context.is_empty
+    assert not context.current_activity
+    assert not context.completed_activities_today
+    assert context.memory_authority_facts
     assert not guard.review("今日は本を読んだよ。", context).accepted
 
 
@@ -382,6 +362,7 @@ def test_the_running_system_actually_wires_the_guard(temp_config, clock) -> None
     try:
         engine = application.conversation_engine
         assert engine._grounding is not None  # noqa: SLF001
+        assert engine._memory_grounding is not None  # noqa: SLF001
     finally:
         application.db.close()
 

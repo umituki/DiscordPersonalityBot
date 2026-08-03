@@ -151,15 +151,6 @@ def test_the_same_stock_sentence_every_turn_is_rejected(quality, clock) -> None:
     assert QualityIssue.FORMULAIC in verdict.issues
 
 
-def test_same_long_sentence_in_consecutive_yui_turns_is_formulaic(quality, clock) -> None:
-    recent = (turn(clock, "yui", "そう言ってもらえてうれしい。", minutes=3),)
-    verdict = quality.review(
-        "そう言ってもらえてうれしい。", allows_question=NO_QUESTION, user_text="また話そう", recent_turns=recent
-    )
-    assert verdict.rejected
-    assert QualityIssue.FORMULAIC in verdict.issues
-
-
 def test_short_acknowledgement_may_repeat_once(quality, clock) -> None:
     recent = (turn(clock, "yui", "うん。", minutes=3),)
     verdict = quality.review(

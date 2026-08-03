@@ -64,6 +64,12 @@ def _check(guard: OutputGuard, text: str, **extras):
         # malformed JSON residue
         ('{"text": "こんにちは。"}', "format_residue"),
         ("詠むと、静かになるかもしれませんね。”}", "format_residue"),
+        (
+            "読書の時間は静かですね。”}**\n\n"
+            "（※ユーザーが本好きという前提で会話に参加しているため、"
+            "経験があると断定せず、自然な返事とする。）",
+            "format_residue",
+        ),
         ("```json\nこんにちは\n```", "format_residue"),
         ("\\u3053\\u3093\\u306b\\u3061\\u306f", "format_residue"),
         # secrets and admin operations

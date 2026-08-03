@@ -52,6 +52,7 @@ _LEAK_PATTERNS = (
     re.compile(r"(?:chain[ -]of[ -]thought|internal reasoning)", re.IGNORECASE),
     re.compile(r"```(?:json)?\s*\{", re.IGNORECASE),
     re.compile(r"[\"”]\s*\}\s*$"),
+    re.compile(r"[\"”]\s*\}\s*\*{1,3}"),
 )
 
 

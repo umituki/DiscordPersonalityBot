@@ -89,6 +89,7 @@ from app.conversation.surface import SurfacePlanner
 from app.conversation.guard import OutputGuard, OutputGuardPolicy
 from app.grounding.claims import ClaimExtractor, ClaimGroundingGuard
 from app.grounding.context import GroundingContextBuilder
+from app.grounding.memory_semantics import SemanticMemoryGroundingGuard
 from app.grounding.policy import GroundingPolicy
 from app.conversation.policy import ConversationPolicy
 from app.conversation.service import ConversationService
@@ -568,6 +569,10 @@ class Application:
             guard=guard,
             policy=conversation_policy,
             grounding=claim_guard,
+            memory_grounding=SemanticMemoryGroundingGuard(
+                structured=structured,
+                prompts=prompts,
+            ),
             interpreter=SocialInterpreter(
                 identity=identity, prompts=prompts, structured=structured
             ),

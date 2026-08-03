@@ -43,6 +43,11 @@ purposes:
     max_attempts: 1
     timeout_s: 20.0
 
+  memory_claim_review:
+    thinking: disabled
+    max_attempts: 1
+    timeout_s: 15.0
+
   # Runs inside a conversation turn, so it is on the same footing (3.2).
   episode_summary:
     thinking: disabled
@@ -67,4 +72,5 @@ conversation_purposes:
   - dialogue_act
   - conversation_reply
   - conversation_repair
+  - memory_claim_review
   - episode_summary

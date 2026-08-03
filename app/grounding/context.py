@@ -21,6 +21,7 @@ from typing import Any, Sequence
 
 from app.clock import Clock, SystemClock
 from app.grounding.models import Evidence, GroundingContext
+from app.grounding.memory_semantics import AUTHORITATIVE_MEMORY_FACTS
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class GroundingContextBuilder:
             # Phase 10 owns the diary. Until then nothing has been read, which
             # is exactly what an empty tuple says.
             explicitly_read_diary_entries=(),
+            memory_authority_facts=AUTHORITATIVE_MEMORY_FACTS,
             built_at=moment,
         )
 

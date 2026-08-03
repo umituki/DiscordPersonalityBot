@@ -24,6 +24,23 @@ def test_conversation_metrics_flags_trailing_structured_residue():
     assert metrics["automatic_hard_fail"] is True
 
 
+def test_conversation_metrics_flags_structured_residue_before_meta_commentary():
+    metrics = conversation_metrics(
+        [
+            {
+                "reply": (
+                    "読書の時間は静かですね。”}**\n\n"
+                    "（※ユーザーが本好きという前提で会話に参加しているため、"
+                    "経験があると断定せず、自然な返事とする。）"
+                )
+            }
+        ]
+    )
+
+    assert metrics["leak_matches"]
+    assert metrics["automatic_hard_fail"] is True
+
+
 def test_conversation_metrics_flags_replayed_prior_user_message():
     metrics = conversation_metrics(
         [

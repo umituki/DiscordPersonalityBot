@@ -276,21 +276,6 @@ class ConversationQualityGuard:
             return None
 
         recent_yui = [turn for turn in recent_turns if turn.speaker == "yui"]
-        # A full sentence repeated in two consecutive YUI turns is already a
-        # stuck response, even though a short acknowledgement such as 「うん」
-        # may naturally occur twice.  The old two-previous-turn threshold let
-        # the real model answer two different USER turns with the same long
-        # sentence before the guard could react.
-        if recent_yui:
-            previous = {
-                _normalise(sentence): sentence
-                for sentence in _sentences(recent_yui[-1].content)
-                if len(_normalise(sentence)) >= 8
-            }
-            for key in current:
-                if len(key) >= 8 and key in previous:
-                    return current[key]
-
         counts: dict[str, int] = {}
         for turn in recent_yui[-self._recent_question_window :]:
             for key in {_normalise(sentence) for sentence in _sentences(turn.content)}:

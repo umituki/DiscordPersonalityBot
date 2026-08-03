@@ -54,6 +54,7 @@ from app.conversation.social_interpretation import (
 from app.conversation.surface import RelationshipBand, SurfacePlan, SurfacePlanner
 from app.conversation.text import looks_like_question
 from app.grounding.claims import ClaimGroundingGuard, GroundingVerdict
+from app.grounding.memory_semantics import SemanticMemoryGroundingGuard
 from app.grounding.models import GroundingContext
 from app.memory.recall_models import RecalledMemory
 from app.conversation.policy import ConversationPolicy
@@ -174,6 +175,7 @@ class ConversationEngine:
         policy: ConversationPolicy,
         quality: ConversationQualityGuard | None = None,
         grounding: ClaimGroundingGuard | None = None,
+        memory_grounding: SemanticMemoryGroundingGuard | None = None,
         interpreter: SocialInterpreter | None = None,
         planner: SurfacePlanner | None = None,
         references: DialogueReferenceProvider | None = None,
@@ -210,6 +212,10 @@ class ConversationEngine:
         #: resolve against can still draft; when it is absent no claim is
         #: checked, which is why bootstrap always supplies one.
         self._grounding = grounding
+        # Memory is reviewed as a semantic proposition category.  It is kept
+        # separate from the surface-pattern extractor so paraphrases do not
+        # require an ever-growing phrase list.
+        self._memory_grounding = memory_grounding
         #: Patch spec 10: a stage separate from the Output Guard. The Output
         #: Guard decides whether this may be said at all; this decides whether
         #: it is a reply a person would send.
@@ -526,7 +532,9 @@ class ConversationEngine:
             user_text=user_text,
             recent_turns=recent_turns,
         )
-        grounded = self._check_grounding(text, grounding)
+        grounded = await self._check_grounding(
+            text, grounding, run_id=run_id, event_id=event_id
+        )
         if quality.accepted and grounded.accepted:
             return dataclasses.replace(generation, quality=quality, grounding=grounded)
 
@@ -554,7 +562,9 @@ class ConversationEngine:
                 user_text=user_text,
                 recent_turns=recent_turns,
             )
-            second_grounded = self._check_grounding(second_text, grounding)
+            second_grounded = await self._check_grounding(
+                second_text, grounding, run_id=run_id, event_id=event_id
+            )
             if second.accepted and second_grounded.accepted:
                 return dataclasses.replace(
                     generation,
@@ -597,8 +607,13 @@ class ConversationEngine:
             repaired=True,
         )
 
-    def _check_grounding(
-        self, text: str, context: GroundingContext | None
+    async def _check_grounding(
+        self,
+        text: str,
+        context: GroundingContext | None,
+        *,
+        run_id: str | None = None,
+        event_id: str | None = None,
     ) -> GroundingVerdict:
         """Resolve this text's claims against what is known (spec 15.3).
 
@@ -606,9 +621,20 @@ class ConversationEngine:
         empty verdict accepts: the guard's job is to catch a claim that
         contradicts the record, not to refuse to speak when there is no record.
         """
-        if self._grounding is None or context is None:
+        if context is None:
             return GroundingVerdict()
-        return self._grounding.review(text, context)
+        claims = ()
+        if self._grounding is not None:
+            claims += self._grounding.review(text, context).claims
+        if self._memory_grounding is not None:
+            semantic = await self._memory_grounding.review(
+                text,
+                context,
+                run_id=run_id,
+                event_id=event_id,
+            )
+            claims += semantic.claims
+        return GroundingVerdict(claims=claims)
 
     async def _repair(
         self,
