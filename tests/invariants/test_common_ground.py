@@ -214,6 +214,37 @@ def test_the_correction_note_never_supplies_a_fact(tracker, conversation) -> Non
     assert "取り消して" in note
 
 
+def test_explicit_denial_is_honoured_even_without_a_tracked_claim(
+    tracker, conversation
+) -> None:
+    outcome = tracker.review_correction(
+        "いや、今の説明は違うよ。私はそうは言っていない",
+        conversation_id=conversation.conversation_id,
+        context=GroundingContext(),
+        now=NOW,
+    )
+
+    assert outcome.happened
+    assert outcome.retracted
+    assert outcome.claim is None
+    assert "争わず" in outcome.render()
+    assert "相手が誤解したとは言わない" in outcome.render()
+
+
+def test_short_question_without_a_tracked_claim_is_not_forced_into_correction(
+    tracker, conversation
+) -> None:
+    outcome = tracker.review_correction(
+        "詩？",
+        conversation_id=conversation.conversation_id,
+        context=GroundingContext(),
+        now=NOW,
+    )
+
+    assert outcome.happened is False
+    assert outcome.render() == ""
+
+
 # --- CORR-003: a retracted claim is gone -------------------------------------
 
 
@@ -290,7 +321,12 @@ def test_a_second_challenge_does_not_re_retract_the_same_claim(
         context=GroundingContext(),
         now=NOW,
     )
-    assert again.happened is False
+    # The explicit denial is still acknowledged, but no old claim is selected
+    # or written again.  Generic correction handling must not resurrect the
+    # retracted claim merely to retract it a second time.
+    assert again.happened
+    assert again.claim is None
+    assert tracker.live_claims(conversation.conversation_id) == ()
 
 
 # --- what enters the common ground at all ------------------------------------

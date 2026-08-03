@@ -479,6 +479,21 @@ class MemoryRepository:
         )
         return cursor.rowcount if cursor is not None else 0
 
+    def promote_retrieval_once(
+        self, *, group_id: str, memory_id: str, state: str
+    ) -> bool:
+        """Apply a practising transition at most once for one retrieval row.
+
+        The conditional update is the authority. A repeated handler call after
+        a retry or restart cannot practise the same selected row twice.
+        """
+        cursor = self._db.execute(
+            "UPDATE memory_retrievals SET state = ?, practice_applied = 1 "
+            "WHERE group_id = ? AND memory_id = ? AND practice_applied = 0",
+            (state, group_id, memory_id),
+        )
+        return bool(cursor is not None and cursor.rowcount == 1)
+
     def retrievals_in_group(self, group_id: str) -> list[sqlite3.Row]:
         return self._db.query_all(
             "SELECT * FROM memory_retrievals WHERE group_id = ? ORDER BY rank",

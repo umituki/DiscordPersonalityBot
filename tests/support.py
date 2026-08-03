@@ -34,7 +34,16 @@ ANSWERS: dict[str, str] = {
         '{"acknowledge": true, "goal": "maintain_connection", "mode": "smalltalk", '
         '"question_need": "none"}'
     ),
+    "SocialInterpretation": (
+        '{"primary_move": "acknowledge", "secondary_move": null, '
+        '"initiative": "low", "question": "none", "tone": "light", '
+        '"response_energy": "low", "topic_direction": "stay", '
+        '"user_state_hint": "unknown", "self_disclosure": "none", '
+        '"wants_to_speak": "speak", "reason": "ordinary acknowledgement"}'
+    ),
     "ReplyDraft": '{"text": "うん。"}',
+    # Semantic Memory grounding. Ordinary offline replies make no memory claim.
+    "SemanticMemoryReview": '{"claims": []}',
     # Phase 2 §2E. A batch with no judgements means every candidate was left
     # unjudged, and an unjudged candidate does not pass the gate — so the
     # offline default recalls nothing. That is the conservative direction, and

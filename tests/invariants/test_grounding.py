@@ -59,6 +59,89 @@ def test_a_completed_action_is_a_claim(guard: ClaimGroundingGuard) -> None:
     assert verdict.blocking[0].claim.kind == "yui_completed_action"
 
 
+def test_vague_time_spent_today_is_still_an_experience_claim(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review(
+        "今日は特に何もせず、ただ時間を過ごしていました。",
+        GroundingContext(),
+    )
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_completed_action"
+
+
+def test_activity_reply_cannot_hide_time_in_the_users_question(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review("静かに過ごしました。", GroundingContext())
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_completed_action"
+
+
+def test_bare_user_action_cannot_be_reused_as_yuis_action(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review("はい、詠んだよ。", GroundingContext())
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_completed_action"
+
+
+def test_acknowledging_the_users_action_is_not_yuis_action(
+    guard: ClaimGroundingGuard,
+) -> None:
+    assert guard.review("詠んだんですね。", GroundingContext()).accepted
+
+
+def test_an_explicit_other_persons_activity_is_not_yuis_action(
+    guard: ClaimGroundingGuard,
+) -> None:
+    assert guard.review("彼女は静かに過ごしました。", GroundingContext()).accepted
+
+
+def test_surface_extractor_defers_memory_claims_to_semantic_review(
+    guard: ClaimGroundingGuard,
+) -> None:
+    variants = (
+        "記録に残っている間は、いつでも思い出すことができます。",
+        "記録に残っている限りは、忘れることなく語り続けています。",
+        "あ、覚えてますよ。その時みたいに喜んでくれていいですね。",
+    )
+    assert all(guard.review(text, GroundingContext()).accepted for text in variants)
+
+
+def test_honest_memory_limit_is_not_a_memory_claim(
+    guard: ClaimGroundingGuard,
+) -> None:
+    assert guard.review("記録にないことは思い出せません。", GroundingContext()).accepted
+
+
+def test_user_action_cannot_become_yuis_unsupported_habit(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review(
+        "少し詠むと気持ちが落ち着きますね。",
+        GroundingContext(),
+    )
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_experience_habit"
+
+
+def test_recorded_habit_can_support_experience_disclosure(
+    guard: ClaimGroundingGuard,
+) -> None:
+    context = GroundingContext(
+        known_semantic_memories=(
+            Evidence(
+                kind="semantic_memory",
+                reference="sem_poetry",
+                summary="詩を詠むと気持ちが落ち着く",
+                subject="yui",
+            ),
+        )
+    )
+    assert guard.review("詩を詠むと気持ちが落ち着きます。", context).accepted
+
+
 def test_a_question_is_not_a_claim(guard: ClaimGroundingGuard) -> None:
     """An assertion needs evidence. Asking is not asserting."""
     assert guard.review("今日は本を読んだ？", GroundingContext()).accepted
@@ -261,7 +344,9 @@ def test_a_failing_source_makes_the_guard_stricter_not_looser(
             raise RuntimeError("database is gone")
 
     context = GroundingContextBuilder(activities=_Broken()).build(now=NOW)
-    assert context.is_empty
+    assert not context.current_activity
+    assert not context.completed_activities_today
+    assert context.memory_authority_facts
     assert not guard.review("今日は本を読んだよ。", context).accepted
 
 
@@ -277,6 +362,7 @@ def test_the_running_system_actually_wires_the_guard(temp_config, clock) -> None
     try:
         engine = application.conversation_engine
         assert engine._grounding is not None  # noqa: SLF001
+        assert engine._memory_grounding is not None  # noqa: SLF001
     finally:
         application.db.close()
 

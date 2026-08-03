@@ -34,6 +34,7 @@ import pytest
 
 from app.conversation.common_ground import CommonGroundTracker
 from app.conversation.engine import ConversationEngine
+from app.conversation.events import YUI_MESSAGE_SENT
 from app.conversation.references import (
     DialogueReferenceQuery,
     FixtureReferenceProvider,
@@ -237,9 +238,11 @@ async def test_the_trace_shows_the_stages_phase_three_added(turn, clock) -> None
     service._tracer = ConversationTracer(traces, clock=clock)  # noqa: SLF001
 
     result = await service.handle_inbound(inbound(clock, text="やっほー"))
-    await service.confirm_sent(result, message_id="msg_1")
+    sent = await service.confirm_sent(result, message_id="msg_1")
 
     row = traces.recent()[0]
+    assert sent.event_type == YUI_MESSAGE_SENT
+    assert service._events.get(sent.event_id) is not None  # noqa: SLF001
     for stage in (
         "social_interpretation_started_at",
         "social_interpretation_ended_at",

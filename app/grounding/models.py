@@ -28,6 +28,7 @@ from typing import Literal
 #: because each one asserts something outside the sentence itself.
 ClaimKind = Literal[
     "yui_completed_action",
+    "yui_experience_habit",
     "yui_perception",
     "yui_memory_claim",
     "user_past_fact",
@@ -39,6 +40,7 @@ ClaimKind = Literal[
 
 CLAIM_KINDS: tuple[ClaimKind, ...] = (
     "yui_completed_action",
+    "yui_experience_habit",
     "yui_perception",
     "yui_memory_claim",
     "user_past_fact",
@@ -62,6 +64,7 @@ EvidenceKind = Literal[
     "goal",
     "world_state",
     "diary_entry",
+    "memory_authority",
 ]
 
 #: Rebuild spec 15.3. Which evidence answers which claim.
@@ -73,8 +76,23 @@ EvidenceKind = Literal[
 #: today's reading real.
 ACCEPTED_EVIDENCE: dict[ClaimKind, tuple[EvidenceKind, ...]] = {
     "yui_completed_action": ("activity", "objective_event"),
+    # A repeated-experience claim ("reading calms me") is not today's
+    # activity, but it still needs a life record or a memory/belief produced
+    # from one.  The USER having just mentioned the same action is never
+    # evidence that YUI has done it.
+    "yui_experience_habit": (
+        "activity",
+        "objective_event",
+        "subjective_memory",
+        "semantic_memory",
+    ),
     "yui_perception": ("activity", "objective_event", "world_state"),
-    "yui_memory_claim": ("subjective_memory", "objective_event", "diary_entry"),
+    "yui_memory_claim": (
+        "subjective_memory",
+        "objective_event",
+        "diary_entry",
+        "memory_authority",
+    ),
     "user_past_fact": ("objective_event", "verified_user_fact", "subjective_memory"),
     "npc_fact": ("npc_interaction", "objective_event"),
     "tool_use": ("tool_call",),
@@ -169,6 +187,7 @@ GROUNDING_SECTIONS: tuple[str, ...] = (
     "npc_interactions",
     "current_goals",
     "explicitly_read_diary_entries",
+    "memory_authority_facts",
 )
 
 
@@ -192,6 +211,9 @@ class GroundingContext:
     npc_interactions: tuple[Evidence, ...] = ()
     current_goals: tuple[Evidence, ...] = ()
     explicitly_read_diary_entries: tuple[Evidence, ...] = ()
+    #: Immutable facts about the actual Memory subsystem. These support only
+    #: general capability claims; concrete recall still requires a recalled row.
+    memory_authority_facts: tuple[Evidence, ...] = ()
     #: When the context was assembled, for the trace.
     built_at: datetime | None = None
 

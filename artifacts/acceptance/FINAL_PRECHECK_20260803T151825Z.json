@@ -1,0 +1,937 @@
+{
+  "generated_at": "2026-08-03T15:18:25.158890+00:00",
+  "result": "PASS",
+  "preflight": {
+    "generated_at": "2026-08-03T15:18:25.039290+00:00",
+    "result": "PASS",
+    "repository": {
+      "commit": "02fbb154976b0046fbd48001ba941fa966556bb7",
+      "branch": "agent/complete-final-capabilities",
+      "dirty": true
+    },
+    "machine": {
+      "python": "3.14.3",
+      "os": "Windows-11-10.0.26200-SP0",
+      "gpu": {
+        "status": "detected",
+        "detail": "NVIDIA GeForce RTX 5060 Ti, 16311 MiB"
+      }
+    },
+    "schema": {
+      "current": 32,
+      "latest": 32,
+      "pending_migrations": []
+    },
+    "llm": {
+      "reachable": "NOT_PROBED_DEFERRED",
+      "reason": "deterministic preflight never contacts real Ollama",
+      "model": "qwen3.5:9b",
+      "base_url": "http://127.0.0.1:11434",
+      "num_ctx": 8192,
+      "temperature": 0.7,
+      "thinking": "not configured"
+    },
+    "database": {
+      "path": "C:\\Users\\yosuk\\Documents\\Codex\\2026-08-02\\github-plugin-github-openai-curated-remote-2\\work\\DiscordPersonalityBot\\data\\yui.db",
+      "integrity": "ok",
+      "usable_backup": null
+    },
+    "first_boot": "PENDING",
+    "live_readiness": {
+      "ready": false,
+      "blockers": [
+        {
+          "name": "first_boot_complete",
+          "detail": "first boot is PENDING"
+        },
+        {
+          "name": "live_enabled",
+          "detail": "runtime.live is false; character mode stays closed"
+        },
+        {
+          "name": "owner_configured",
+          "detail": "the single USER and channel must both be set"
+        },
+        {
+          "name": "discord_token",
+          "detail": "no DISCORD_BOT_TOKEN is configured"
+        }
+      ],
+      "warnings": [
+        {
+          "name": "model_reachable",
+          "detail": "not checked yet"
+        },
+        {
+          "name": "backup_available",
+          "detail": "no backup has ever been taken"
+        }
+      ]
+    },
+    "capability_audit": {
+      "passed": true,
+      "summary": {
+        "NOT_STARTED": 0,
+        "CODE_ONLY": 0,
+        "WIRED": 0,
+        "E2E_VERIFIED": 20
+      },
+      "checks": [
+        {
+          "name": "required_contracts",
+          "passed": true,
+          "detail": "loaded 20/20 required contracts"
+        },
+        {
+          "name": "all_e2e_verified",
+          "passed": true,
+          "detail": "20/20 E2E_VERIFIED"
+        },
+        {
+          "name": "contract_evidence",
+          "passed": true,
+          "detail": "acceptance tests exist and contain event/persistence evidence"
+        },
+        {
+          "name": "production_runtime_wiring",
+          "passed": true,
+          "detail": "sources=10, kinds=11, actions=11"
+        }
+      ],
+      "capabilities": {
+        "activity": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_life_runtime.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "ACTIVITY_STARTED",
+            "ACTIVITY_FINISHED"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "AutonomousRuntime.tick → LifeCandidates.start/.finish → DecisionEngine.choose → LifeActions.start_activity/.finish_activity",
+          "observability": "!yui activity / !yui runtime"
+        },
+        "admin_backup": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_admin_readonly_e2e.py::test_backup_writes_a_file_and_still_no_row",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [],
+          "persistence_asserted": true,
+          "runtime_entry": "AdminRouter._take_backup (wired to BackupService, not to DebugQueryService)",
+          "observability": "the command reports path, integrity and size"
+        },
+        "admin_debug_readonly": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_admin_readonly_e2e.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [],
+          "persistence_asserted": true,
+          "runtime_entry": "DiscordGateway.handle_message → AdminRouter.route (before ConversationService)",
+          "observability": "!yui help lists the registry; every command names its own source, method and fields"
+        },
+        "autonomous_runtime": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_autonomous_runtime_e2e.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [],
+          "persistence_asserted": true,
+          "runtime_entry": "Application.start → AutonomousRuntime.start → AutonomousRuntime._run → .tick",
+          "observability": "!yui runtime; runtime_ticks.unclaimed_kinds() names every kind that fires and nobody claims"
+        },
+        "diary": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_diary.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "DIARY_WRITTEN"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "LifeActions.go_to_sleep → DiaryService.reflect_at_bedtime → DiaryContextBuilder.build → generation; and DiaryService.retry_pending for what was owed",
+          "observability": "!yui diary / !yui diary days"
+        },
+        "first_boot": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_first_boot.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "FIRST_BOOT_COMPLETED"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "app.main first-boot → FirstBootOrchestrator.start/resume → GenesisRunner.run → FirstBootOrchestrator._finalise",
+          "observability": "yui first-boot status/audit/report, and !yui firstboot read-only from Discord"
+        },
+        "genesis": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_genesis_v2.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "SIMULATED_EXPERIENCE",
+            "FIRST_BOOT"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "GenesisRunner.run → Stage A scaffolds → Stage B months → critics → Stage C synthesis → extraction → replay → first_boot_audits",
+          "observability": "!yui genesis / !yui genesis years / !yui genesis audits"
+        },
+        "goal_action": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_agency_social_runtime.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "GOAL_PURSUED"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "AutonomousRuntime.tick → AgencyCandidates.goal_step → DecisionEngine.choose → AgencyActions.pursue_goal",
+          "observability": "!yui goals / !yui activity / !yui runtime"
+        },
+        "group_activity": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_agency_social_runtime.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "GROUP_ACTIVITY"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "AutonomousRuntime.tick → SocialCandidates.group_activity → DecisionEngine.choose → SocialActions.attend_group",
+          "observability": "!yui groups / !yui runtime"
+        },
+        "habit_action": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_agency_social_runtime.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "HABIT_PERFORMED"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "AutonomousRuntime.tick → AgencyCandidates.habit_cue → DecisionEngine.choose → AgencyActions.do_habit",
+          "observability": "!yui habits / !yui runtime"
+        },
+        "intentional_silence": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_intentional_silence_e2e.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "YUI_INTENTIONAL_SILENCE"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "ConversationService.handle_inbound → ConversationEngine.plan_turn → ResponseIntentGate.decide",
+          "observability": "python -m app.main conversation-plan / conversation_traces / YUI_INTENTIONAL_SILENCE events"
+        },
+        "live_character_mode": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_live_readiness.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [],
+          "persistence_asserted": true,
+          "runtime_entry": "app.main _build_gateway → DiscordGateway asking LiveReadiness.character_plane_open() before any USER message reaches the conversation service",
+          "observability": "yui live-check (non-zero while blocked) and !yui live"
+        },
+        "natural_conversation_realization": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_conversation_realization_e2e.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "YUI_MESSAGE_SENT"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "ConversationService.handle_inbound → ConversationEngine.plan_turn",
+          "observability": "python -m app.main conversation-plan / conversation_traces"
+        },
+        "normal_reply": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_normal_reply_transport_e2e.py::test_normal_reply_production_transport_e2e",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "YUI_MESSAGE_SENT"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "production DiscordGateway.handle_message -> ConversationService.handle_inbound -> DiscordGateway._send -> ConversationService.confirm_sent",
+          "observability": "!yui trace / conversation_traces"
+        },
+        "npc_interaction": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_agency_social_runtime.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "NPC_INTERACTION"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "AutonomousRuntime.tick → SocialCandidates.npc_contact → DecisionEngine.choose → SocialActions.contact_npc",
+          "observability": "!yui npc / !yui runtime"
+        },
+        "proactive_contact": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_proactive_runtime.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "YUI_MESSAGE_SENT"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "AutonomousRuntime.tick → ProactiveCandidates.contact → DecisionEngine.choose → ProactiveActions.reach_out → ProactiveDeliberation.deliberate",
+          "observability": "!yui proactive shadow / !yui proactive dryrun / !yui proactive"
+        },
+        "shadow_evaluation": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_shadow_runtime.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [],
+          "persistence_asserted": true,
+          "runtime_entry": "ProactiveDeliberation.deliberate, ConversationEngine.plan_turn, SocialActions.contact_npc and KnowledgeActions.investigate, each calling ShadowController.decide",
+          "observability": "yui shadow status/list/suppressed/review, and !yui shadow, !yui shadow recent, !yui shadow suppressed"
+        },
+        "sleep": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_life_runtime.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "WENT_TO_SLEEP",
+            "WOKE_UP"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "AutonomousRuntime.tick → LifeCandidates.sleep/.wake → DecisionEngine.choose → LifeActions.go_to_sleep/.wake_up",
+          "observability": "!yui runtime / sleep_episodes"
+        },
+        "spontaneous_memory": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_spontaneous_recall_slice.py::test_spontaneous_recall_slice",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "MEMORY_SPONTANEOUSLY_RECALLED"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "AutonomousRuntime.tick -> SpontaneousMemoryCandidates -> DecisionEngine -> SpontaneousMemoryActions.recall",
+          "observability": "!yui memory spontaneous plus !yui runtime and memory_retrievals by retrieval_group_id"
+        },
+        "web_search": {
+          "passed": true,
+          "status": "E2E_VERIFIED",
+          "acceptance_test": "tests/invariants/test_search_knowledge.py",
+          "test_exists": true,
+          "test_node_exists": true,
+          "invariant_or_e2e_proof": true,
+          "success_events_observed": true,
+          "success_event_tokens": [
+            "SEARCH_PERFORMED",
+            "KNOWLEDGE_ACQUIRED"
+          ],
+          "persistence_asserted": true,
+          "runtime_entry": "AutonomousRuntime.tick → GapSource → KnowledgeCandidates.investigate (runs the selector) → DecisionEngine.choose → KnowledgeActions.investigate → InvestigationService.investigate",
+          "observability": "!yui search recent / !yui gaps / !yui knowledge find / !yui tools"
+        }
+      },
+      "runtime_wiring": {
+        "sources": [
+          "scheduler",
+          "sleep",
+          "activity",
+          "spontaneous_memory",
+          "goals",
+          "habits",
+          "npcs",
+          "groups",
+          "knowledge_gaps",
+          "proactive"
+        ],
+        "kinds": [
+          "activity_due",
+          "activity_finish",
+          "goal_step",
+          "group_activity_due",
+          "habit_cue",
+          "knowledge_gap",
+          "npc_contact",
+          "proactive_contact",
+          "sleep_candidate",
+          "spontaneous_recall",
+          "wake_candidate"
+        ],
+        "actions": [
+          "attend_group",
+          "contact_npc",
+          "do_habit",
+          "finish_activity",
+          "go_to_sleep",
+          "investigate",
+          "pursue_goal",
+          "reach_out",
+          "recall_from_cue",
+          "start_activity",
+          "wake_up"
+        ]
+      }
+    },
+    "unclaimed_runtime_kinds": [],
+    "deferred_heavy_gates": [
+      "real Ollama appraisal 100-turn",
+      "memory 100-500-turn saturation",
+      "naturalness question/repetition runs",
+      "real proactive Discord send",
+      "long real Shadow review",
+      "blind human naturalness evaluation",
+      "19-year Full Genesis / GEN-GATE (about 1,900-2,100 model calls; typically about 8 hours)"
+    ]
+  },
+  "light_run": {
+    "generated_at": "2026-08-03T15:17:43.160907+00:00",
+    "result": "PASS",
+    "duration_seconds": 458.729,
+    "command": [
+      "C:\\Users\\yosuk\\DiscordPersonalityBot\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q"
+    ],
+    "exit_code": 0,
+    "coverage": [
+      "deterministic pytest suite",
+      "capability contract audit",
+      "migration and SQLite integrity",
+      "fixture vertical slices",
+      "restart recovery",
+      "shadow wiring",
+      "admin side-effect safety"
+    ],
+    "pytest_output": "........................................................................ [  4%]\n........................................................................ [  9%]\n........................................................................ [ 14%]\n........................................................................ [ 18%]\n........................................................................ [ 23%]\n........................................................................ [ 28%]\n........................................................................ [ 33%]\n........................................................................ [ 37%]\n........................................................................ [ 42%]\n........................................................................ [ 47%]\n........................................................................ [ 52%]\n........................................................................ [ 56%]\n........................................................................ [ 61%]\n........................................................................ [ 66%]\n........................................................................ [ 71%]\n........................................................................ [ 75%]\n........................................................................ [ 80%]\n........................................................................ [ 85%]\n........................................................................ [ 90%]\n........................................................................ [ 94%]\n........................................................................ [ 99%]\n....                                                                     [100%]\n============================== warnings summary ===============================\n..\\..\\..\\..\\..\\..\\DiscordPersonalityBot\\.venv\\Lib\\site-packages\\_pytest\\cacheprovider.py:469\n  C:\\Users\\yosuk\\DiscordPersonalityBot\\.venv\\Lib\\site-packages\\_pytest\\cacheprovider.py:469: PytestCacheWarning: cache could not write path C:\\Users\\yosuk\\Documents\\Codex\\2026-08-02\\github-plugin-github-openai-curated-remote-2\\work\\DiscordPersonalityBot\\.pytest_cache\\v\\cache\\nodeids: [Errno 13] Permission denied: 'C:\\\\Users\\\\yosuk\\\\Documents\\\\Codex\\\\2026-08-02\\\\github-plugin-github-openai-curated-remote-2\\\\work\\\\DiscordPersonalityBot\\\\.pytest_cache\\\\v\\\\cache\\\\nodeids'\n    config.cache.set(\"cache/nodeids\", sorted(self.cached_nodeids))\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n1516 passed, 1 warning in 458.14s (0:07:38)\n",
+    "preflight": {
+      "generated_at": "2026-08-03T15:10:04.318449+00:00",
+      "result": "PASS",
+      "repository": {
+        "commit": "02fbb154976b0046fbd48001ba941fa966556bb7",
+        "branch": "agent/complete-final-capabilities",
+        "dirty": true
+      },
+      "machine": {
+        "python": "3.14.3",
+        "os": "Windows-11-10.0.26200-SP0",
+        "gpu": {
+          "status": "detected",
+          "detail": "NVIDIA GeForce RTX 5060 Ti, 16311 MiB"
+        }
+      },
+      "schema": {
+        "current": 32,
+        "latest": 32,
+        "pending_migrations": []
+      },
+      "llm": {
+        "reachable": "NOT_PROBED_DEFERRED",
+        "reason": "deterministic preflight never contacts real Ollama",
+        "model": "qwen3.5:9b",
+        "base_url": "http://127.0.0.1:11434",
+        "num_ctx": 8192,
+        "temperature": 0.7,
+        "thinking": "not configured"
+      },
+      "database": {
+        "path": "C:\\Users\\yosuk\\Documents\\Codex\\2026-08-02\\github-plugin-github-openai-curated-remote-2\\work\\DiscordPersonalityBot\\data\\yui.db",
+        "integrity": "ok",
+        "usable_backup": null
+      },
+      "first_boot": "PENDING",
+      "live_readiness": {
+        "ready": false,
+        "blockers": [
+          {
+            "name": "first_boot_complete",
+            "detail": "first boot is PENDING"
+          },
+          {
+            "name": "live_enabled",
+            "detail": "runtime.live is false; character mode stays closed"
+          },
+          {
+            "name": "owner_configured",
+            "detail": "the single USER and channel must both be set"
+          },
+          {
+            "name": "discord_token",
+            "detail": "no DISCORD_BOT_TOKEN is configured"
+          }
+        ],
+        "warnings": [
+          {
+            "name": "model_reachable",
+            "detail": "not checked yet"
+          },
+          {
+            "name": "backup_available",
+            "detail": "no backup has ever been taken"
+          }
+        ]
+      },
+      "capability_audit": {
+        "passed": true,
+        "summary": {
+          "NOT_STARTED": 0,
+          "CODE_ONLY": 0,
+          "WIRED": 0,
+          "E2E_VERIFIED": 20
+        },
+        "checks": [
+          {
+            "name": "required_contracts",
+            "passed": true,
+            "detail": "loaded 20/20 required contracts"
+          },
+          {
+            "name": "all_e2e_verified",
+            "passed": true,
+            "detail": "20/20 E2E_VERIFIED"
+          },
+          {
+            "name": "contract_evidence",
+            "passed": true,
+            "detail": "acceptance tests exist and contain event/persistence evidence"
+          },
+          {
+            "name": "production_runtime_wiring",
+            "passed": true,
+            "detail": "sources=10, kinds=11, actions=11"
+          }
+        ],
+        "capabilities": {
+          "activity": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_life_runtime.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "ACTIVITY_STARTED",
+              "ACTIVITY_FINISHED"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "AutonomousRuntime.tick → LifeCandidates.start/.finish → DecisionEngine.choose → LifeActions.start_activity/.finish_activity",
+            "observability": "!yui activity / !yui runtime"
+          },
+          "admin_backup": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_admin_readonly_e2e.py::test_backup_writes_a_file_and_still_no_row",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [],
+            "persistence_asserted": true,
+            "runtime_entry": "AdminRouter._take_backup (wired to BackupService, not to DebugQueryService)",
+            "observability": "the command reports path, integrity and size"
+          },
+          "admin_debug_readonly": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_admin_readonly_e2e.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [],
+            "persistence_asserted": true,
+            "runtime_entry": "DiscordGateway.handle_message → AdminRouter.route (before ConversationService)",
+            "observability": "!yui help lists the registry; every command names its own source, method and fields"
+          },
+          "autonomous_runtime": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_autonomous_runtime_e2e.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [],
+            "persistence_asserted": true,
+            "runtime_entry": "Application.start → AutonomousRuntime.start → AutonomousRuntime._run → .tick",
+            "observability": "!yui runtime; runtime_ticks.unclaimed_kinds() names every kind that fires and nobody claims"
+          },
+          "diary": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_diary.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "DIARY_WRITTEN"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "LifeActions.go_to_sleep → DiaryService.reflect_at_bedtime → DiaryContextBuilder.build → generation; and DiaryService.retry_pending for what was owed",
+            "observability": "!yui diary / !yui diary days"
+          },
+          "first_boot": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_first_boot.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "FIRST_BOOT_COMPLETED"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "app.main first-boot → FirstBootOrchestrator.start/resume → GenesisRunner.run → FirstBootOrchestrator._finalise",
+            "observability": "yui first-boot status/audit/report, and !yui firstboot read-only from Discord"
+          },
+          "genesis": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_genesis_v2.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "SIMULATED_EXPERIENCE",
+              "FIRST_BOOT"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "GenesisRunner.run → Stage A scaffolds → Stage B months → critics → Stage C synthesis → extraction → replay → first_boot_audits",
+            "observability": "!yui genesis / !yui genesis years / !yui genesis audits"
+          },
+          "goal_action": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_agency_social_runtime.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "GOAL_PURSUED"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "AutonomousRuntime.tick → AgencyCandidates.goal_step → DecisionEngine.choose → AgencyActions.pursue_goal",
+            "observability": "!yui goals / !yui activity / !yui runtime"
+          },
+          "group_activity": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_agency_social_runtime.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "GROUP_ACTIVITY"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "AutonomousRuntime.tick → SocialCandidates.group_activity → DecisionEngine.choose → SocialActions.attend_group",
+            "observability": "!yui groups / !yui runtime"
+          },
+          "habit_action": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_agency_social_runtime.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "HABIT_PERFORMED"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "AutonomousRuntime.tick → AgencyCandidates.habit_cue → DecisionEngine.choose → AgencyActions.do_habit",
+            "observability": "!yui habits / !yui runtime"
+          },
+          "intentional_silence": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_intentional_silence_e2e.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "YUI_INTENTIONAL_SILENCE"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "ConversationService.handle_inbound → ConversationEngine.plan_turn → ResponseIntentGate.decide",
+            "observability": "python -m app.main conversation-plan / conversation_traces / YUI_INTENTIONAL_SILENCE events"
+          },
+          "live_character_mode": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_live_readiness.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [],
+            "persistence_asserted": true,
+            "runtime_entry": "app.main _build_gateway → DiscordGateway asking LiveReadiness.character_plane_open() before any USER message reaches the conversation service",
+            "observability": "yui live-check (non-zero while blocked) and !yui live"
+          },
+          "natural_conversation_realization": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_conversation_realization_e2e.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "YUI_MESSAGE_SENT"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "ConversationService.handle_inbound → ConversationEngine.plan_turn",
+            "observability": "python -m app.main conversation-plan / conversation_traces"
+          },
+          "normal_reply": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_normal_reply_transport_e2e.py::test_normal_reply_production_transport_e2e",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "YUI_MESSAGE_SENT"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "production DiscordGateway.handle_message -> ConversationService.handle_inbound -> DiscordGateway._send -> ConversationService.confirm_sent",
+            "observability": "!yui trace / conversation_traces"
+          },
+          "npc_interaction": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_agency_social_runtime.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "NPC_INTERACTION"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "AutonomousRuntime.tick → SocialCandidates.npc_contact → DecisionEngine.choose → SocialActions.contact_npc",
+            "observability": "!yui npc / !yui runtime"
+          },
+          "proactive_contact": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_proactive_runtime.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "YUI_MESSAGE_SENT"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "AutonomousRuntime.tick → ProactiveCandidates.contact → DecisionEngine.choose → ProactiveActions.reach_out → ProactiveDeliberation.deliberate",
+            "observability": "!yui proactive shadow / !yui proactive dryrun / !yui proactive"
+          },
+          "shadow_evaluation": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_shadow_runtime.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [],
+            "persistence_asserted": true,
+            "runtime_entry": "ProactiveDeliberation.deliberate, ConversationEngine.plan_turn, SocialActions.contact_npc and KnowledgeActions.investigate, each calling ShadowController.decide",
+            "observability": "yui shadow status/list/suppressed/review, and !yui shadow, !yui shadow recent, !yui shadow suppressed"
+          },
+          "sleep": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_life_runtime.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "WENT_TO_SLEEP",
+              "WOKE_UP"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "AutonomousRuntime.tick → LifeCandidates.sleep/.wake → DecisionEngine.choose → LifeActions.go_to_sleep/.wake_up",
+            "observability": "!yui runtime / sleep_episodes"
+          },
+          "spontaneous_memory": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_spontaneous_recall_slice.py::test_spontaneous_recall_slice",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "MEMORY_SPONTANEOUSLY_RECALLED"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "AutonomousRuntime.tick -> SpontaneousMemoryCandidates -> DecisionEngine -> SpontaneousMemoryActions.recall",
+            "observability": "!yui memory spontaneous plus !yui runtime and memory_retrievals by retrieval_group_id"
+          },
+          "web_search": {
+            "passed": true,
+            "status": "E2E_VERIFIED",
+            "acceptance_test": "tests/invariants/test_search_knowledge.py",
+            "test_exists": true,
+            "test_node_exists": true,
+            "invariant_or_e2e_proof": true,
+            "success_events_observed": true,
+            "success_event_tokens": [
+              "SEARCH_PERFORMED",
+              "KNOWLEDGE_ACQUIRED"
+            ],
+            "persistence_asserted": true,
+            "runtime_entry": "AutonomousRuntime.tick → GapSource → KnowledgeCandidates.investigate (runs the selector) → DecisionEngine.choose → KnowledgeActions.investigate → InvestigationService.investigate",
+            "observability": "!yui search recent / !yui gaps / !yui knowledge find / !yui tools"
+          }
+        },
+        "runtime_wiring": {
+          "sources": [
+            "scheduler",
+            "sleep",
+            "activity",
+            "spontaneous_memory",
+            "goals",
+            "habits",
+            "npcs",
+            "groups",
+            "knowledge_gaps",
+            "proactive"
+          ],
+          "kinds": [
+            "activity_due",
+            "activity_finish",
+            "goal_step",
+            "group_activity_due",
+            "habit_cue",
+            "knowledge_gap",
+            "npc_contact",
+            "proactive_contact",
+            "sleep_candidate",
+            "spontaneous_recall",
+            "wake_candidate"
+          ],
+          "actions": [
+            "attend_group",
+            "contact_npc",
+            "do_habit",
+            "finish_activity",
+            "go_to_sleep",
+            "investigate",
+            "pursue_goal",
+            "reach_out",
+            "recall_from_cue",
+            "start_activity",
+            "wake_up"
+          ]
+        }
+      },
+      "unclaimed_runtime_kinds": [],
+      "deferred_heavy_gates": [
+        "real Ollama appraisal 100-turn",
+        "memory 100-500-turn saturation",
+        "naturalness question/repetition runs",
+        "real proactive Discord send",
+        "long real Shadow review",
+        "blind human naturalness evaluation",
+        "19-year Full Genesis / GEN-GATE (about 1,900-2,100 model calls; typically about 8 hours)"
+      ]
+    },
+    "deferred_heavy_gates": [
+      "real Ollama appraisal 100-turn",
+      "memory 100-500-turn saturation",
+      "naturalness question/repetition runs",
+      "real proactive Discord send",
+      "long real Shadow review",
+      "blind human naturalness evaluation",
+      "19-year Full Genesis / GEN-GATE (about 1,900-2,100 model calls; typically about 8 hours)"
+    ]
+  },
+  "blocker_category": "deferred_owner_or_real_machine_gates",
+  "deferred_heavy_gates": [
+    "real Ollama appraisal 100-turn",
+    "memory 100-500-turn saturation",
+    "naturalness question/repetition runs",
+    "real proactive Discord send",
+    "long real Shadow review",
+    "blind human naturalness evaluation",
+    "19-year Full Genesis / GEN-GATE (about 1,900-2,100 model calls; typically about 8 hours)"
+  ],
+  "gen_gate_estimate": "19-year Full Genesis: about 1,900-2,100 model calls; typically about 8 hours",
+  "next_command": "OWNER authorization is required before any real-machine or GEN-GATE run"
+}

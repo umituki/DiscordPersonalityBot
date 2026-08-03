@@ -99,6 +99,14 @@ class Registry:
     def actions(self) -> frozenset[str]:
         return frozenset(self._handlers)
 
+    def audit(self) -> dict[str, tuple[str, ...]]:
+        """Return the production wiring without exposing mutable registries."""
+        return {
+            "sources": tuple(source.name for source in self._sources),
+            "kinds": tuple(sorted(self._builders)),
+            "actions": tuple(sorted(self._handlers)),
+        }
+
     def builder_for(self, kind: str) -> CandidateBuilder | None:
         return self._builders.get(kind)
 
