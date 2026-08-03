@@ -15,6 +15,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.world.models import SleepKind
 from app.world.policy import SleepPolicy
 
 
@@ -105,6 +106,39 @@ def signals(
 def should_sleep(signals_now: SleepSignals, policy: SleepPolicy) -> bool:
     """Sleep is a decision from combined signals, never a clock rule."""
     return signals_now.net_sleepiness >= policy.sleep_threshold
+
+
+def classify_sleep(
+    now: datetime, signals_now: SleepSignals, policy: SleepPolicy
+) -> SleepKind:
+    """Whether this is going to be a night's sleep or a nap (SLEEP-002).
+
+    Decided from the hour and from how much pressure there is to discharge. A
+    nap in the middle of the afternoon and a night that begins at two in the
+    morning are different things, and the difference is not the duration —
+    that is a consequence, not the cause.
+    """
+    hour = now.hour + now.minute / 60.0
+    low, high = policy.main_sleep_window_utc
+    if low <= high:
+        in_window = low <= hour < high
+    else:  # the window wraps midnight
+        in_window = hour >= low or hour < high
+    if in_window:
+        return "main"
+    # Outside the usual window it takes real, accumulated pressure to be a
+    # night rather than a doze.
+    return "main" if signals_now.sleep_pressure >= policy.main_sleep_pressure else "nap"
+
+
+def resistance_is_exhausted(signals_now: SleepSignals, policy: SleepPolicy) -> bool:
+    """SLEEP-001, as a question anything can ask.
+
+    ``LLM の気分だけで「寝ない」を無限継続させない``. Past this point staying up
+    is no longer available: whatever she or the model would prefer, the body
+    has stopped taking suggestions.
+    """
+    return signals_now.sleepiness >= policy.forced_sleep_threshold
 
 
 def should_wake(

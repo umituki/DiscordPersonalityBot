@@ -148,8 +148,15 @@ class WorldService:
         parent_event: Event | None = None,
         location: str | None = None,
         plan_id: str | None = None,
+        expected_minutes: float | None = None,
     ) -> tuple[Activity, Event | None]:
-        """Begin doing something. This is an ongoing fact, not an experience."""
+        """Begin doing something. This is an ongoing fact, not an experience.
+
+        ACT-001: ``ACTIVITY_STARTED`` は「やった経験」ではない. Starting is a
+        change to the world, and nothing more. What she can later say she did
+        comes from :meth:`finish_activity`, which is the only place an ongoing
+        fact becomes an occurred one.
+        """
         now = self._clock.now()
         ongoing = self._activities.ongoing()
         if ongoing is not None:
@@ -161,6 +168,11 @@ class WorldService:
             location=location or self._policy.world.default_location,
             plan_id=plan_id,
             now=now,
+            expected_end_at=(
+                None
+                if expected_minutes is None
+                else now + timedelta(minutes=max(1.0, float(expected_minutes)))
+            ),
         )
         self._history.record(
             transition="activity_started",
@@ -226,6 +238,10 @@ class WorldService:
     def current_activity(self) -> Activity | None:
         return self._activities.ongoing()
 
+    def activity_due_to_finish(self) -> Activity | None:
+        """Something ongoing whose intended end has passed (spec 24.2)."""
+        return self._activities.due_to_finish(self._clock.now())
+
     def completed_activities(self, *, limit: int = 20) -> list[Activity]:
         return self._activities.completed(limit=limit)
 
@@ -246,29 +262,51 @@ class WorldService:
         )
 
     def fall_asleep(
-        self, *, signals: sleep_model.SleepSignals, reason: str = "sleepy"
+        self,
+        *,
+        signals: sleep_model.SleepSignals,
+        reason: str = "sleepy",
+        kind: sleep_model.SleepKind | None = None,
     ) -> tuple[SleepEpisode, list[StateChangeProposal]]:
+        """Go to sleep. SLEEP-002: a nap and a night are different episodes.
+
+        ``kind`` is decided here rather than read back from the duration
+        afterwards. A main sleep that a message cuts short after forty minutes
+        is still a main sleep that went wrong, and calling it a nap in hindsight
+        loses the only fact worth keeping about it.
+        """
         now = self._clock.now()
         ongoing = self._activities.ongoing()
         if ongoing is not None:
             self._activities.finish(ongoing.activity_id, now=now, outcome="眠くなった")
 
+        resolved = kind or sleep_model.classify_sleep(now, signals, self._policy.sleep)
+        hours = (
+            self._policy.sleep.nap_hours
+            if resolved == "nap"
+            else self._policy.sleep.typical_sleep_hours
+        )
         episode = self._sleeps.begin(
             now=now,
             sleep_pressure=signals.sleep_pressure,
             circadian=signals.circadian_sleepiness,
-            planned_wake_at=now + timedelta(hours=self._policy.sleep.typical_sleep_hours),
+            planned_wake_at=now + timedelta(hours=hours),
             reason=reason,
+            kind=resolved,
         )
         self._history.record(
             transition="fell_asleep",
             awake=False,
             location=self._policy.world.default_location,
-            activity="睡眠",
-            detail={"sleep_pressure": signals.sleep_pressure},
+            activity="昼寝" if resolved == "nap" else "睡眠",
+            detail={"sleep_pressure": signals.sleep_pressure, "kind": resolved},
             now=now,
         )
         return episode, []
+
+    def current_sleep(self) -> SleepEpisode | None:
+        """The episode she is in, if she is asleep at all."""
+        return self._sleeps.current()
 
     def wake_up(self, *, interrupted: bool = False) -> tuple[SleepEpisode | None, float]:
         """Wake, discharging sleep pressure for the time actually slept."""

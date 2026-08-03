@@ -32,15 +32,20 @@ class ActivityRepository:
         plan_id: str | None,
         now: datetime,
         origin: str = "virtual_life",
+        expected_end_at: datetime | None = None,
     ) -> Activity:
         activity_id = ids.new_id(ACTIVITY)
         self._db.execute(
             """
             INSERT INTO activities
-                (activity_id, name, kind, location, plan_id, started_at, status, origin)
-            VALUES (?, ?, ?, ?, ?, ?, 'ongoing', ?)
+                (activity_id, name, kind, location, plan_id, started_at, status,
+                 origin, expected_end_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'ongoing', ?, ?)
             """,
-            (activity_id, name, kind, location, plan_id, to_iso(now), origin),
+            (
+                activity_id, name, kind, location, plan_id, to_iso(now), origin,
+                None if expected_end_at is None else to_iso(expected_end_at),
+            ),
         )
         return self.get(activity_id)  # type: ignore[return-value]
 
@@ -60,6 +65,16 @@ class ActivityRepository:
             (to_iso(now), reason or None, activity_id),
         )
         return self.get(activity_id)  # type: ignore[return-value]
+
+    def due_to_finish(self, now: datetime) -> Activity | None:
+        """The ongoing activity whose intended end has passed (spec 24.2)."""
+        row = self._db.query_one(
+            "SELECT * FROM activities WHERE status = 'ongoing' "
+            "AND expected_end_at IS NOT NULL AND expected_end_at <= ? "
+            "ORDER BY expected_end_at LIMIT ?",
+            (to_iso(now), 1),
+        )
+        return None if row is None else _to_activity(row)
 
     def ongoing(self) -> Activity | None:
         row = self._db.query_one(
@@ -134,19 +149,20 @@ class SleepRepository:
         circadian: float,
         planned_wake_at: datetime | None,
         reason: str,
+        kind: str = "main",
     ) -> SleepEpisode:
         sleep_id = ids.new_id(SLEEP)
         self._db.execute(
             """
             INSERT INTO sleep_episodes
                 (sleep_id, started_at, planned_wake_at, sleep_pressure_at_onset,
-                 circadian_at_onset, reason)
-            VALUES (?, ?, ?, ?, ?, ?)
+                 circadian_at_onset, reason, kind)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sleep_id, to_iso(now),
                 None if planned_wake_at is None else to_iso(planned_wake_at),
-                sleep_pressure, circadian, reason,
+                sleep_pressure, circadian, reason, kind,
             ),
         )
         return self.get(sleep_id)  # type: ignore[return-value]
@@ -315,6 +331,7 @@ def _to_activity(row: sqlite3.Row) -> Activity:
         status=row["status"],
         outcome=row["outcome"],
         origin=row["origin"],
+        expected_end_at=_optional_dt(row["expected_end_at"]),
     )
 
 
@@ -329,6 +346,7 @@ def _to_sleep(row: sqlite3.Row) -> SleepEpisode:
         quality=row["quality"],
         interrupted=bool(row["interrupted"]),
         reason=row["reason"],
+        kind=row["kind"],
     )
 
 

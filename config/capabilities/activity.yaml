@@ -1,14 +1,19 @@
-# Capability Contract (rebuild spec 4.3): activity
+# Capability Contract (rebuild spec 4.3, 24 — Phase 7)
 capability: "activity"
-trigger: "AutonomousRuntime opportunity (activity_due / habit cue / goal step)"
-runtime_entry: "AutonomousRuntime cycle"
-candidate_source: "LLM activity_candidates"
-hard_gate: "DecisionEngine + WorldService feasibility"
-actual_action: "WorldService.start_activity / finish_activity"
-success_event: "ACTIVITY_STARTED / ACTIVITY_FINISHED"
-persistence: "activities"
-recovery: "ongoing activity is finished, interrupted or resumed by elapsed time"
-observability: "!yui activity"
-acceptance_test: "test_activity_vertical_slice"
-status: "NOT_STARTED"
-note: "rebuild spec 24; engine exists, runtime does not drive it"
+trigger: "an ActivitySource moment: nothing is ongoing, or something ongoing has passed its intended end"
+runtime_entry: "AutonomousRuntime.tick → LifeCandidates.start/.finish → DecisionEngine.choose → LifeActions.start_activity/.finish_activity"
+candidate_source: "LifeCandidates — the domain's own valuation, never the loop's"
+hard_gate: "ACT-001/002 starting and finishing are separate opportunities, decisions and events; only WorldService.finish_activity turns an ongoing fact into an occurred one"
+actual_action: "WorldService.start_activity / .finish_activity"
+success_event: "ACTIVITY_STARTED, then ACTIVITY_FINISHED — two events, never one"
+persistence: "activities (status, expected_end_at, ended_at, outcome), world_state_history, runtime_ticks, events"
+recovery: "the intended end lives on the activity row, so a restart still knows what is due to finish"
+observability: "!yui activity / !yui runtime"
+acceptance_test: "tests/invariants/test_life_runtime.py"
+status: "E2E_VERIFIED"
+note: >
+  ACT-003 is structural here: the handler passes outcome details to the World
+  Service and never writes a row itself, so the completed fact has one author.
+  What she chooses to do comes from a declared repertoire; spec 24.1's
+  `activity_candidates` model call replaces it in a later phase, and that is a
+  change of candidate source, not of the lifecycle.

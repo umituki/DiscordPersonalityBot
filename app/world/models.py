@@ -20,6 +20,8 @@ from app.events.model import EventOrigin
 
 ActivityStatus = Literal["ongoing", "completed", "abandoned"]
 ActivityKind = Literal["rest", "leisure", "work", "social", "maintenance", "sleep"]
+#: SLEEP-002: 主要睡眠と nap を区別する.
+SleepKind = Literal["main", "nap"]
 #: Spec 19 job classes.
 JobClass = Literal["FIXED", "WINDOW", "CONDITION", "BACKGROUND"]
 JobStatus = Literal["pending", "fired", "expired", "cancelled", "misfired"]
@@ -47,6 +49,10 @@ class Activity(_Frozen):
     status: ActivityStatus = "ongoing"
     outcome: str | None = None
     origin: EventOrigin = "virtual_life"
+    #: When this was meant to be over (spec 24.2). Advisory: the runtime uses
+    #: it to notice that something is due to finish, and nothing about it makes
+    #: the activity *finished* — only the completed record does (ACT-002).
+    expected_end_at: datetime | None = None
 
     @property
     def is_ongoing(self) -> bool:
@@ -68,6 +74,14 @@ class SleepEpisode(_Frozen):
     quality: float | None = None
     interrupted: bool = False
     reason: str = ""
+    #: SLEEP-002. Recorded when the episode begins rather than inferred from
+    #: its length afterwards: a main sleep cut short by a message is not a nap,
+    #: and a long afternoon nap is not a night's sleep.
+    kind: SleepKind = "main"
+
+    @property
+    def is_nap(self) -> bool:
+        return self.kind == "nap"
 
     @property
     def is_asleep(self) -> bool:

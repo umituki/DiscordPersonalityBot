@@ -33,6 +33,17 @@ class SleepPolicy(_Frozen):
     goal_resistance: float = Field(default=0.20, ge=0.0, le=1.0)
     conversation_resistance: float = Field(default=0.35, ge=0.0, le=1.0)
     max_resistance: float = Field(default=0.45, ge=0.0, le=1.0)
+    #: SLEEP-001. Past this sleepiness, staying up is no longer on offer,
+    #: whatever the mood or the model would prefer.
+    forced_sleep_threshold: float = Field(default=0.88, ge=0.0, le=1.0)
+    #: SLEEP-002. A nap is short by definition, not by accident.
+    nap_hours: float = Field(default=0.75, gt=0.0)
+    #: The hours (UTC) inside which falling asleep means a night, not a doze.
+    #: Wraps midnight, which is the normal case.
+    main_sleep_window_utc: tuple[float, float] = (14.0, 23.0)
+    #: Outside that window, this much accumulated pressure still makes it a
+    #: main sleep rather than a nap.
+    main_sleep_pressure: float = Field(default=0.75, ge=0.0, le=1.0)
 
 
 class WorldRules(_Frozen):

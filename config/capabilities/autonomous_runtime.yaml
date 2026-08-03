@@ -10,11 +10,10 @@ persistence: "runtime_ticks, one row per wake-up including the quiet ones; decis
 recovery: "the loop starts after crash recovery, world catch-up and scheduler restore; shutdown cancels and drains it"
 observability: "!yui runtime; runtime_ticks.unclaimed_kinds() names every kind that fires and nobody claims"
 acceptance_test: "tests/invariants/test_autonomous_runtime_e2e.py"
-status: "WIRED"
+status: "E2E_VERIFIED"
 note: >
-  Deliberately WIRED and not E2E_VERIFIED. The loop is built, started by the
-  application lifecycle, driven by the real scheduler and proven to record its
-  wake-ups — but Phase 6 registers no candidate builders and no action
-  handlers, so no autonomous action has yet run end to end. Claiming
-  E2E_VERIFIED now would be exactly the §4.4 error this file exists to prevent.
-  It moves when Phase 7 lands the first real handler.
+  Moved from WIRED to E2E_VERIFIED by Phase 7, which registered the first real
+  candidate builders and action handlers. The whole chain now runs with nobody
+  speaking to her: source → opportunity → candidate → decision → handler →
+  WorldService → event → processor → rows, asserted end to end in
+  tests/invariants/test_life_runtime.py.

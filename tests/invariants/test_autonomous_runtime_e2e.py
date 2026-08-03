@@ -75,20 +75,23 @@ def test_the_scheduler_is_reachable_only_as_a_source(application) -> None:
 async def test_a_due_job_becomes_an_opportunity_and_stops_there(
     application, clock
 ) -> None:
-    """The whole Phase 6 chain, minus the domains that have not landed:
-    scheduler → opportunity → (no builder yet) → recorded, nothing executed."""
+    """Scheduler → opportunity → nobody claims it → recorded, nothing executed.
+
+    ``diary_due`` is used deliberately: it is a kind the scheduler can fire and
+    no phase has claimed yet, which is the shape this test is about. Phase 7
+    claimed ``activity_due``, and when Phase 10 claims this one the test moves
+    to whatever is still unclaimed — the property being protected is that an
+    unclaimed kind is visible, not that any particular kind stays unclaimed.
+    """
     application.scheduler.schedule_fixed(
-        job_type="activity_due", due_at=clock.now() + timedelta(minutes=1)
+        job_type="diary_due", due_at=clock.now() + timedelta(minutes=1)
     )
     clock.advance(minutes=2)
 
     tick = await application.runtime.tick()
 
-    assert tick.opportunities == 1
-    assert tick.opportunity_kinds == ("activity_due",)
-    # Phase 7 registers the builder. Until then this is honestly unclaimed.
-    assert tick.unclaimed_kinds == ("activity_due",)
-    assert tick.executed is False
+    assert "diary_due" in tick.opportunity_kinds
+    assert tick.unclaimed_kinds == ("diary_due",)
     assert application.runtime_ticks.count() == 1
 
 
@@ -106,37 +109,49 @@ async def test_the_audit_query_names_what_nobody_claimed(application, clock) -> 
 # --- RUNTIME-001, on the wired application -----------------------------------
 
 
-async def test_a_tick_changes_no_psychological_state(application, clock) -> None:
-    """The loop asks questions. Nothing it does moves emotion, mood, needs or
-    the relationship — those move through events and the arbitrator."""
-    application.scheduler.schedule_fixed(
-        job_type="habit_cue", due_at=clock.now() + timedelta(minutes=1)
-    )
-    clock.advance(minutes=2)
-    before = {
+async def test_the_loop_itself_changes_nothing(application, clock) -> None:
+    """RUNTIME-001, stated the way it stays true once handlers exist.
+
+    Phase 7 registered real handlers, so a tick that *acts* is supposed to move
+    the world — through an event and the processor, which is the point. What
+    must never move anything is the loop's own machinery: collecting, valuing,
+    deciding and recording. A deferred tick does all four and executes nothing,
+    which is exactly the isolation this asserts.
+    """
+    before_state = {
         (value.domain, value.key): value.value
         for value in application.state.list_all()
     }
+    before_events = application.event_store.count()
+    before_activities = application.world.current_activity()
 
-    await application.runtime.tick()
+    with application.runtime.user_turn():
+        tick = await application.runtime.tick()
 
-    after = {
+    # It really did the whole pass: opportunities, candidates, a decision point.
+    assert tick.candidates > 0
+    assert tick.outcome == "deferred"
+
+    after_state = {
         (value.domain, value.key): value.value
         for value in application.state.list_all()
     }
-    assert after == before
+    assert after_state == before_state
+    assert application.event_store.count() == before_events
+    assert application.world.current_activity() == before_activities
 
 
-async def test_a_tick_writes_no_event(application, clock) -> None:
-    """Spec 22: an opportunity is not an event. Only a selected and executed
-    one becomes one, and the handler owns that."""
+async def test_an_unclaimed_opportunity_writes_no_event(application, clock) -> None:
+    """Spec 22: an opportunity is not an event. Only a selected *and executed*
+    one becomes one, and the handler owns it."""
     application.scheduler.schedule_fixed(
-        job_type="habit_cue", due_at=clock.now() + timedelta(minutes=1)
+        job_type="diary_due", due_at=clock.now() + timedelta(minutes=1)
     )
     clock.advance(minutes=2)
     before = application.event_store.count()
 
-    await application.runtime.tick()
+    with application.runtime.user_turn():
+        await application.runtime.tick()
 
     assert application.event_store.count() == before
 
@@ -279,7 +294,7 @@ def test_the_runtime_command_exists() -> None:
 
 async def test_the_runtime_command_shows_the_wake_ups(application, clock) -> None:
     application.scheduler.schedule_fixed(
-        job_type="habit_cue", due_at=clock.now() + timedelta(minutes=1)
+        job_type="diary_due", due_at=clock.now() + timedelta(minutes=1)
     )
     clock.advance(minutes=2)
     await application.runtime.tick()
@@ -291,4 +306,4 @@ async def test_the_runtime_command_shows_the_wake_ups(application, clock) -> Non
     assert not outcome.result.failed, outcome.result.error
     rows = [row for section in outcome.result.sections for row in section.rows]
     assert rows
-    assert rows[0]["opportunity_kinds"] == "habit_cue"
+    assert "diary_due" in rows[0]["opportunity_kinds"]

@@ -55,6 +55,7 @@ from app.simulation.seed import SeedBuilder
 from app.jobs.proactive import ProactiveEngine
 from app.jobs.scheduler import Scheduler
 from app.runtime.autonomous import AutonomousRuntime
+from app.runtime.life import ActivitySource, LifeActions, SleepSource
 from app.runtime.sources import Registry as RuntimeRegistry, SchedulerSource
 from app.events.store import EventStore
 from app.consolidation.events import DEEP_CONSOLIDATION_REVIEW
@@ -570,9 +571,10 @@ class Application:
         )
 
         # --- autonomous runtime (spec 21, 22) --------------------------------
-        # The loop is wired here with the scheduler as its only source. Phases
-        # 7-11 register activity, sleep, goal, habit, NPC, knowledge and
-        # proactive sources into the same registry; none of them edits the loop.
+        # The loop itself. Phase 7 registers activity and sleep into the same
+        # registry just below, once the processor exists; Phases 8-11 add goals,
+        # habits, NPCs, knowledge and proactive contact. None of them edits the
+        # loop.
         runtime_tick_repo = RuntimeTickRepository(db)
         runtime_registry = RuntimeRegistry()
         runtime_registry.add_source(SchedulerSource(scheduler))
@@ -706,6 +708,26 @@ class Application:
             manifest_id=manifest_record.manifest_id,
             mode=resolved_config.runtime.mode,
             clock=resolved_clock,
+        )
+
+        # --- life, driven by the loop (spec 24, 25 — Phase 7) ----------------
+        # The first real builders and handlers. Registered here rather than in
+        # `app/runtime/` because this is where the processor exists: an
+        # autonomous act goes through the ordinary pipeline like any other.
+        sleep_source = SleepSource(
+            world_service, state_repo, policy=world_policy.sleep, clock=resolved_clock
+        )
+        life_actions = LifeActions(
+            world_service,
+            processor=processor,
+            state=state_repo,
+            policy=world_policy.sleep,
+            source=sleep_source,
+            clock=resolved_clock,
+        )
+        life_actions.register(
+            runtime_registry,
+            sources=(sleep_source, ActivitySource(world_service, clock=resolved_clock)),
         )
 
         consolidation_job = ConsolidationJob(

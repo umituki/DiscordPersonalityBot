@@ -1584,6 +1584,26 @@ _0023_RUNTIME_TICKS = Migration(
 )
 
 
+_0024_LIFE_DRIVEN_BY_THE_RUNTIME = Migration(
+    version=24,
+    name="life_driven_by_the_runtime",
+    statements=(
+        # SLEEP-002: 主要睡眠と nap を区別する. A distinction the spec requires
+        # has to exist as data. Deriving "was that a nap?" from the duration
+        # afterwards gets it wrong exactly when it matters — a main sleep cut
+        # short by a message is not a nap, and a long afternoon nap is not a
+        # night's sleep.
+        "ALTER TABLE sleep_episodes ADD COLUMN kind TEXT NOT NULL DEFAULT 'main'",
+        # Spec 24.2: candidate → decision → ACTIVITY_STARTED → *scheduled
+        # completion* → ACTIVITY_FINISHED. The intended end is part of starting
+        # something, and ACT-002 depends on knowing when a thing was meant to
+        # be over: only a completed record lets her say she did it.
+        "ALTER TABLE activities ADD COLUMN expected_end_at TEXT",
+        "CREATE INDEX idx_activities_expected_end ON activities (status, expected_end_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1608,6 +1628,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0021_REALIZATION_TRACE,
     _0022_RESPONSE_INTENT_TRACE,
     _0023_RUNTIME_TICKS,
+    _0024_LIFE_DRIVEN_BY_THE_RUNTIME,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

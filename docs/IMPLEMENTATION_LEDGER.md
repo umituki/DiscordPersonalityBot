@@ -397,6 +397,70 @@ acts while nobody is watching.
 
 ---
 
+## Phase 7 — Activity / Sleep driven by the runtime
+
+| Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| ACT-001 | `ACTIVITY_STARTED` is not an experience | `app/runtime/life.py` (`start_activity`), `app/world/service.py` | `test_starting_an_activity_is_not_an_experience` | — | `test_both_events_exist_and_are_different` | `!yui activity` | E2E_VERIFIED |
+| ACT-002 | Only a completed record lets her say she did it | `app/world/service.py` (`finish_activity`), migration 0024 (`expected_end_at`) | `test_an_activity_is_not_due_before_its_time` | `test_only_finishing_makes_it_something_she_did` | `test_only_finishing_makes_it_something_she_did` | `activities.status` | E2E_VERIFIED |
+| ACT-003 | The completed fact is the World Service's | `app/runtime/life.py` (`finish_activity`) | `test_the_completed_fact_belongs_to_the_world_service` | — | `test_only_finishing_makes_it_something_she_did` | `activities.outcome` | E2E_VERIFIED |
+| SLEEP-001 | Mood alone cannot keep her awake indefinitely | `app/world/sleep.py` (`resistance_is_exhausted`), `LifeCandidates.sleep` | `test_resistance_runs_out`, `test_an_ordinary_evening_is_not_forced` | `test_an_exhausted_candidate_cannot_be_outbid` | `test_she_falls_asleep_with_nobody_speaking_to_her` | `sleep_episodes.reason` | E2E_VERIFIED |
+| SLEEP-002 | A nap and a night are different episodes | `app/world/sleep.py` (`classify_sleep`), migration 0024 (`kind`) | `test_a_doze_outside_the_window_is_a_nap`, `test_real_pressure_outside_the_window_is_still_a_night` | `test_the_kind_is_recorded_when_she_lies_down` | `test_the_kind_is_recorded_when_she_lies_down` | `sleep_episodes.kind` | E2E_VERIFIED |
+| SLEEP-003 | The runtime actually fires the transition | `app/runtime/life.py` (`SleepSource`, `LifeActions`) | `test_nothing_happens_when_she_is_not_sleepy` | `test_she_wakes_up_on_her_own` | `test_she_falls_asleep_with_nobody_speaking_to_her` | `!yui runtime` | E2E_VERIFIED |
+| SLEEP-004 | A due action, not a calculation waiting for an event | `app/runtime/life.py`, `app/bootstrap.py` (registration) | `test_the_next_wake_is_the_planned_one_while_asleep` | `test_the_sleep_event_is_hers_and_not_a_reply` | `test_she_falls_asleep_with_nobody_speaking_to_her` | `WENT_TO_SLEEP` events | E2E_VERIFIED |
+
+### Phase 7 gate (spec 4.7)
+
+1. **Spec IDs implemented.** ACT-001…003, SLEEP-001…004.
+2. **Runtime trigger.** `SleepSource` and `ActivitySource`, collected by the
+   Phase 6 loop. No message and no incoming event is involved — which is the
+   whole of SLEEP-004.
+3. **Events produced.** `WENT_TO_SLEEP`, `WOKE_UP`, `ACTIVITY_STARTED`,
+   `ACTIVITY_FINISHED` — all root events with `actor_type=yui` and
+   `origin=virtual_life`. Not children of anything: nothing prompted them, and
+   descending them from a USER message would make the provenance a lie.
+4. **Rows written.** `sleep_episodes` (with `kind`), `activities` (with
+   `expected_end_at`, then `status=completed` and `outcome`),
+   `world_state_history`, `runtime_ticks`, `events`, `decisions`.
+5. **State change.** Through the processor, as normal. The handlers call the
+   World Service and emit an event; no domain state is written from
+   `app/runtime/` (RUNTIME-001 still holds now that there is something to do).
+6. **Debug.** `!yui runtime` shows the wake-up that chose it; `!yui activity`
+   and `sleep_episodes` show what came of it.
+7. **Restart.** Both due times are rows, not timers: an activity carries its
+   own `expected_end_at` and a sleep episode its `planned_wake_at`, so a
+   restart still knows what is due.
+8. **Unit tests.** 1199 pass in total; 21 are new in `test_life_runtime.py`.
+   Four Phase 6 E2E assertions were rewritten rather than relaxed — see below.
+9. **Integration / E2E.** `tests/invariants/test_life_runtime.py` drives
+   `application.runtime` and asserts the world rows and the events.
+10. **Deferred.** Nothing heavy in this phase. One scope note below.
+
+**`autonomous_runtime` moves from `WIRED` to `E2E_VERIFIED`.** Phase 6 shipped
+the loop with nothing registered; this phase registered the first real builders
+and handlers, so the full chain — source → opportunity → candidate → decision →
+handler → World Service → event → processor → rows — now runs with nobody
+speaking to her.
+
+**Four Phase 6 tests were rewritten, not weakened.** They asserted that a tick
+writes no event and changes no state, which was true only because nothing was
+registered. With handlers in place a tick that *acts* is supposed to move the
+world — that is the phase. The invariant that stays true is narrower and now
+stated directly: the loop's own machinery (collect, value, decide, record)
+changes nothing, asserted on a deferred tick that does all four and executes
+nothing. The unclaimed-kind tests moved from `activity_due` to `diary_due`,
+because what is being protected is that an unclaimed kind stays *visible*, not
+that any particular kind stays unclaimed.
+
+**Scope note.** What she chooses to *do* comes from a declared repertoire in
+`LifeActions`, not from spec 24.1's `activity_candidates` model call. That is a
+deliberate boundary: this phase owns the lifecycle, and swapping the candidate
+source for a model call changes where candidates come from without touching
+ACT-001/002/003. It is listed as the first item of the next agency phase rather
+than quietly claimed here.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -406,7 +470,7 @@ statuses is exactly the failure this ledger exists to prevent.
 |---|---|---|
 | 5 | Admin / debug router | STRUCTURALLY_COMPLETE |
 | 6 | Autonomous Runtime | STRUCTURALLY_COMPLETE |
-| 7 | Activity / Sleep / Scheduler | NOT_STARTED |
+| 7 | Activity / Sleep / Scheduler | STRUCTURALLY_COMPLETE |
 | 8 | NPC / Groups / Goals / Habits | NOT_STARTED |
 | 9 | Proactive contact | NOT_STARTED |
 | 10 | Diary | NOT_STARTED |
@@ -428,8 +492,8 @@ The contracts are the source of truth; this is a snapshot for reading.
 | normal_reply | WIRED |
 | natural_conversation_realization | E2E_VERIFIED |
 | intentional_silence | E2E_VERIFIED |
-| activity | NOT_STARTED |
-| sleep | NOT_STARTED |
+| activity | E2E_VERIFIED |
+| sleep | E2E_VERIFIED |
 | diary | NOT_STARTED |
 | spontaneous_memory | NOT_STARTED |
 | npc_interaction | NOT_STARTED |
@@ -441,7 +505,7 @@ The contracts are the source of truth; this is a snapshot for reading.
 | genesis | CODE_ONLY |
 | admin_debug_readonly | E2E_VERIFIED |
 | admin_backup | E2E_VERIFIED |
-| autonomous_runtime | WIRED |
+| autonomous_runtime | E2E_VERIFIED |
 
 `natural_conversation_realization` is the first `E2E_VERIFIED` capability: a
 real inbound message drives interpretation, planning, reference lookup,

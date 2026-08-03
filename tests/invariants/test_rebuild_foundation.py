@@ -339,6 +339,11 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     # it writes a file.
     "admin_debug_readonly",
     "admin_backup",
+    # Phase 7: the loop drives the first real handlers, so the runtime itself
+    # is finally proven end to end, and activity and sleep with it.
+    "autonomous_runtime",
+    "activity",
+    "sleep",
 })
 
 

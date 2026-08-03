@@ -1,14 +1,20 @@
-# Capability Contract (rebuild spec 4.3): sleep
+# Capability Contract (rebuild spec 4.3, 25 — Phase 7)
 capability: "sleep"
-trigger: "sleep pressure / circadian due action"
-runtime_entry: "AutonomousRuntime cycle"
-candidate_source: "WorldService sleep model"
-hard_gate: "SleepPolicy (LLM mood cannot postpone sleep forever)"
-actual_action: "WorldService sleep/wake transition"
-success_event: "WENT_TO_SLEEP / WOKE_UP"
-persistence: "sleep_episodes, world_state_history"
-recovery: "sleep episode is re-evaluated against current time on restart"
-observability: "!yui world"
-acceptance_test: "test_sleep_transition_actually_fires"
-status: "NOT_STARTED"
-note: "rebuild spec 25; currently only computed when an event arrives"
+trigger: "SleepSource: net sleepiness over the threshold while awake, or the planned wake time reached while asleep"
+runtime_entry: "AutonomousRuntime.tick → LifeCandidates.sleep/.wake → DecisionEngine.choose → LifeActions.go_to_sleep/.wake_up"
+candidate_source: "the two-process model in app/world/sleep.py — pressure, circadian phase, resistance"
+hard_gate: "SLEEP-001 past forced_sleep_threshold the candidate is raised at 1.0, which nothing else can outbid; resistance already decays as sleepiness climbs"
+actual_action: "WorldService.fall_asleep / .wake_up"
+success_event: "WENT_TO_SLEEP / WOKE_UP, as root events with actor_type=yui and origin=virtual_life"
+persistence: "sleep_episodes (including kind: main or nap), world_state_history, runtime_ticks, events"
+recovery: "the episode and its planned wake time are rows; a restart finds her still asleep and still due to wake"
+observability: "!yui runtime / sleep_episodes"
+acceptance_test: "tests/invariants/test_life_runtime.py"
+status: "E2E_VERIFIED"
+note: >
+  SLEEP-003/004 are the point. The previous build computed the transition only
+  when an event happened to arrive, so she could fall asleep only if someone
+  spoke to her first. The loop now fires it as a due action, and
+  test_she_falls_asleep_with_nobody_speaking_to_her asserts the rows with no
+  message involved. SLEEP-002 is recorded when the episode begins rather than
+  inferred from its length: a main sleep cut short is not a nap.
