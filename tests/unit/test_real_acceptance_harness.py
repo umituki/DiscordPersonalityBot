@@ -17,6 +17,13 @@ def test_conversation_metrics_flags_four_question_turns_and_prompt_leak():
     assert metrics["automatic_hard_fail"] is True
 
 
+def test_conversation_metrics_flags_trailing_structured_residue():
+    metrics = conversation_metrics([{"reply": "静かになるかもしれませんね。”}"}])
+
+    assert metrics["leak_matches"]
+    assert metrics["automatic_hard_fail"] is True
+
+
 def test_conversation_metrics_accepts_varied_non_question_replies():
     metrics = conversation_metrics(
         [

@@ -63,6 +63,7 @@ def _check(guard: OutputGuard, text: str, **extras):
         ("As an AI language model, I cannot do that.", "reasoning_leak"),
         # malformed JSON residue
         ('{"text": "こんにちは。"}', "format_residue"),
+        ("詠むと、静かになるかもしれませんね。”}", "format_residue"),
         ("```json\nこんにちは\n```", "format_residue"),
         ("\\u3053\\u3093\\u306b\\u3061\\u306f", "format_residue"),
         # secrets and admin operations
