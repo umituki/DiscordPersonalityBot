@@ -1604,6 +1604,47 @@ _0024_LIFE_DRIVEN_BY_THE_RUNTIME = Migration(
 )
 
 
+_0025_PROACTIVE_DELIBERATIONS = Migration(
+    version=25,
+    name="proactive_deliberations",
+    statements=(
+        # Rebuild spec 28.4, Phase 9. Every deliberation, in every mode.
+        #
+        # SHADOW is the initial operating mode (初期運用は SHADOW), and shadow
+        # is worthless without a record: the whole point is to read back what
+        # she *would* have sent and decide whether it was right. So the row is
+        # written whether or not anything was sent, and `sent` is a separate
+        # column from `would_send` — "she wanted to and the mode forbade it" and
+        # "she decided not to" are different facts about her.
+        """
+        CREATE TABLE proactive_deliberations (
+            deliberation_id  TEXT PRIMARY KEY,
+            considered_at    TEXT NOT NULL,
+            mode             TEXT NOT NULL,
+            trigger_kind     TEXT NOT NULL DEFAULT '',
+            trigger_detail   TEXT NOT NULL DEFAULT '',
+            gate_passed      INTEGER NOT NULL DEFAULT 0,
+            gate_reason      TEXT NOT NULL DEFAULT '',
+            desire           REAL NOT NULL DEFAULT 0.0,
+            unanswered       INTEGER NOT NULL DEFAULT 0,
+            required_wait_h  REAL NOT NULL DEFAULT 0.0,
+            judged           INTEGER NOT NULL DEFAULT 0,
+            judgment         TEXT NOT NULL DEFAULT '',
+            judgment_reason  TEXT NOT NULL DEFAULT '',
+            draft            TEXT NOT NULL DEFAULT '',
+            guard_verdict    TEXT NOT NULL DEFAULT '',
+            would_send       INTEGER NOT NULL DEFAULT 0,
+            sent             INTEGER NOT NULL DEFAULT 0,
+            event_id         TEXT,
+            contact_id       TEXT
+        )
+        """,
+        "CREATE INDEX idx_proactive_delib_time ON proactive_deliberations (considered_at DESC)",
+        "CREATE INDEX idx_proactive_delib_would ON proactive_deliberations (would_send, considered_at DESC)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1629,6 +1670,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0022_RESPONSE_INTENT_TRACE,
     _0023_RUNTIME_TICKS,
     _0024_LIFE_DRIVEN_BY_THE_RUNTIME,
+    _0025_PROACTIVE_DELIBERATIONS,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

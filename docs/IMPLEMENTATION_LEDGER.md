@@ -512,6 +512,61 @@ being looked at.
 
 ---
 
+## Phase 9 — Proactive contact
+
+| Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| PRO-28.1 | Silence never increases the rate | `app/jobs/proactive.py`, `app/runtime/proactive.py` | `test_silence_never_increases_the_rate`, `test_too_many_unanswered_stops_her_entirely` | `test_a_reply_clears_the_backlog` | `test_the_dryrun_reports_the_gate` | `!yui proactive dryrun` | E2E_VERIFIED |
+| PRO-28.2 | The model is asked only after the gate, and answers categorically | `app/runtime/proactive.py` (`ProactiveJudgment`), `config/prompts/proactive_judgment/v1.md` | `test_the_judgment_is_categorical`, `test_anything_short_of_yes_is_no` | `test_the_gate_runs_before_the_model_is_asked` | `test_shadow_records_what_she_would_have_said` | `llm_calls` (`purpose='proactive_judgment'`) | E2E_VERIFIED |
+| PRO-28.2b | A missing or broken model means silence | `app/runtime/proactive.py` (`_judge`) | `test_no_model_means_no_message`, `test_a_broken_model_means_no_message` | — | — | `proactive_deliberations.judged` | E2E_VERIFIED |
+| PRO-28.3 | A message needs something to be about | `app/runtime/proactive.py` (`TRIGGER_EVENTS`, `find_trigger`) | `test_nothing_to_say_is_no_opportunity`, `test_finishing_something_is_a_trigger_kind` | `test_a_stale_trigger_is_not_a_reason`, `test_wanting_company_counts_but_only_when_it_is_real` | `test_something_that_happened_is_a_trigger` | `!yui proactive dryrun` | E2E_VERIFIED |
+| PRO-28.4 | OFF / SHADOW / LIVE, SHADOW by default, shadow records in full | `app/config.py`, migration 0025, `app/runtime/proactive.py` | `test_shadow_is_the_default`, `test_off_deliberates_nothing_at_all` | `test_shadow_leaves_no_contact_row` | `test_shadow_records_what_she_would_have_said` | `!yui proactive shadow` | E2E_VERIFIED |
+| PRO-28.5 | Success only: event and contact record after a confirmed send | `app/runtime/proactive.py` (`_send`) | `test_the_null_sender_is_the_default` | `test_a_failed_send_records_no_contact` | `test_live_sends_and_records_in_that_order` | `YUI_MESSAGE_SENT` events | E2E_VERIFIED |
+| PRO-16 | An unprompted draft passes the same output guard as a reply | `app/runtime/proactive.py` (`_check`) | — | `test_a_guarded_draft_never_leaves` | `test_a_guarded_draft_never_leaves` | `proactive_deliberations.guard_verdict` | E2E_VERIFIED |
+| ADM-39.2 | `proactive dryrun` has no side effects at all | `app/admin/queries.py` (`proactive_dryrun`) | `test_the_dryrun_makes_no_model_call` | `test_the_dryrun_reports_the_gate` | `test_the_dryrun_changes_nothing_at_all` | `!yui proactive dryrun` | E2E_VERIFIED |
+| PRO-GATE | A real unprompted message to the real USER, on a real Discord connection | — | — | — | — | — | DEFERRED_TO_FINAL_REAL_MACHINE_GATE |
+
+### Phase 9 gate (spec 4.7)
+
+1. **Spec IDs implemented.** 28.1 … 28.5, plus §16 on the draft and the
+   OWNER's Phase 5 requirement for a side-effect-free dry run.
+2. **Runtime trigger.** `ProactiveSource`, registered in the Phase 6 loop. It
+   deliberately does *not* consult the hard gate: a source notices that there
+   is something to say, and mixing that with "is it allowed" would hide the
+   gate's decisions from the tick record.
+3. **Events produced.** `YUI_MESSAGE_SENT`, in LIVE only, and only after the
+   send is confirmed.
+4. **Rows written.** `proactive_deliberations` in every mode including OFF —
+   "she was switched off" is a fact worth being able to read — and
+   `proactive_contacts` only on a confirmed send.
+5. **State change.** Through the processor, from the sent event.
+6. **Debug.** `!yui proactive dryrun` (gate + trigger scan, no model call, no
+   rows), `!yui proactive shadow` (what she would have said),
+   `!yui proactive` (actual contacts).
+7. **Restart.** Every gate input is a row: the contact history is what the
+   backoff reads, so a restart cannot reset the interval.
+8. **Unit tests.** 1254 pass in total; 32 are new in
+   `test_proactive_runtime.py`.
+9. **Integration / E2E.** `tests/invariants/test_proactive_runtime.py` drives
+   the real engine, the real prompts and the real output guard, with a
+   recording sender in place of Discord.
+10. **Deferred.** `PRO-GATE` — a real unprompted message on a real connection.
+    `DEFERRED_TO_FINAL_REAL_MACHINE_GATE`, not run, not claimed.
+
+**Why the dry run does not ask the model.** The OWNER's Phase 5 requirement was
+that it have no side effects: no contact, no decision, no opportunity consumed,
+no event. It also makes no model call, for a second reason — "would you want to
+send something right now?" is not a question with a stable answer, and an
+operator running it thirty times would get thirty different ones. What it
+reports is the *structural* verdict: the trigger scan and the hard gate.
+
+**`would_send` and `sent` are separate columns on purpose.** "She wanted to and
+the mode forbade it" and "she decided not to" are different facts about her, and
+a shadow log that collapsed them would be unable to answer the only question
+shadow mode exists to answer.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -523,7 +578,7 @@ statuses is exactly the failure this ledger exists to prevent.
 | 6 | Autonomous Runtime | STRUCTURALLY_COMPLETE |
 | 7 | Activity / Sleep / Scheduler | STRUCTURALLY_COMPLETE |
 | 8 | NPC / Groups / Goals / Habits | STRUCTURALLY_COMPLETE |
-| 9 | Proactive contact | NOT_STARTED |
+| 9 | Proactive contact | STRUCTURALLY_COMPLETE |
 | 10 | Diary | NOT_STARTED |
 | 11 | Search / Knowledge | NOT_STARTED |
 | 12 | Genesis v2 | NOT_STARTED |
@@ -551,7 +606,7 @@ The contracts are the source of truth; this is a snapshot for reading.
 | group_activity | E2E_VERIFIED |
 | goal_action | E2E_VERIFIED |
 | habit_action | E2E_VERIFIED |
-| proactive_contact | NOT_STARTED |
+| proactive_contact | E2E_VERIFIED |
 | web_search | CODE_ONLY |
 | genesis | CODE_ONLY |
 | admin_debug_readonly | E2E_VERIFIED |

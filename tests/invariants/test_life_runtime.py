@@ -216,7 +216,7 @@ async def test_she_wakes_up_on_her_own(application, clock) -> None:
     clock.advance(hours=9)
     tick = await application.runtime.tick()
 
-    assert tick.opportunity_kinds == (WAKE_CANDIDATE,)
+    assert WAKE_CANDIDATE in tick.opportunity_kinds
     assert tick.executed is True
     assert application.world.current_sleep() is None
     types = {event.event_type for event in application.event_store.recent(limit=10)}
@@ -305,7 +305,9 @@ async def test_only_finishing_makes_it_something_she_did(application, clock) -> 
     clock.advance(minutes=90)
     tick = await application.runtime.tick()
 
-    assert tick.opportunity_kinds == (ACTIVITY_FINISH,)
+    # Membership, not exclusivity: later phases add more sources, and what
+    # this test is about is that the activity became due to finish.
+    assert ACTIVITY_FINISH in tick.opportunity_kinds
     assert tick.chosen_action == FINISH_ACTIVITY
     completed = application.world.completed_activities()
     assert [item.activity_id for item in completed] == [started.activity_id]

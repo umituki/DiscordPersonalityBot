@@ -350,6 +350,9 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     "habit_action",
     "npc_interaction",
     "group_activity",
+    # Phase 9: the gate, the judgment and the shadow record. A real unprompted
+    # message to the real USER is a final-gate item, not this one.
+    "proactive_contact",
 })
 
 

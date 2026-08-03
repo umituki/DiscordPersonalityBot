@@ -71,6 +71,11 @@ class DatabaseSection(_Section):
 class RuntimeSection(_Section):
     mode: RuntimeMode = "normal"
     timezone: str = "UTC"
+    #: Spec 28.4. OFF sends nothing and deliberates nothing; SHADOW
+    #: deliberates fully and records what she would have said without sending;
+    #: LIVE actually sends. 初期運用は SHADOW, so that is the default — a
+    #: proactive message is the one thing she does that the USER cannot undo.
+    proactive_mode: Literal["OFF", "SHADOW", "LIVE"] = "SHADOW"
     #: Spec 21, RUNTIME-004. Whether her life runs on its own between messages.
     #: Off by default so that a test, a CLI command or a migration run does not
     #: silently start a background loop that acts while nobody is watching; the
@@ -283,6 +288,7 @@ _ENV_OVERRIDES: Mapping[str, tuple[str, str]] = {
     "YUI_LOG_LEVEL": ("logging", "level"),
     "YUI_RUNTIME_MODE": ("runtime", "mode"),
     "YUI_AUTONOMOUS": ("runtime", "autonomous"),
+    "YUI_PROACTIVE_MODE": ("runtime", "proactive_mode"),
     "YUI_DB_FILENAME": ("database", "filename"),
     "OLLAMA_BASE_URL": ("llm", "base_url"),
     "YUI_LLM_MODEL": ("llm", "model"),

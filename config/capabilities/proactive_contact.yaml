@@ -1,14 +1,21 @@
-# Capability Contract (rebuild spec 4.3): proactive_contact
+# Capability Contract (rebuild spec 4.3, 28 — Phase 9)
 capability: "proactive_contact"
-trigger: "scheduler/runtime opportunity"
-runtime_entry: "AutonomousRuntime"
-candidate_source: "ProactiveEngine + LLM proactive_judgment"
-hard_gate: "ProactivePolicy (cooldown, unanswered backoff, quiet hours)"
-actual_action: "DiscordOutboundGateway"
-success_event: "YUI_MESSAGE_SENT"
-persistence: "proactive_contacts"
-recovery: "pending outbound is not treated as sent"
-observability: "!yui proactive"
-acceptance_test: "test_proactive_live_vertical_slice"
-status: "NOT_STARTED"
-note: "rebuild spec 28; SHADOW first"
+trigger: "ProactiveSource: a non-USER event within the freshness window that gives a message a subject (28.3), or a genuinely strong connection desire"
+runtime_entry: "AutonomousRuntime.tick → ProactiveCandidates.contact → DecisionEngine.choose → ProactiveActions.reach_out → ProactiveDeliberation.deliberate"
+candidate_source: "the 28.3 trigger list, as a lookup rather than a pile of conditionals"
+hard_gate: "28.1 first and unconditionally — max unanswered, cooldown, unanswered backoff, quiet hours — and only then the 28.2 model judgment; a model consulted first would be a model that can talk her past the gate"
+actual_action: "in LIVE, an OutboundSender send; in SHADOW, nothing leaves the process"
+success_event: "YUI_MESSAGE_SENT, and only after the send is confirmed (28.5: success only)"
+persistence: "proactive_deliberations in every mode, with would_send and sent as separate columns; proactive_contacts only on a confirmed send"
+recovery: "a failed send records no contact, so the backoff never counts a silence that was never hers"
+observability: "!yui proactive shadow / !yui proactive dryrun / !yui proactive"
+acceptance_test: "tests/invariants/test_proactive_runtime.py"
+status: "E2E_VERIFIED"
+note: >
+  SHADOW is the default (28.4: 初期運用は SHADOW) and deliberates in full — gate,
+  judgment, draft, guard — recording what she would have said and sending
+  nothing. The LIVE path is proven with a recording sender rather than a real
+  Discord connection; an actual unprompted message to the real USER belongs to
+  the final real-machine acceptance, and is listed there rather than claimed
+  here. The draft passes the same output guard as a reply: a gentler guard for
+  unprompted messages would be a hole with a justification attached.

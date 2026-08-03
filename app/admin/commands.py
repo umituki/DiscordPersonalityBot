@@ -131,6 +131,30 @@ def _build_registry() -> dict[str, AdminCommand]:
             ),
         ),
         AdminCommand(
+            "proactive",
+            "what would happen if she considered reaching out now",
+            lambda s, a: s.proactive_dryrun(),
+            subcommand="dryrun",
+        ),
+        AdminCommand(
+            "proactive",
+            "proactive deliberations, including the shadow ones",
+            _listing(
+                "proactive shadow", "proactive_deliberations", "recent",
+                (
+                    "considered_at",
+                    "mode",
+                    "trigger_kind",
+                    "gate_passed",
+                    "gate_reason",
+                    "judgment",
+                    "would_send",
+                    "sent",
+                ),
+            ),
+            subcommand="shadow",
+        ),
+        AdminCommand(
             "npc",
             "known NPCs",
             _listing("npc", "npcs", "all", ("npc_id", "name", "tier", "role", "status")),

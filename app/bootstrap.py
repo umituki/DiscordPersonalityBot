@@ -57,6 +57,11 @@ from app.jobs.scheduler import Scheduler
 from app.runtime.autonomous import AutonomousRuntime
 from app.runtime.agency import AgencyActions, AgencyCandidates, GoalSource, HabitSource
 from app.runtime.life import ActivitySource, LifeActions, SleepSource
+from app.runtime.proactive import (
+    ProactiveActions,
+    ProactiveDeliberation,
+    ProactiveSource,
+)
 from app.runtime.social import GroupSource, NPCSource, SocialActions, SocialCandidates
 from app.runtime.sources import Registry as RuntimeRegistry, SchedulerSource
 from app.events.store import EventStore
@@ -160,6 +165,7 @@ from app.storage.repositories import (
     PersonalityRepository,
     PlanRepository,
     ProactiveRepository,
+    ProactiveDeliberationRepository,
     ProcessingRunRepository,
     RuntimeTickRepository,
     SelfRepository,
@@ -228,6 +234,8 @@ class Application:
     proactive: ProactiveEngine
     runtime: AutonomousRuntime
     runtime_ticks: RuntimeTickRepository
+    proactive_deliberation: ProactiveDeliberation
+    proactive_deliberations: ProactiveDeliberationRepository
     growth_policy: GrowthPolicy
     adaptations: AdaptationEngine
     growth: GrowthEngine
@@ -772,6 +780,48 @@ class Application:
             ),
         )
 
+        # Where an unprompted message would go, and who may drive the admin
+        # plane. Read once, here, because Phase 9's proactive chain needs the
+        # channel and Phase 5's router needs the owner.
+
+        # Where an unprompted message would go, and who may drive the admin
+        # plane. Read once, here, because Phase 9's proactive chain needs the
+        # channel and Phase 5's router needs the owner.
+        owner_user_id = resolved_config.secrets.discord_owner_user_id
+        channel_id = resolved_config.secrets.discord_channel_id
+
+        # --- proactive contact (spec 28 — Phase 9) ---------------------------
+        # SHADOW by default (28.4: 初期運用は SHADOW). The sender is the null one
+        # unless the mode is LIVE, so shadow is not "a real sender we remember
+        # not to call" — there is nothing there to call.
+        proactive_deliberations = ProactiveDeliberationRepository(db)
+        proactive_source = ProactiveSource(
+            event_store,
+            state_repo,
+            conversation_repo,
+            world=world_service,
+            clock=resolved_clock,
+        )
+        proactive_deliberation = ProactiveDeliberation(
+            engine=proactive_engine,
+            source=proactive_source,
+            deliberations=proactive_deliberations,
+            mode=resolved_config.runtime.proactive_mode,
+            structured=structured,
+            prompts=prompts,
+            guard=guard,
+            sender=None,
+            processor=processor,
+            channel_id=channel_id or "",
+            clock=resolved_clock,
+        )
+        ProactiveActions(
+            proactive_deliberation,
+            state=state_repo,
+            engine=proactive_engine,
+            clock=resolved_clock,
+        ).register(runtime_registry, sources=(proactive_source,))
+
         consolidation_job = ConsolidationJob(
             processor=processor,
             event_store=event_store,
@@ -883,8 +933,6 @@ class Application:
         # Rebuild spec 30, Phase 5. Built before the conversation service so
         # the gateway can route admin first; ownership is checked here and
         # nowhere else.
-        owner_user_id = resolved_config.secrets.discord_owner_user_id
-        channel_id = resolved_config.secrets.discord_channel_id
         admin_router = AdminRouter(
             DebugQueryService(
                 DebugSources(
@@ -925,6 +973,9 @@ class Application:
                     common_ground=common_ground_repo,
                     admin_actions=admin_action_repo,
                     runtime_ticks=runtime_tick_repo,
+                    proactive_deliberations=proactive_deliberations,
+                    proactive_engine=proactive_engine,
+                    proactive_source=proactive_source,
                 ),
                 clock=resolved_clock,
             ),
@@ -1030,6 +1081,8 @@ class Application:
             proactive=proactive_engine,
             runtime=autonomous_runtime,
             runtime_ticks=runtime_tick_repo,
+            proactive_deliberation=proactive_deliberation,
+            proactive_deliberations=proactive_deliberations,
             growth_policy=growth_policy,
             adaptations=adaptation_engine,
             growth=growth_engine,

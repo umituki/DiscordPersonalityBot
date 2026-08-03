@@ -23,6 +23,7 @@ from typing import Any, Sequence
 from app.admin.results import DebugResult, safe_row
 from app.clock import Clock, SystemClock
 from app.memory.recall_mode import RecallMode
+from app.world.models import Opportunity
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,11 @@ class DebugSources:
     common_ground: Any = None
     admin_actions: Any = None
     runtime_ticks: Any = None
+    proactive_deliberations: Any = None
+    #: Phase 9. Both are read-only collaborators: the engine only
+    #: assesses, and the source only looks for a trigger.
+    proactive_engine: Any = None
+    proactive_source: Any = None
     backups: Any = None
     #: Declared but not built until Phase 10. A declared-and-``None`` source is
     #: "that subsystem has not landed"; an *undeclared* name is a typo, and
@@ -276,6 +282,58 @@ class DebugQueryService:
             rows=rows,
         )
 
+    def proactive_dryrun(self) -> DebugResult:
+        """What would happen if she considered reaching out right now (28.1).
+
+        Read-only in the strict sense the OWNER specified for Phase 5: no
+        ``proactive_contacts`` row, no decision, no deliberation row, no
+        opportunity consumed, no event — and no model call either. It evaluates
+        the *hard gate* and reports the trigger scan, which is the part an
+        operator actually needs to see and the only part with no side effects
+        at all.
+
+        The LLM judgment of 28.2 is deliberately not run here. It would cost a
+        model call and, more to the point, asking "would you want to send
+        something?" thirty times is not a question with a stable answer.
+        """
+        engine = self._sources.proactive_engine
+        source = self._sources.proactive_source
+        if engine is None or source is None:
+            return DebugResult(
+                command="proactive dryrun",
+                summary="proactive contact is not wired yet in this phase",
+            )
+
+        now = self._clock.now()
+        trigger = source.find_trigger(now)
+        rows: list[dict[str, Any]] = [
+            {
+                "trigger": "none" if trigger is None else trigger.kind,
+                "detail": "" if trigger is None else trigger.detail,
+            }
+        ]
+        if trigger is not None:
+            opportunity = Opportunity(
+                kind="proactive_contact",
+                detail=f"{trigger.kind}:{trigger.detail}",
+                created_at=now,
+            )
+            assessment = engine.assess(opportunity, _NoState(), now=now)
+            rows.append(
+                {
+                    "gate": "pass" if assessment.allowed else "block",
+                    "reason": assessment.reason,
+                    "desire": round(assessment.desire, 4),
+                    "unanswered": assessment.unanswered,
+                    "required_wait_h": round(assessment.required_wait_hours, 2),
+                }
+            )
+        return DebugResult.of(
+            "proactive dryrun",
+            summary="nothing was decided, sent or recorded",
+            rows=rows,
+        )
+
     def appraisal(self, *, limit: int = DEFAULT_LIMIT) -> DebugResult:
         """What recent events were read as. Reads ``llm_calls``, not the engine."""
         repository = self._require("llm_calls")
@@ -411,3 +469,16 @@ def _percentile(samples: Sequence[int], percent: float) -> int:
 
 
 __all__ = ["DEFAULT_LIMIT", "MAX_LIMIT", "DebugQueryService", "DebugSources"]
+
+
+class _NoState:
+    """A state view that knows nothing.
+
+    The dry run must not read a snapshot: taking one is cheap but it is still
+    a decision about *when* state was observed, and a debug command should not
+    be a point in her timeline. Defaults make the gate report its structural
+    verdict — cooldown, backoff, quiet hours — which is what is being asked.
+    """
+
+    def number(self, domain: str, key: str, default: float = 0.0) -> float:
+        return default
