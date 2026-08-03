@@ -45,6 +45,7 @@ from app.events.model import Event, SystemStartedPayload, SystemStoppedPayload
 from app.epistemics.actions import EpistemicActionSelector
 from app.knowledge.builder import KnowledgeBuilder
 from app.knowledge.coverage import CoveragePlanner
+from app.firstboot.orchestrator import FirstBootOrchestrator
 from app.genesis.critics import CriticBoard
 from app.genesis.runner import GenesisRunner
 from app.knowledge.investigation import InvestigationService
@@ -156,6 +157,7 @@ from app.storage.repositories import (
     EventRepository,
     ExposureRepository,
     FailureRepository,
+    FirstBootRepository,
     GenerationAuditRepository,
     GenesisExperienceRepository,
     GenesisRunRepository,
@@ -246,12 +248,15 @@ class Application:
     world_policy: WorldPolicy
     world: WorldService
     scheduler: Scheduler
+    jobs: JobRepository
     proactive: ProactiveEngine
     runtime: AutonomousRuntime
     runtime_ticks: RuntimeTickRepository
     diary: DiaryService
     investigation: InvestigationService
     genesis_runner: GenesisRunner
+    first_boot: FirstBootOrchestrator
+    first_boot_state: FirstBootRepository
     genesis_runs: GenesisRunRepository
     genesis_experiences: GenesisExperienceRepository
     life_records: LifeRecordRepository
@@ -307,6 +312,10 @@ class Application:
     schema_version: int
     started: bool = False
     llm_healthy: bool = False
+    #: Phase 13. What the FIRST BOOT Authority said at startup, and whether the
+    #: character plane is therefore open. Read, never decided, here.
+    first_boot_status: str = "PENDING"
+    character_plane: bool = False
     #: Set by :meth:`start` from the spec 32 startup sequence.
     catch_up: object | None = None
     retired_jobs: int = 0
@@ -1045,6 +1054,41 @@ class Application:
             clock=resolved_clock,
         )
 
+        # --- FIRST BOOT (spec 34.20 — Phase 13) ------------------------------
+        # The single Authority on whether YUI exists yet. Built here and asked
+        # by startup, the gateway, the CLI and the admin plane — none of which
+        # is allowed its own opinion (point 1).
+        #
+        # Deliberately *not* started here (point 8): reading the state is a
+        # startup concern, and beginning a nineteen-year generation is not.
+        rebuild_epoch_repo = RebuildEpochRepository(db)
+        first_boot_repo = FirstBootRepository(db)
+        first_boot = FirstBootOrchestrator(
+            repository=first_boot_repo,
+            genesis=genesis_runner,
+            genesis_runs=genesis_run_repo,
+            records=life_record_repo,
+            entities=life_entity_repo,
+            experiences=genesis_experience_repo,
+            audits=generation_audit_repo,
+            rebuild=rebuild_epoch_repo,
+            event_store=event_store,
+            memories=memory_repo,
+            state=state_repo,
+            world=world_service,
+            society=society_service,
+            jobs=job_repo,
+            life_days=life_day_repo,
+            processor=processor,
+            prompts=prompts,
+            backups=backup_service,
+            db=db,
+            schema_version=current_schema,
+            latest_schema=LATEST_VERSION,
+            data_dir=resolved_config.data_dir,
+            clock=resolved_clock,
+        )
+
         # The conversation path exists only when the single USER is identified
         # (spec 1.2). Without it, YUI has no one to talk to and stays offline.
         # Rebuild spec 30, Phase 5. Built before the conversation service so
@@ -1087,7 +1131,7 @@ class Application:
                     acquisitions=acquisition_repo,
                     health=health_repo,
                     manifests=manifest_repo,
-                    rebuild=RebuildEpochRepository(db),
+                    rebuild=rebuild_epoch_repo,
                     common_ground=common_ground_repo,
                     admin_actions=admin_action_repo,
                     runtime_ticks=runtime_tick_repo,
@@ -1100,6 +1144,8 @@ class Application:
                     genesis_runs=genesis_run_repo,
                     life_records=life_record_repo,
                     generation_audits=generation_audit_repo,
+                    genesis_experiences=genesis_experience_repo,
+                    first_boot=first_boot,
                     life_days=life_day_repo,
                 ),
                 clock=resolved_clock,
@@ -1203,12 +1249,15 @@ class Application:
             world_policy=world_policy,
             world=world_service,
             scheduler=scheduler,
+            jobs=job_repo,
             proactive=proactive_engine,
             runtime=autonomous_runtime,
             runtime_ticks=runtime_tick_repo,
             diary=diary_service,
             investigation=investigation,
             genesis_runner=genesis_runner,
+            first_boot=first_boot,
+            first_boot_state=first_boot_repo,
             genesis_runs=genesis_run_repo,
             genesis_experiences=genesis_experience_repo,
             life_records=life_record_repo,
@@ -1310,10 +1359,32 @@ class Application:
                 self.config.llm.base_url,
             )
 
+        # Phase 13, points 8-10 and 54-57. Before FIRST BOOT the application
+        # comes up in *management mode*: the CLI, the admin plane, backups,
+        # status and resume all work, and nothing that constitutes her living
+        # does. The autonomous runtime in particular stays down — Genesis is
+        # replaying nineteen years of her past, and a 2026 life running
+        # alongside it would interleave two timelines into one event stream.
+        #
+        # Nothing here starts Genesis. Reading the state is a startup concern;
+        # beginning a nineteen-year generation needs the OWNER to ask.
+        self.first_boot_status = self.first_boot.status()
+        self.character_plane = self.first_boot.character_plane_open()
+        if not self.character_plane:
+            logger.warning(
+                "management mode: first boot is %s; the character plane is closed",
+                self.first_boot_status,
+            )
+            return event
+
         # RUNTIME-004. Last, on purpose: the loop must not start looking for
         # things to do until recovery, catch-up and scheduler restore have
         # settled. Waking into a half-recovered world is how she acts on a job
         # that the restore was about to retire.
+        #
+        # Point 37: and before the gateway, which `app.main` starts after this
+        # returns. The USER's first word must not arrive at a system whose life
+        # has not been switched on.
         if self.config.runtime.autonomous:
             await self.runtime.start()
 

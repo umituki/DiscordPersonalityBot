@@ -301,7 +301,7 @@ class GenesisRunner:
             age_end=span.age_end,
             scaffold_text=scaffold.summary,
             prompt_version=self._version(SCAFFOLD_PROMPT),
-            model_version="",
+            model_version=self._model(),
             now=self._clock.now(),
         )
         self._note_all(ledger, scaffold.people, scaffold.interests, scaffold.threads, span.start)
@@ -457,7 +457,7 @@ class GenesisRunner:
             narrative=month.narrative,
             importance_class=month.importance,
             prompt_version=self._version(MONTH_PROMPT),
-            model_version="",
+            model_version=self._model(),
         )
         self._note_all(
             ledger, month.people, month.interests, month.threads, start, month_id=month_id
@@ -940,6 +940,45 @@ class GenesisRunner:
                 )
         return AuditResult("no_real_user_before_first_boot", True)
 
+    def ready_for_completion(self, run_id: str, anchors: LifeAnchors) -> bool:
+        """As far as Genesis goes: is this life finished?
+
+        Phase 13, point 5. This is the *most* a runner may say. Whether a
+        finished Genesis is grounds for opening the character plane is a
+        different judgement — it involves survivors, the transition to the
+        present, and the state of the whole system — and it belongs to the
+        FirstBootOrchestrator. A generator that declares itself shippable is a
+        generator grading its own homework.
+        """
+        years = self._records.years(run_id)
+        if not years:
+            return False
+        expected = {span.year_number for span in anchors.years}
+        if {row["year_number"] for row in years} != expected:
+            return False
+        for span in anchors.years:
+            row = next(
+                (item for item in years if item["year_number"] == span.year_number), None
+            )
+            if row is None or not row["final_summary"]:
+                return False
+            if len(self._records.months(row["year_id"])) < span.months:
+                return False
+            if not self._runs.reached(run_id, "year_memory_done", span.year_number):
+                return False
+        if self._experiences is not None and self._experiences.count(
+            genesis_run_id=run_id, replay_status="pending"
+        ):
+            return False
+        return True
+
+    @property
+    def critic_names(self) -> tuple[str, ...]:
+        """Which critics are configured, for the preflight to check."""
+        if self._critics is None:
+            return ()
+        return tuple(getattr(self._critics, "_enabled", ()))
+
     # --- 34.8: hand the survivors to the runtime -----------------------------
     def promote_survivors(self, run_id: str, anchors: LifeAnchors) -> int:
         """People still in her life become runtime NPCs.
@@ -953,6 +992,13 @@ class GenesisRunner:
         ledger = ContinuityLedger(self._entities, genesis_run_id=run_id)
         promoted = 0
         for entry in ledger.survivors(anchors.present_datetime):
+            # Point 7: idempotent. Already linked means already promoted, and
+            # calling this twice must not produce two people with one name.
+            # The unique index on `npc_id` backs this up in the schema, because
+            # "promote twice" is the shape of bug that survives code review.
+            existing = self._entities.npc_for(entry.entity_id)
+            if existing:
+                continue
             npc = self._society.introduce(name=entry.canonical_name, tier=1)
             self._entities.link_npc(entry.entity_id, npc.npc_id)
             promoted += 1
@@ -1055,6 +1101,15 @@ class GenesisRunner:
             return self._prompts.get(prompt_id).prompt_version
         except Exception:  # noqa: BLE001
             return ""
+
+    def _model(self) -> str:
+        """Which model wrote this row (34.20 point 44).
+
+        Recorded per row rather than once per run because a resume days later
+        can legitimately finish a life a different model started, and "who made
+        her" then has two answers. Both belong in the first boot report.
+        """
+        return str(getattr(self._structured, "model", "") or "")
 
 
 __all__ = [

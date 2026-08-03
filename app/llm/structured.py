@@ -107,6 +107,16 @@ class StructuredGenerator:
         self._policy = policy
         self._resources = resources
 
+    @property
+    def model(self) -> str:
+        """Which model this generator talks to.
+
+        Exposed so callers that need to record provenance — Genesis writing
+        which model made a life year — can ask the generator rather than
+        reaching through it to the client.
+        """
+        return str(getattr(self._client, "model", "") or "")
+
     def plan_for(self, purpose: str) -> CallPlan:
         """What this purpose is allowed to spend (patch spec 3.4)."""
         if self._policy is None:

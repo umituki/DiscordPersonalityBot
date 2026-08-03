@@ -789,6 +789,74 @@ pass GEN-CRITIC-001 forbids.
 
 ---
 
+## Phase 13 — Full FIRST BOOT (rebuild spec 34.20)
+
+| ID | Requirement | Where | Unit | Integration | Failure | Persistence | Status |
+|---|---|---|---|---|---|---|---|
+| FB-01 | One FIRST BOOT Authority; nothing else judges | `app/firstboot/orchestrator.py` | `test_bootstrap_never_calls_genesis` | `test_a_fresh_database_can_be_born` | `test_the_admin_plane_cannot_start_a_life` | `first_boot_state` | E2E_VERIFIED |
+| FB-02 | Eight states, no CANCELLED | `app/firstboot/state.py` | `test_the_state_machine_has_no_cancel`, `test_running_is_resumable_and_not_startable` | `test_a_block_records_why_and_when` | — | `first_boot_state.status` | E2E_VERIFIED |
+| FB-03 | State survives the process | migration 0030, `FirstBootRepository` | — | `test_progress_survives_a_restart` | `test_a_stale_running_lease_is_reported_as_recoverable` | `first_boot_state` | E2E_VERIFIED |
+| FB-04 | COMPLETE is a commit, not `run()` returning | `FirstBootOrchestrator._finalise` | — | `test_a_fresh_database_can_be_born` | `test_a_finished_genesis_with_a_failing_audit_does_not_complete` | `first_boot_state.completed_at` | E2E_VERIFIED |
+| FB-05 | Finalisation is crash-safe and re-runnable | `_finalise`, `_land`, CAS transition | `test_landing_twice_opens_one_day` | `test_promoting_twice_makes_one_person` | `test_the_schema_refuses_two_entities_for_one_npc` | `idx_life_entity_npc` | E2E_VERIFIED |
+| FB-06 | Bootstrap starts nothing; management mode before first boot | `Application.start` | `test_bootstrap_never_calls_genesis` | `test_startup_reads_the_state_and_starts_nothing` | `test_the_runtime_stays_down_even_when_configured_on` | — | E2E_VERIFIED |
+| FB-07 | The character plane is a gate, not a warning | `DiscordGateway._character_plane_open` | `test_only_complete_opens_the_plane` | `test_the_admin_plane_still_answers_before_first_boot` | `test_a_user_message_is_refused_before_first_boot`, `test_a_gate_that_cannot_read_the_state_stays_shut` | — | E2E_VERIFIED |
+| FB-08 | Double defence against a real USER in her past | preflight + `no_real_user_before_first_boot` audit | — | — | `test_a_real_user_message_stops_the_preflight` | `events.actor_type` | E2E_VERIFIED |
+| FB-09 | Preflight before anything is generated | `app/firstboot/preflight.py` | — | `test_a_start_takes_a_backup_first` | `test_a_missing_prompt_stops_the_preflight`, `test_backwards_anchors_stop_the_preflight`, `test_no_epoch_means_no_first_boot` | — | E2E_VERIFIED |
+| FB-10 | Anchors frozen at start; the DB is authoritative | `fingerprint`, `_stored_anchors` | — | `test_a_resume_uses_the_stored_anchors` | `test_a_changed_fingerprint_is_fatal` | `genesis_runs` anchors | E2E_VERIFIED |
+| FB-11 | Progress computed from the anchors, never a hard-coded 228 | `FirstBootProgressView` | `test_progress_expects_months_from_the_anchors` | — | — | `first_boot_state.last_progress_at` | E2E_VERIFIED |
+| FB-12 | Retryable and fatal are different, and the budget is bounded | `block_status`, `MAX_ATTEMPTS` | — | `test_a_blocked_run_can_be_resumed_to_completion` | `test_a_fatal_block_refuses_to_resume`, `test_enough_retryable_failures_become_fatal`, `test_an_exhausted_budget_stops_resuming` | `first_boot_state.block_kind` | E2E_VERIFIED |
+| FB-13 | No over-eager auto-repair | `resume` refusing BLOCKED_FATAL | — | — | `test_a_fatal_block_repairs_nothing_by_itself` | `first_boot_state` | E2E_VERIFIED |
+| FB-14 | Resume reuses Genesis's own checkpoints | `_drive` calling `run(resume=...)` | — | `test_a_crashed_run_is_recoverable_from_a_new_application` | — | `genesis_checkpoints` | E2E_VERIFIED |
+| FB-15 | A DB lease, and one holder | `FirstBootRepository.acquire` | `test_a_parallel_start_takes_the_lease_only_once` | — | `test_two_processes_cannot_both_run`, `test_a_second_start_is_refused`, `test_start_after_complete_is_refused` | `first_boot_lock` | E2E_VERIFIED |
+| FB-16 | `audit` has no side effects | `FirstBootOrchestrator.audit` | — | — | `test_the_audit_command_changes_nothing` | — | E2E_VERIFIED |
+| FB-17 | Finalisation runs in a fixed order | `FINALISATION_STAGES` | `test_finalisation_runs_its_stages_in_order` | — | — | `first_boot_state.current_stage` | E2E_VERIFIED |
+| FB-18 | She lands in the present instead of catching up | `_land` | `test_landing_twice_opens_one_day` | `test_the_world_lands_instead_of_catching_up` | `test_an_unlanded_world_blocks_completion` | `scheduled_jobs.status` | E2E_VERIFIED |
+| FB-19 | Her first life day starts at first boot | `_land` | — | `test_her_first_day_starts_at_first_boot` | `test_an_unlanded_world_blocks_completion` | `life_days` | E2E_VERIFIED |
+| FB-20 | No nineteen-year-old psychology or activity in the present | `_final_consistency` | — | — | `test_a_lingering_past_activity_blocks_completion`, `test_a_stale_maximal_emotion_blocks_completion` | `state_values`, `activities` | E2E_VERIFIED |
+| FB-21 | Complete and empty is not a state | `_final_consistency` zero-row checks | `test_a_run_with_no_years_fails_every_zero_row_check` | — | `test_an_empty_life_cannot_complete_even_with_every_audit_passing` | `life_years`, `episodic_memories` | E2E_VERIFIED |
+| FB-22 | Graceful pause, and resume from it | `FirstBootOrchestrator.pause` | `test_pause_after_completion_is_refused` | `test_a_run_can_be_paused_and_resumed` | `test_pause_keeps_the_run_and_the_work` | `first_boot_state.status` | E2E_VERIFIED |
+| FB-23 | The runtime and the gateway come up after her, in that order | `Application.start` | — | `test_the_runtime_comes_up_once_she_exists` | `test_the_runtime_stays_down_even_when_configured_on` | — | E2E_VERIFIED |
+| FB-24 | A lifecycle event, counts not contents, never appraised | `FIRST_BOOT_COMPLETED`, `_emit` | — | `test_the_completion_event_carries_counts_not_contents` | — | `events` | E2E_VERIFIED |
+| FB-25 | A persisted report saying which model and prompts made her | `_build_report`, `GenesisRunner._model` | — | `test_the_report_records_which_model_made_her` | — | `first_boot_state.report_json` | E2E_VERIFIED |
+| FB-26 | Read-only from Discord; no start from a chat message | `!yui firstboot` | `test_the_admin_plane_cannot_start_a_life` | `test_the_genesis_experiences_view_shows_replay_status` | `test_the_firstboot_view_is_read_only` | — | E2E_VERIFIED |
+| FB-27 | Every CLI action actually runs | `app/main.py` `first-boot` | `test_every_first_boot_command_runs`, `test_start_needs_a_birthday` | — | — | — | E2E_VERIFIED |
+
+**Phase 13 completion (rebuild spec 34.20):**
+
+1. **Files.** `app/firstboot/{state,events,preflight,orchestrator}.py`,
+   `app/storage/repositories/firstboot.py`, migration 0030, and the wiring in
+   `app/bootstrap.py`, `app/main.py`, `app/interfaces/discord/gateway.py` and
+   the admin registry.
+2. **Behaviour.** One authority decides whether YUI exists. Everything else —
+   startup, the gateway, the admin plane, the CLI — asks it.
+3. **Tests.** 1431 pass in total; 63 in `test_first_boot.py`.
+4. **Invariants.** The character plane opens for exactly one status. An
+   incomplete life cannot reach COMPLETE by any route the tests could find.
+5. **Deferred.** `GEN-GATE` — the real nineteen-year run against a real model,
+   still unconsumed.
+
+**The shape of the test file is the point.** Proving that the code *can* write
+FIRST_BOOT_COMPLETE proves nothing; a single misplaced early return would pass
+that test. So the forward path gets one end-to-end test and the other fifty-six
+push the other way, each ending in the same assertion: the character plane is
+still shut.
+
+**One bug the reverse tests could not have found.** `first-boot status` raised
+`NameError` on a helper that does not exist — every orchestrator test called the
+orchestrator directly, so nothing ever ran the command an operator would type.
+It is covered now, which is the general lesson: a CLI with no test is a CLI
+nobody has run.
+
+**The one thing the audits could not catch.** Ten Genesis audits look at the
+generated life, and none of them looks at *when she is*. A YUI who passes all
+ten can still be mid-activity in 2019 with a scheduler queue nineteen years
+overdue — technically complete, and unable to have a first conversation. That
+is what landing and the final consistency check are for, and they are separate
+from the audits because they are checks about the present rather than about the
+generation.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -804,7 +872,7 @@ statuses is exactly the failure this ledger exists to prevent.
 | 10 | Diary | STRUCTURALLY_COMPLETE |
 | 11 | Search / Knowledge | STRUCTURALLY_COMPLETE |
 | 12 | Genesis v2 | STRUCTURALLY_COMPLETE |
-| 13 | Full FIRST BOOT | NOT_STARTED |
+| 13 | Full FIRST BOOT | STRUCTURALLY_COMPLETE |
 | 14 | Shadow runtime evaluation | NOT_STARTED |
 | 15 | Live | NOT_STARTED |
 
@@ -834,11 +902,15 @@ The contracts are the source of truth; this is a snapshot for reading.
 | admin_debug_readonly | E2E_VERIFIED |
 | admin_backup | E2E_VERIFIED |
 | autonomous_runtime | E2E_VERIFIED |
+| first_boot | E2E_VERIFIED |
 
 `natural_conversation_realization` is the first `E2E_VERIFIED` capability: a
 real inbound message drives interpretation, planning, reference lookup,
 realization, the hard gates and delivery, and the test asserts the rows.
-`web_search` and `genesis` are `CODE_ONLY`
-because their engines exist and nothing in the running system drives them the
-way this spec requires — which is the honest reading of §0, not a downgrade of
-work already done.
+Every `E2E_VERIFIED` capability above is verified against fixtures and test
+databases, never against the real machine. What that status claims is that the
+whole path runs — trigger, gate, action, event, persistence, recovery,
+observability — and that the tests assert the rows it left. What it does not
+claim is scale: the nineteen-year Genesis against a real Ollama is `GEN-GATE`,
+and a real unprompted message to the real USER is a final-gate item, both
+deliberately unconsumed.

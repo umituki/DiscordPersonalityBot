@@ -60,6 +60,9 @@ REQUIRED_CAPABILITIES: tuple[str, ...] = (
     "admin_backup",
     # Rebuild spec 21, Phase 6.
     "autonomous_runtime",
+    # Rebuild spec 34.20, Phase 13. The one capability that gates every other
+    # one: until it is COMPLETE, nothing on this list is allowed to run.
+    "first_boot",
 )
 
 #: Every field 4.3's example carries. All of them are required: a contract with

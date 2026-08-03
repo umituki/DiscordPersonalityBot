@@ -1,0 +1,26 @@
+# Capability Contract (rebuild spec 4.3, 34.20 — Phase 13)
+capability: "first_boot"
+trigger: "the OWNER running `yui first-boot start --birth ...` once per rebuild epoch. Never startup, never Discord, never a schedule"
+runtime_entry: "app.main first-boot → FirstBootOrchestrator.start/resume → GenesisRunner.run → FirstBootOrchestrator._finalise"
+candidate_source: "the rebuild epoch's own first_boot_state row; a resume takes no run id, because letting an operator name one is how a different life gets attached to this epoch"
+hard_gate: "character_plane_open() is false for every status except COMPLETE, and the Discord gateway asks it before the conversation service is reached — a gate at the door, not an audit afterwards"
+actual_action: "nineteen years of Genesis, ten first-boot audits, survivor promotion, landing in the present, then the compare-and-set to COMPLETE"
+success_event: "FIRST_BOOT_COMPLETED — a system lifecycle event, appended straight to the store and never appraised, because the machinery that made her is not something that happened to her"
+persistence: "first_boot_state (status, run, checkpoint, attempts, anchors fingerprint, report_json) and first_boot_lock (a DB lease); every named checkpoint is a row, not a variable"
+recovery: "a crash leaves RUNNING with a dead lease, which reports as recoverable; resume reuses GenesisRunner's own checkpoints rather than a second implementation, and finalisation is re-runnable from the top"
+observability: "yui first-boot status/audit/report, and !yui firstboot read-only from Discord"
+acceptance_test: "tests/invariants/test_first_boot.py"
+status: "E2E_VERIFIED"
+note: >
+  The forward path has one test and the other fifty-odd push the other way,
+  because the property that matters is not that FIRST_BOOT_COMPLETE can be
+  written — it is that an incomplete life cannot reach it by any route. Stopped
+  generation, an identity contradiction, an unavailable critic, a failing audit,
+  an activity still running from the simulated past, a nineteen-year-old emotion
+  at full strength, a second start, a parallel start, a killed process, a
+  changed fingerprint, an exhausted retry budget, and a life that is complete
+  and empty: each of them ends with the character plane shut.
+
+  What is deferred to the final real-machine gate is scale, not structure: this
+  runs a two-month life against a fixture storyteller. The real nineteen years
+  against Ollama is GEN-GATE.

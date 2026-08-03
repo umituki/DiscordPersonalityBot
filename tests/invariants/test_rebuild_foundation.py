@@ -359,6 +359,9 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     "web_search",
     # Phase 12.
     "genesis",
+    # Phase 13: the one gate that decides whether she exists at all. Verified
+    # against a two-month fixture life; the nineteen-year run is GEN-GATE.
+    "first_boot",
 })
 
 

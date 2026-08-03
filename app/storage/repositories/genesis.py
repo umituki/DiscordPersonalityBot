@@ -356,6 +356,13 @@ class LifeEntityRepository:
             (npc_id, entity_id),
         )
 
+    def npc_for(self, entity_id: str) -> str | None:
+        """Which runtime NPC this person became, if any. Point 7's idempotency."""
+        row = self._db.query_one(
+            "SELECT npc_id FROM life_entities WHERE entity_id = ?", (entity_id,)
+        )
+        return None if row is None else row["npc_id"]
+
     def all_for(self, genesis_run_id: str) -> list[dict[str, Any]]:
         rows = self._db.query_all(
             "SELECT * FROM life_entities WHERE genesis_run_id = ? "
@@ -494,6 +501,13 @@ class GenesisExperienceRepository:
         return int(
             self._db.scalar(f"SELECT COUNT(*) FROM genesis_experiences{where}", tuple(params))
             or 0
+        )
+
+    def recent(self, *, limit: int = 20) -> list[sqlite3.Row]:
+        return self._db.query_all(
+            "SELECT occurred_at, year_number, importance, action, replay_status, "
+            "replayed_at FROM genesis_experiences ORDER BY occurred_at DESC LIMIT ?",
+            (limit,),
         )
 
     def replayed_event_ids(self, genesis_run_id: str) -> list[str]:

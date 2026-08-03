@@ -23,6 +23,7 @@ from app.admin.shadow import rebuild_genesis, replay_real_history
 from app.bootstrap import Application, StartupError
 from app.conversation.surface import BANDS
 from app.memory.recall_mode import RecallMode
+from app.clock import from_iso
 from app.config import AppConfig, ConfigError, load_config
 from app.interfaces.discord.gateway import DiscordGateway
 from app.observability.logging import configure_logging
@@ -101,6 +102,31 @@ def _parser() -> argparse.ArgumentParser:
         choices=list(BANDS),
         help="pretend the relationship is at this band",
     )
+    first_boot = subparsers.add_parser(
+        "first-boot", help="the once-per-epoch Genesis (spec 34.20)"
+    )
+    first_boot.add_argument(
+        "action",
+        choices=("status", "start", "resume", "pause", "audit", "report"),
+        help=(
+            "status: what state it is in; start: begin a new life (refused if one "
+            "exists); resume: carry on this epoch's run; audit: check without "
+            "changing anything; report: the completion record"
+        ),
+    )
+    first_boot.add_argument(
+        "--birth",
+        default="",
+        metavar="ISO8601",
+        help="her birth datetime. Required for start; ignored afterwards (17)",
+    )
+    first_boot.add_argument(
+        "--present",
+        default="",
+        metavar="ISO8601",
+        help="the moment her past ends. Defaults to now",
+    )
+
     repair = subparsers.add_parser(
         "repair", help="rebuild a broken Genesis in a shadow database (23.4)"
     )
@@ -124,6 +150,16 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _line(text: str) -> str:
+    """One line of CLI output.
+
+    Spec 38 keeps ``print`` out of the application: operational output is
+    logging, and everything a command deliberately shows an operator goes to
+    stdout on purpose.
+    """
+    return f"{text}\n"
+
+
 def _build_gateway(application: Application, config: AppConfig) -> DiscordGateway | None:
     """Attach Discord only when both the USER and a token are configured."""
     if application.conversation is None:
@@ -136,6 +172,7 @@ def _build_gateway(application: Application, config: AppConfig) -> DiscordGatewa
         token=config.secrets.require_discord_token(),
         # Rebuild spec 30, Phase 5: admin is routed before conversation.
         admin=application.admin_router,
+        first_boot=application.first_boot,
         clock=application.clock,
     )
 
@@ -593,6 +630,81 @@ def _conversation_plan(
         application.db.close()
 
 
+async def _first_boot(
+    config_path: Path | None, *, action: str, birth: str, present: str,
+    root: Path | None = None,
+) -> int:
+    """The FIRST BOOT CLI (points 12-14).
+
+    Every action goes through the orchestrator. This function parses arguments
+    and prints; it makes no decision about whether YUI exists, because there is
+    exactly one thing allowed to make that decision and it is not the CLI.
+    """
+    config = load_config(config_path, root_dir=root)
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        orchestrator = application.first_boot
+        if action == "status":
+            sys.stdout.write(_line(orchestrator.progress().describe()))
+            return 0
+        if action == "report":
+            report = orchestrator.report()
+            sys.stdout.write(_line(json.dumps(report, ensure_ascii=False, indent=2) if report else "(no report yet)"))
+            return 0
+        if action == "audit":
+            outcome = await orchestrator.audit()
+            for audit in outcome.audits:
+                sys.stdout.write(_line(f"[{'ok' if audit.passed else 'FAIL'}] {audit.name} {audit.detail}"))
+            if not outcome.ok:
+                sys.stdout.write(_line(f"\nnot eligible for completion: {outcome.reason}"))
+            return 0 if outcome.ok else 1
+        if action == "pause":
+            # Point 59. Stop, keep everything, resume later. The running
+            # process notices at its next checkpoint.
+            outcome = orchestrator.pause()
+            sys.stdout.write(_line(outcome.describe()))
+            return 0 if outcome.ok else 1
+        if action == "start":
+            anchors = _anchors_from(application, birth, present)
+            if anchors is None:
+                sys.stdout.write(_line("--birth is required to start (ISO 8601)"))
+                return 2
+            outcome = await orchestrator.start(anchors)
+        else:
+            # Point 14: resume takes no run id. The epoch's own run is the only
+            # one it may continue — letting an operator name one is how a
+            # different life gets attached to the current epoch.
+            outcome = await orchestrator.resume()
+
+        sys.stdout.write(_line(outcome.describe()))
+        if outcome.preflight is not None and not outcome.preflight.passed:
+            sys.stdout.write(_line(outcome.preflight.describe()))
+        if outcome.audits:
+            for audit in outcome.audits:
+                sys.stdout.write(_line(f"[{'ok' if audit.passed else 'FAIL'}] {audit.name} {audit.detail}"))
+        sys.stdout.write("\n")
+        sys.stdout.write(_line(orchestrator.progress().describe()))
+        return 0 if outcome.ok else 1
+    finally:
+        application.db.close()
+
+
+def _anchors_from(application: Application, birth: str, present: str):
+    from app.genesis.anchors import LifeAnchors
+
+    if not birth:
+        return None
+    identity = application.identity
+    return LifeAnchors(
+        birth_datetime=from_iso(birth),
+        present_datetime=from_iso(present) if present else application.clock.now(),
+        gender_identity=getattr(identity, "gender", "") or "",
+        embodiment=getattr(identity, "embodiment", "") or "デジタルな存在。",
+        language="ja",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -620,6 +732,16 @@ def main(argv: list[str] | None = None) -> int:
             return _memory_find(args.config, args.query, args.mode, args.root)
         if args.command == "conversation-plan":
             return _conversation_plan(args.config, args.message, args.band, args.root)
+        if args.command == "first-boot":
+            return asyncio.run(
+                _first_boot(
+                    args.config,
+                    action=args.action,
+                    birth=args.birth,
+                    present=args.present,
+                    root=args.root,
+                )
+            )
         if args.command == "repair":
             return _repair(
                 args.config,

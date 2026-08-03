@@ -266,6 +266,27 @@ def _build_registry() -> dict[str, AdminCommand]:
         ),
         AdminCommand("genesis", "rebuild epoch and Genesis status", lambda s, a: s.genesis()),
         AdminCommand(
+            "firstboot",
+            "first boot status, progress and why it is blocked",
+            lambda s, a: s.first_boot(),
+        ),
+        AdminCommand(
+            "genesis",
+            "extracted experiences and whether they were replayed",
+            _listing(
+                "genesis experiences", "genesis_experiences", "recent",
+                (
+                    "occurred_at",
+                    "year_number",
+                    "importance",
+                    "action",
+                    "replay_status",
+                    "replayed_at",
+                ),
+            ),
+            subcommand="experiences",
+        ),
+        AdminCommand(
             "genesis",
             "the life record: years, ages and how they were classified",
             _listing(

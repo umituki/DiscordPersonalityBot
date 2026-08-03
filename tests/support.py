@@ -95,6 +95,41 @@ def use_offline_model(
     return client
 
 
+def mark_born(application) -> str:
+    """Give a test database a completed FIRST BOOT (rebuild spec 34.20).
+
+    A precondition, not a shortcut. From Phase 13 the application comes up in
+    management mode until FIRST BOOT completes — the autonomous runtime stays
+    down and the character plane stays shut — so any test whose subject is what
+    happens *after* she exists has to say that she does.
+
+    Tests about first boot itself must never use this: they have to reach
+    COMPLETE through the orchestrator, which is the entire point of that phase.
+    """
+    from app import ids
+
+    epoch = application.rebuild.current_epoch()
+    if epoch is None:
+        epoch_id = ids.new_id("epo")
+        application.db.execute(
+            "INSERT INTO rebuild_epochs (epoch_id, started_at, reason, genesis_status) "
+            "VALUES (?, ?, ?, 'complete')",
+            (epoch_id, application.clock.now().isoformat(), "test precondition"),
+        )
+    else:
+        epoch_id = epoch["epoch_id"]
+    state = application.first_boot_state.ensure(epoch_id)
+    if state["status"] != "COMPLETE":
+        application.first_boot_state.transition(
+            epoch_id,
+            expected=(state["status"],),
+            to="COMPLETE",
+            now=application.clock.now(),
+            completed_at=application.clock.now(),
+        )
+    return epoch_id
+
+
 class PassingReranker:
     """A Stage 2 double that judges every candidate relevant.
 
@@ -153,6 +188,7 @@ __all__ = [
     "ANSWERS",
     "OfflineModelClient",
     "PassingReranker",
+    "mark_born",
     "relevance_answer",
     "use_offline_model",
 ]

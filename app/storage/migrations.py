@@ -1980,6 +1980,69 @@ _0029_GENESIS_EXPERIENCES = Migration(
 )
 
 
+_0030_FIRST_BOOT = Migration(
+    version=30,
+    name="first_boot",
+    statements=(
+        # Rebuild spec 34.20 — Phase 13.
+        #
+        # FIRST BOOT is a state machine, not a boolean. "Has she been born yet"
+        # has at least seven answers, and the ones that matter most are the
+        # unhappy ones: a run blocked because the model went away is resumable,
+        # a run blocked because her chronology contradicts itself is not, and
+        # treating both as "not done" loses the only information an operator
+        # needs.
+        #
+        # Persistent because process memory does not survive the crash it is
+        # most needed for. A machine that dies in year nine must come back
+        # knowing it died in year nine.
+        """
+        CREATE TABLE first_boot_state (
+            epoch_id          TEXT PRIMARY KEY,
+            status            TEXT NOT NULL DEFAULT 'PENDING',
+            genesis_run_id    TEXT,
+            started_at        TEXT,
+            last_progress_at  TEXT,
+            completed_at      TEXT,
+            blocked_at        TEXT,
+            block_kind        TEXT NOT NULL DEFAULT '',
+            block_reason      TEXT NOT NULL DEFAULT '',
+            last_checkpoint   TEXT NOT NULL DEFAULT '',
+            current_stage     TEXT NOT NULL DEFAULT '',
+            current_target_id TEXT NOT NULL DEFAULT '',
+            attempt_count     INTEGER NOT NULL DEFAULT 0,
+            owner_confirmed_at TEXT,
+            anchors_fingerprint TEXT NOT NULL DEFAULT '',
+            schema_version    INTEGER NOT NULL DEFAULT 0,
+            report_json       TEXT NOT NULL DEFAULT ''
+        )
+        """,
+        # 53: one life per rebuild epoch. Two Genesis runs pointing at the same
+        # epoch would mean two pasts for one person, and the constraint is
+        # cheaper than the audit that would have to find it.
+        "CREATE UNIQUE INDEX idx_first_boot_run ON first_boot_state (genesis_run_id) "
+        "WHERE genesis_run_id IS NOT NULL",
+        # 27: a lease, so two terminals cannot both run Genesis. Single-row by
+        # construction — the id is a constant.
+        """
+        CREATE TABLE first_boot_lock (
+            lock_id     TEXT PRIMARY KEY,
+            epoch_id    TEXT NOT NULL,
+            holder      TEXT NOT NULL,
+            acquired_at TEXT NOT NULL,
+            heartbeat_at TEXT NOT NULL
+        )
+        """,
+        # 7: a life entity becomes at most one runtime NPC, and one runtime NPC
+        # comes from at most one life entity. Enforced here as well as in the
+        # code, because "promote twice" is the shape of bug that survives code
+        # review and dies on a unique index.
+        "CREATE UNIQUE INDEX idx_life_entity_npc ON life_entities (npc_id) "
+        "WHERE npc_id IS NOT NULL",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -2010,6 +2073,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0027_SEARCH_AND_PROVENANCE,
     _0028_GENESIS_V2,
     _0029_GENESIS_EXPERIENCES,
+    _0030_FIRST_BOOT,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

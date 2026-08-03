@@ -42,6 +42,7 @@ _EXPORTS: dict[str, str] = {
     "ExposureRepository": "knowledge",
     "FailureRecord": "failures",
     "FailureRepository": "failures",
+    "FirstBootRepository": "firstboot",
     "GoalRepository": "agency",
     "GroupRepository": "society",
     "HealthRepository": "health",
@@ -103,6 +104,7 @@ __all__ = [
     "ExposureRepository",
     "FailureRecord",
     "FailureRepository",
+    "FirstBootRepository",
     "GoalRepository",
     "GroupRepository",
     "HabitRepository",
@@ -192,6 +194,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.storage.repositories.health import HealthRepository
     from app.storage.repositories.memory import MemoryRepository
     from app.storage.repositories.diary import DiaryRepository, LifeDayRepository
+    from app.storage.repositories.firstboot import FirstBootRepository
     from app.storage.repositories.genesis import (
         GenerationAuditRepository,
         GenesisExperienceRepository,

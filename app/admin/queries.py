@@ -96,6 +96,8 @@ class DebugSources:
     genesis_runs: Any = None
     life_records: Any = None
     generation_audits: Any = None
+    genesis_experiences: Any = None
+    first_boot: Any = None
 
 
 class DebugQueryService:
@@ -475,6 +477,51 @@ class DebugQueryService:
                     ),
                 )
             ],
+        )
+
+    def first_boot(self) -> DebugResult:
+        """What the FIRST BOOT Authority says. Read-only, like everything here.
+
+        Point 41: this shows, it does not start. Beginning a nineteen-year
+        generation from a chat message is not a capability worth having — the
+        CLI is the only place it can be asked for, and that is a feature.
+        """
+        orchestrator = self._sources.first_boot
+        if orchestrator is None:
+            return DebugResult(
+                command="firstboot", summary="first boot is not wired yet"
+            )
+        view = orchestrator.progress()
+        rows = [
+            {
+                "status": view.status,
+                "recovery_required": view.recovery_required,
+                "run": view.genesis_run_id or "-",
+                "stage": view.stage or "-",
+                "years": f"{view.life_year}/{view.expected_years}",
+                "months": f"{view.months_done}/{view.expected_months}",
+            },
+            {
+                "extracted": view.experiences_extracted,
+                "replayed": view.experiences_replayed,
+                "memories": view.memories,
+                "critics_passed": view.critics_passed,
+                "critics_failed": view.critics_failed,
+            },
+            {
+                "last_checkpoint": view.last_checkpoint or "-",
+                "last_progress": view.last_progress_at or "-",
+                "attempts": view.attempt_count,
+                "lease": view.lease_holder or "-",
+            },
+        ]
+        if view.block_kind:
+            rows.append({"blocked": view.block_kind, "reason": view.block_reason})
+        return DebugResult.of(
+            "firstboot",
+            summary=f"{view.status}"
+            + (" (recovery required)" if view.recovery_required else ""),
+            rows=rows,
         )
 
     def genesis(self) -> DebugResult:

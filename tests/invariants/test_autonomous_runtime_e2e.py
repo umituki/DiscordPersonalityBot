@@ -21,7 +21,7 @@ from app.bootstrap import Application
 from app.conversation.service import ConversationResult
 from app.interfaces.discord.dto import InboundMessage
 from app.runtime.sources import SchedulerSource
-from tests.support import use_offline_model
+from tests.support import mark_born, use_offline_model
 
 pytestmark = pytest.mark.invariant
 
@@ -243,6 +243,8 @@ async def test_the_lifecycle_starts_and_drains_the_loop(owned_config, clock) -> 
     )
     built = Application.build(autonomous, clock=clock, configure_logs=False)
     use_offline_model(built)
+    # Phase 13: the runtime only runs for somebody who exists.
+    mark_born(built)
 
     await built.start()
     assert built.runtime.running
@@ -261,6 +263,8 @@ async def test_the_loop_starts_after_recovery_not_before(owned_config, clock) ->
     )
     built = Application.build(autonomous, clock=clock, configure_logs=False)
     use_offline_model(built)
+    # Phase 13: the runtime only runs for somebody who exists.
+    mark_born(built)
 
     original_restore = built.scheduler.restore
     original_start = built.runtime.start

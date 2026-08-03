@@ -71,12 +71,19 @@ class DiscordGateway:
         *,
         token: str,
         admin: Any = None,
+        first_boot: Any = None,
         clock: Clock | None = None,
     ) -> None:
         if not token:
             raise DiscordGatewayError("a Discord bot token is required")
         self._service = service
         self._token = token
+        #: Rebuild spec 34.20, Phase 13 points 9 and 11. The character plane is
+        #: shut until FIRST BOOT is complete, and this is where it is shut —
+        #: at the door, not in an audit afterwards. An audit detects the
+        #: accident; the gate prevents it, and a system that has only the first
+        #: has already let the USER talk to somebody who does not exist yet.
+        self._first_boot = first_boot
         #: Rebuild spec 30, Phase 5. Checked *before* the conversation service,
         #: so an admin command never becomes something that happened to her.
         self._admin = admin
@@ -114,6 +121,23 @@ class DiscordGateway:
         run, the relationship has moved and an episode is open. There is no
         cancel, only never-started.
         """
+        if not self._character_plane_open():
+            # Before FIRST BOOT the admin plane still works — an operator has
+            # to be able to ask what is going on — but nothing reaches the
+            # conversation service. Point 10: Character Plane disabled, Admin
+            # Plane available.
+            if self._admin is not None:
+                outcome = await self._admin.route(
+                    text=str(getattr(message, "content", "") or ""),
+                    author_id=str(getattr(getattr(message, "author", None), "id", "")),
+                    channel_id=str(getattr(getattr(message, "channel", None), "id", "")),
+                )
+                if outcome.handled:
+                    await self._answer_admin(message, outcome)
+            else:
+                logger.info("message ignored: first boot is not complete")
+            return ConversationResult(accepted=False)
+
         if self._admin is not None:
             outcome = await self._admin.route(
                 text=str(getattr(message, "content", "") or ""),
@@ -127,6 +151,21 @@ class DiscordGateway:
                 return ConversationResult(accepted=False)
 
         return await self._handle_conversation(message)
+
+    def _character_plane_open(self) -> bool:
+        """Whether YUI may be spoken to at all.
+
+        One question, one answer, asked of the FirstBoot Authority rather than
+        worked out here (point 1). No orchestrator wired means no gate — which
+        is only the case in tests that are not about this.
+        """
+        if self._first_boot is None:
+            return True
+        try:
+            return bool(self._first_boot.character_plane_open())
+        except Exception:  # noqa: BLE001 - a gate that errors stays shut
+            logger.exception("could not read the first boot state; staying closed")
+            return False
 
     async def _answer_admin(self, message: Any, outcome: Any) -> None:
         """Send the debug answer. No typing indicator: this is not YUI speaking."""
