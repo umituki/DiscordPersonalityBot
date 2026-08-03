@@ -1,14 +1,17 @@
-# Capability Contract (rebuild spec 4.3): group_activity
+# Capability Contract (rebuild spec 4.3, 29-31 — Phase 8)
 capability: "group_activity"
-trigger: "due group activity"
-runtime_entry: "AutonomousRuntime opportunity"
-candidate_source: "GroupEngine + LLM scenario"
-hard_gate: "DecisionEngine"
-actual_action: "activity + group event"
-success_event: "GROUP_ACTIVITY_ATTENDED"
-persistence: "activities, npc_groups, group_memberships"
-recovery: "same as activity"
-observability: "!yui groups"
-acceptance_test: "test_group_belonging_slice"
-status: "NOT_STARTED"
-note: "rebuild spec 30; USER must not be the only relatedness source"
+trigger: "GroupSource: a group she belongs to that has not met within the interval"
+runtime_entry: "AutonomousRuntime.tick → SocialCandidates.group_activity → DecisionEngine.choose → SocialActions.attend_group"
+candidate_source: "SocietyService.groups_of_yui, weighted by group warmth and by her relatedness shortfall"
+hard_gate: "a group with no other members is not an occasion; SocietyService owns the commit"
+actual_action: "SocietyService.group_activity, then WorldService.start_activity for attending it"
+success_event: "GROUP_ACTIVITY, with the participants"
+persistence: "events, activities, runtime_ticks, decisions"
+recovery: "attendance is an ordinary activity and finishes through spec 24.2's lifecycle"
+observability: "!yui groups / !yui runtime"
+acceptance_test: "tests/invariants/test_agency_social_runtime.py"
+status: "E2E_VERIFIED"
+note: >
+  §30: USER だけを唯一の relatedness source にしない. Company is valued against
+  her actual relatedness shortfall, so solitude makes it matter more — without
+  that the alternative sources exist on paper and never win.

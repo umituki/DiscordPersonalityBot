@@ -344,6 +344,12 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     "autonomous_runtime",
     "activity",
     "sleep",
+    # Phase 8: §31's "connect the existing engines to the runtime", plus the
+    # people and groups that stop the USER being her only source of company.
+    "goal_action",
+    "habit_action",
+    "npc_interaction",
+    "group_activity",
 })
 
 

@@ -55,7 +55,9 @@ from app.simulation.seed import SeedBuilder
 from app.jobs.proactive import ProactiveEngine
 from app.jobs.scheduler import Scheduler
 from app.runtime.autonomous import AutonomousRuntime
+from app.runtime.agency import AgencyActions, AgencyCandidates, GoalSource, HabitSource
 from app.runtime.life import ActivitySource, LifeActions, SleepSource
+from app.runtime.social import GroupSource, NPCSource, SocialActions, SocialCandidates
 from app.runtime.sources import Registry as RuntimeRegistry, SchedulerSource
 from app.events.store import EventStore
 from app.consolidation.events import DEEP_CONSOLIDATION_REVIEW
@@ -728,6 +730,46 @@ class Application:
         life_actions.register(
             runtime_registry,
             sources=(sleep_source, ActivitySource(world_service, clock=resolved_clock)),
+        )
+
+        # --- goals, habits, NPCs and groups (spec 29-31 — Phase 8) -----------
+        # §31: 既存 engine を Runtime に接続する. GoalEngine, HabitEngine,
+        # SocietyService and GroupEngine have existed and been unit-tested for
+        # a long time; this is the wiring that makes anything drive them.
+        agency_candidates = AgencyCandidates(
+            goal_engine, habit_engine, policy=agency_policy
+        )
+        AgencyActions(
+            goals=goal_engine,
+            habits=habit_engine,
+            world=world_service,
+            processor=processor,
+            candidates=agency_candidates,
+            clock=resolved_clock,
+        ).register(
+            runtime_registry,
+            sources=(
+                GoalSource(goal_engine, world_service, clock=resolved_clock),
+                HabitSource(
+                    habit_engine,
+                    world_service,
+                    policy=agency_policy.habits,
+                    clock=resolved_clock,
+                ),
+            ),
+        )
+        SocialActions(
+            society=society_service,
+            world=world_service,
+            processor=processor,
+            candidates=SocialCandidates(society_service, state_repo),
+            clock=resolved_clock,
+        ).register(
+            runtime_registry,
+            sources=(
+                NPCSource(society_service, world_service, clock=resolved_clock),
+                GroupSource(society_service, world_service, clock=resolved_clock),
+            ),
         )
 
         consolidation_job = ConsolidationJob(

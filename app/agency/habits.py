@@ -194,5 +194,16 @@ class HabitEngine:
     def habit(self, name: str, cue: str) -> Habit | None:
         return self._repository.find(name, cue)
 
+    def get(self, habit_id: str) -> Habit | None:
+        return self._repository.get(habit_id)
+
+    def by_cue(self, cue: str) -> list[Habit]:
+        """Habits hanging off this cue. A read — noticing is not encountering.
+
+        ``cue_encountered`` counts an encounter and writes; a source that used
+        it would strengthen every habit merely by looking at it.
+        """
+        return self._repository.by_cue(cue)
+
     def established(self) -> list[Habit]:
         return self._repository.established(self._policy.established_at)

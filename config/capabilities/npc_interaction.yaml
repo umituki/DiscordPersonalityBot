@@ -1,14 +1,17 @@
-# Capability Contract (rebuild spec 4.3): npc_interaction
+# Capability Contract (rebuild spec 4.3, 29-31 — Phase 8)
 capability: "npc_interaction"
-trigger: "social opportunity from the runtime"
-runtime_entry: "AutonomousRuntime → SocietyService"
-candidate_source: "LLM npc_scenario"
-hard_gate: "DecisionEngine; SocietyService commits the objective fact"
-actual_action: "SocietyService.record_interaction"
-success_event: "NPC_INTERACTION"
-persistence: "npc_interactions, npc_relationships"
-recovery: "uncommitted scenario candidates are discarded, never replayed as fact"
-observability: "!yui npc"
-acceptance_test: "test_npc_vertical_slice"
-status: "NOT_STARTED"
-note: "rebuild spec 29"
+trigger: "NPCSource: a Tier 1+ person, active, off the contact cooldown, while she is awake and free"
+runtime_entry: "AutonomousRuntime.tick → SocialCandidates.npc_contact → DecisionEngine.choose → SocialActions.contact_npc"
+candidate_source: "SocietyService.people(min_tier=1), weighted by their availability and warmth and by her relatedness shortfall"
+hard_gate: "§29.5 only SocietyService.interact commits; §29.1 Tier 0 is background and is never contacted"
+actual_action: "SocietyService.interact"
+success_event: "NPC_INTERACTION, actor_type=npc, origin=virtual_life"
+persistence: "npc_interactions, npcs.tier on promotion, events, runtime_ticks, decisions"
+recovery: "promotion is counted from the interaction rows, so it survives a restart and can be argued with"
+observability: "!yui npc / !yui runtime"
+acceptance_test: "tests/invariants/test_agency_social_runtime.py"
+status: "E2E_VERIFIED"
+note: >
+  §29.2/29.3: repetition promotes. Someone she keeps returning to stops being
+  background, and the tier is the record of that rather than a judgement made
+  once at creation.

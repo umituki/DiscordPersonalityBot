@@ -148,6 +148,15 @@ class GoalEngine:
                 retired += 1
         return retired
 
+    def touch(self, goal_id: str, *, now: datetime | None = None) -> Goal | None:
+        """She worked on it. Progress is a separate claim (spec 2.15)."""
+        if self._goals.get(goal_id) is None:
+            return None
+        return self._goals.mark_pursued(goal_id, now=now or self._clock.now())
+
+    def goal(self, goal_id: str) -> Goal | None:
+        return self._goals.get(goal_id)
+
     def active_goals(self, *, limit: int = 10) -> list[Goal]:
         return self._goals.active(limit=limit)
 

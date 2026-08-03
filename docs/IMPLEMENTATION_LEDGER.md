@@ -461,6 +461,57 @@ than quietly claimed here.
 
 ---
 
+## Phase 8 — Goals / Habits / NPCs / Groups
+
+| Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| AG-31.3 | Active goals and matching habit cues are always candidate sources | `app/runtime/agency.py`, `app/bootstrap.py` | `test_both_are_registered_as_sources` | `test_an_active_goal_is_offered`, `test_an_established_habit_fires` | `test_a_goal_step_starts_real_work` | `!yui runtime` | E2E_VERIFIED |
+| AG-31.1 | Python evaluates a goal step; the model does not score it | `app/runtime/agency.py` (`AgencyCandidates.goal_step`) | `test_a_goal_just_worked_on_is_left_alone` | — | `test_a_goal_step_starts_real_work` | `decisions` rows | E2E_VERIFIED |
+| AG-31.1b | Starting work never advances the goal | `app/runtime/agency.py`, `GoalRepository.mark_pursued` | `test_starting_work_does_not_advance_the_goal` | `test_finishing_the_work_is_still_the_activity_lifecycle` | `test_finishing_the_work_is_still_the_activity_lifecycle` | `goals.progress` | E2E_VERIFIED |
+| AG-31.2 | Automaticity is tracked, and only the pairing builds it | `app/agency/habits.py`, `app/runtime/agency.py` | `test_looking_for_a_cue_is_not_encountering_one` | `test_performing_a_habit_strengthens_it_through_the_engine` | `test_performing_a_habit_strengthens_it_through_the_engine` | `!yui habits` | E2E_VERIFIED |
+| SOC-29.1 | Tier 0 is background and is never contacted | `app/runtime/social.py` (`CONTACTABLE_TIER`) | `test_background_people_are_not_contacted` | `test_someone_who_recurs_can_be_contacted` | `test_contacting_someone_goes_through_the_society_service` | `!yui npc` | E2E_VERIFIED |
+| SOC-29.2 | Repetition promotes, counted from the interaction rows | `app/runtime/social.py` (`_maybe_promote`) | — | `test_a_person_is_not_contacted_twice_in_a_row` | `test_returning_to_someone_promotes_them` | `npcs.tier` | E2E_VERIFIED |
+| SOC-29.5 | Only the Society Service commits an interaction | `app/runtime/social.py`, `app/society/service.py` | — | — | `test_contacting_someone_goes_through_the_society_service` | `npc_interactions` | E2E_VERIFIED |
+| SOC-30 | The USER is not the only source of relatedness | `app/runtime/social.py` (`SocialCandidates._relatedness_need`) | `test_company_matters_more_when_she_is_lonely` | `test_a_group_meeting_is_an_opportunity` | `test_attending_a_group_produces_a_group_event` | `!yui groups` | E2E_VERIFIED |
+
+### Phase 8 gate (spec 4.7)
+
+1. **Spec IDs implemented.** §31.1, §31.2, §31.3, §29.1, §29.2, §29.5, §30.
+2. **Runtime trigger.** Four new sources — goals, habits, NPCs, groups — in the
+   Phase 6 registry. §31.3 says 必ず候補源にする, so goals and habits are
+   registered unconditionally rather than consulted when the loop thinks of it.
+3. **Events produced.** `GOAL_PURSUED`, `HABIT_PERFORMED` (new, in
+   `app/agency/events.py`), `NPC_INTERACTION`, `GROUP_ACTIVITY`.
+4. **Rows written.** `goals.last_pursued_at`, `plans`, `habits` (repetitions,
+   cue encounters, automaticity), `npc_interactions`, `npcs.tier`,
+   `activities`, `events`, `runtime_ticks`, `decisions`.
+5. **State change.** Through the processor. Neither new runtime module imports
+   `app.psychology`, `app.state` or `app.consolidation` — asserted.
+6. **Debug.** `!yui goals`, `!yui habits`, `!yui npc`, `!yui groups`,
+   `!yui runtime` — all already in the Phase 5 registry.
+7. **Restart.** Every counter is a row. Promotion is counted from the
+   interaction history rather than a tally held somewhere, so it survives a
+   restart and can be argued with.
+8. **Unit tests.** 1222 pass in total; 23 are new in
+   `test_agency_social_runtime.py`.
+9. **Integration / E2E.** `tests/invariants/test_agency_social_runtime.py`
+   drives `application.runtime` against the real engines.
+10. **Deferred.** Nothing heavy.
+
+**§31 was a wiring brief, and it is worth being literal about it.** `GoalEngine`,
+`HabitEngine`, `SocietyService` and `GroupEngine` already existed, were already
+constructed at startup, and already passed their unit tests — they are four of
+the six subsystems §0 opens by naming. Phase 8 adds no second engine; it adds
+the sources, the valuations and the handlers that reach them.
+
+**One design point worth stating.** `HabitEngine.cue_encountered` increments the
+cue counter, which makes it a writer and therefore unusable from a source. The
+source reads `by_cue`; only the handler tells the engine that a pairing
+happened. Without that split, every habit would strengthen on the strength of
+being looked at.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -471,7 +522,7 @@ statuses is exactly the failure this ledger exists to prevent.
 | 5 | Admin / debug router | STRUCTURALLY_COMPLETE |
 | 6 | Autonomous Runtime | STRUCTURALLY_COMPLETE |
 | 7 | Activity / Sleep / Scheduler | STRUCTURALLY_COMPLETE |
-| 8 | NPC / Groups / Goals / Habits | NOT_STARTED |
+| 8 | NPC / Groups / Goals / Habits | STRUCTURALLY_COMPLETE |
 | 9 | Proactive contact | NOT_STARTED |
 | 10 | Diary | NOT_STARTED |
 | 11 | Search / Knowledge | NOT_STARTED |
@@ -496,10 +547,10 @@ The contracts are the source of truth; this is a snapshot for reading.
 | sleep | E2E_VERIFIED |
 | diary | NOT_STARTED |
 | spontaneous_memory | NOT_STARTED |
-| npc_interaction | NOT_STARTED |
-| group_activity | NOT_STARTED |
-| goal_action | NOT_STARTED |
-| habit_action | NOT_STARTED |
+| npc_interaction | E2E_VERIFIED |
+| group_activity | E2E_VERIFIED |
+| goal_action | E2E_VERIFIED |
+| habit_action | E2E_VERIFIED |
 | proactive_contact | NOT_STARTED |
 | web_search | CODE_ONLY |
 | genesis | CODE_ONLY |

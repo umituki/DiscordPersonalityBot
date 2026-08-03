@@ -80,6 +80,19 @@ class GoalRepository:
         )
         return self.get(goal_id)  # type: ignore[return-value]
 
+    def mark_pursued(self, goal_id: str, *, now: datetime) -> Goal:
+        """Record that she worked on it, without claiming she got anywhere.
+
+        Separate from :meth:`update_progress` on purpose: starting is not
+        achieving (ACT-001), and a goal whose progress bar moved because she
+        began something would be a plan counted as an experience.
+        """
+        self._db.execute(
+            "UPDATE goals SET last_pursued_at = ?, updated_at = ? WHERE goal_id = ?",
+            (to_iso(now), to_iso(now), goal_id),
+        )
+        return self.get(goal_id)  # type: ignore[return-value]
+
     def set_status(self, goal_id: str, status: str, *, now: datetime) -> None:
         self._db.execute(
             "UPDATE goals SET status = ?, updated_at = ? WHERE goal_id = ?",

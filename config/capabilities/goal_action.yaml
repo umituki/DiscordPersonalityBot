@@ -1,14 +1,17 @@
-# Capability Contract (rebuild spec 4.3): goal_action
+# Capability Contract (rebuild spec 4.3, 29-31 — Phase 8)
 capability: "goal_action"
-trigger: "goal step becomes due"
-runtime_entry: "AutonomousRuntime opportunity"
-candidate_source: "GoalEngine + LLM candidates"
-hard_gate: "DecisionEngine (value alignment, feasibility, conflicts)"
-actual_action: "activity or conversation action"
-success_event: "GOAL_PROGRESSED"
-persistence: "goals, plans"
-recovery: "a fired-but-unconsumed step is idempotent on its key"
-observability: "!yui goals"
-acceptance_test: "test_goal_participates_in_decision"
-status: "NOT_STARTED"
-note: "rebuild spec 31.1"
+trigger: "GoalSource: an active goal off cooldown, while she is awake and not already busy (§31.3)"
+runtime_entry: "AutonomousRuntime.tick → AgencyCandidates.goal_step → DecisionEngine.choose → AgencyActions.pursue_goal"
+candidate_source: "GoalEngine.active_goals, valued in Python on importance, autonomy, value alignment, expected reward and remaining progress (§31.1)"
+hard_gate: "starting work never advances progress — a plan counted as an experience is what spec 2.15 and ACT-001 both forbid"
+actual_action: "GoalEngine.plan/.start_plan, then WorldService.start_activity tied to the plan"
+success_event: "GOAL_PURSUED, carrying the goal, the plan and the activity it started"
+persistence: "goals.last_pursued_at, plans, activities (plan_id), events, runtime_ticks, decisions"
+recovery: "the plan and the activity are rows; a restart finds the work still open and finishes it through the normal lifecycle"
+observability: "!yui goals / !yui activity / !yui runtime"
+acceptance_test: "tests/invariants/test_agency_social_runtime.py"
+status: "E2E_VERIFIED"
+note: >
+  §31 asked for the existing engine to be connected to the runtime, not for a
+  new one. Completion goes through spec 24.2's activity lifecycle rather than a
+  private path, so ACT-002 holds for goal work like everything else.

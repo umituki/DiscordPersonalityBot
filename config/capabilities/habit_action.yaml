@@ -1,14 +1,17 @@
-# Capability Contract (rebuild spec 4.3): habit_action
+# Capability Contract (rebuild spec 4.3, 29-31 — Phase 8)
 capability: "habit_action"
-trigger: "habit cue matched in context"
-runtime_entry: "AutonomousRuntime opportunity"
-candidate_source: "HabitEngine"
-hard_gate: "DecisionEngine"
-actual_action: "activity"
-success_event: "HABIT_PERFORMED"
-persistence: "habits"
-recovery: "same as activity"
-observability: "!yui habits"
-acceptance_test: "test_habit_cue_reaches_decision"
-status: "NOT_STARTED"
-note: "rebuild spec 31.2; automaticity, not a fixed day count"
+trigger: "HabitSource: a habit whose cue is present, off its own cooldown, with the context available"
+runtime_entry: "AutonomousRuntime.tick → AgencyCandidates.habit_cue → DecisionEngine.choose → AgencyActions.do_habit"
+candidate_source: "HabitEngine.by_cue — a read; noticing a cue is not encountering one"
+hard_gate: "§31.2 automaticity is tracked, not assumed after N days; only the cue-and-action pairing builds it, and the source cannot record a pairing"
+actual_action: "HabitEngine.observe(cue_present=True, performed=True), then WorldService.start_activity"
+success_event: "HABIT_PERFORMED, with the automaticity it reached"
+persistence: "habits (repetitions, cue_encounters, automaticity, last_performed_at), activities, events, runtime_ticks"
+recovery: "every counter is a row; nothing about a habit lives in process memory"
+observability: "!yui habits / !yui runtime"
+acceptance_test: "tests/invariants/test_agency_social_runtime.py"
+status: "E2E_VERIFIED"
+note: >
+  The source deliberately does not call cue_encountered, which writes. If
+  merely looking counted as an encounter, every habit would strengthen on the
+  strength of being looked at.
