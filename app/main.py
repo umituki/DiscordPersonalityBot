@@ -16,6 +16,7 @@ import signal
 import sys
 from pathlib import Path
 
+from app.admin.acceptance import collect_preflight, run_light, write_report
 from app.admin.rebuild import CONFIRMATION as REBUILD_CONFIRMATION
 from app.admin.rebuild import RebuildRefused
 from app.admin.repair import CONFIRMATION, RepairRefused
@@ -59,6 +60,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser(
         "capabilities", help="capability contract status (rebuild spec 4.3)"
+    )
+    acceptance = subparsers.add_parser(
+        "acceptance",
+        help="deterministic final preflight; never starts Ollama, Discord or GEN-GATE",
+    )
+    acceptance.add_argument(
+        "action",
+        choices=("preflight", "run-light", "report"),
+        help="inspect, run deterministic tests, or write the final evidence files",
     )
     subparsers.add_parser(
         "rebuild-status", help="which rebuild epoch this database is in"
@@ -308,6 +318,29 @@ def _capabilities(config_file: Path | None, root: Path | None = None) -> int:
     sys.stdout.write(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     # Nothing is complete until every capability is E2E_VERIFIED (4.2).
     return 0 if summary(contracts)["E2E_VERIFIED"] == len(contracts) else 1
+
+
+def _acceptance(
+    config_file: Path | None, action: str, root: Path | None = None
+) -> int:
+    """Final AI-side gate. Heavy and networked gates are always deferred."""
+    config = load_config(config_file, root_dir=root)
+    config.ensure_directories()
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        preflight = collect_preflight(config, application)
+    finally:
+        application.db.close()
+
+    if action == "preflight":
+        result = preflight
+    elif action == "run-light":
+        result = run_light(config.root_dir, preflight)
+    else:
+        result = write_report(config.root_dir, preflight)
+    sys.stdout.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    return 0 if result["result"] == "PASS" else 1
 
 
 def _rebuild_status(config_file: Path | None, root: Path | None = None) -> int:
@@ -840,6 +873,8 @@ def main(argv: list[str] | None = None) -> int:
             return _latency(args.config, args.limit, args.root)
         if args.command == "capabilities":
             return _capabilities(args.config, args.root)
+        if args.command == "acceptance":
+            return _acceptance(args.config, args.action, args.root)
         if args.command == "rebuild-status":
             return _rebuild_status(args.config, args.root)
         if args.command == "rebuild-reset":

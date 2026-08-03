@@ -431,6 +431,34 @@ class MemoryEngine:
                 self._practise(item.memory, moment)
         return tuple(used)
 
+    def mark_spontaneously_recalled(
+        self,
+        report: RetrievalReport,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[str, ...]:
+        """Commit associative selections as an actual spontaneous recall.
+
+        ``associate`` only makes memories available. The autonomous action,
+        after winning the normal decision, calls this method to cross the
+        practice boundary. The repository's conditional transition makes the
+        operation idempotent across action retries.
+        """
+        if report.mode is not RecallMode.ASSOCIATIVE or not report.selected:
+            return ()
+        moment = now or self._clock.now()
+        practised: list[str] = []
+        for item in report.selected:
+            if not self._repository.promote_retrieval_once(
+                group_id=report.group_id,
+                memory_id=item.memory_id,
+                state="spontaneously_recalled",
+            ):
+                continue
+            self._practise(item.memory, moment)
+            practised.append(item.memory_id)
+        return tuple(practised)
+
     def _record(
         self,
         report: RetrievalReport,

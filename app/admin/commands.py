@@ -356,6 +356,27 @@ def _build_registry() -> dict[str, AdminCommand]:
             lambda s, a: s.memory_find(" ".join(a)),
             subcommand="find",
         ),
+        AdminCommand(
+            "memory",
+            "recent spontaneous-memory cues and their committed outcomes",
+            _listing(
+                "memory spontaneous",
+                "spontaneous_memory",
+                "recent",
+                (
+                    "cue_id",
+                    "cue_type",
+                    "detail",
+                    "last_offered_at",
+                    "outcome",
+                    "reason",
+                    "retrieval_group_id",
+                    "primary_memory_id",
+                    "event_id",
+                ),
+            ),
+            subcommand="spontaneous",
+        ),
         AdminCommand("appraisal", "recent appraisal calls", lambda s, a: s.appraisal(limit=_limit(a))),
         # --- operations -------------------------------------------------
         AdminCommand("trace", "recent conversation traces", lambda s, a: s.trace(limit=_limit(a))),

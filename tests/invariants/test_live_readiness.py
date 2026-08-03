@@ -369,29 +369,41 @@ def test_the_gate_answers_the_gateways_question(application) -> None:
     assert application.live.character_plane_open() is False  # not born yet
 
 
-def test_a_born_yui_is_still_not_automatically_live(application) -> None:
+def test_a_born_yui_is_still_not_automatically_live(temp_config, clock) -> None:
     """Finishing a Genesis is not permission to talk to anyone.
 
     The most important negative test in the file: the one condition that takes
     nineteen years to satisfy is not, by itself, the answer.
     """
-    mark_born(application)
+    # Use the shipped live=False switch. The general wired fixture opts in to
+    # LIVE so the positive end of the gate can be tested separately.
+    application = Application.build(
+        _owned(temp_config, live=False), clock=clock, configure_logs=False
+    )
+    try:
+        mark_born(application)
+        report = application.live.check()
 
-    report = application.live.check()
-
-    assert _named(report, "first_boot_complete").passed
-    assert not report.ready
-    assert application.live.character_plane_open() is False
+        assert _named(report, "first_boot_complete").passed
+        assert _named(report, "live_enabled").blocks
+        assert not report.ready
+        assert application.live.character_plane_open() is False
+    finally:
+        application.db.close()
 
 
 def test_the_wired_gate_names_what_is_missing(application) -> None:
     mark_born(application)
 
-    blockers = {check.name for check in application.live.check().blockers}
+    report = application.live.check()
+    blockers = {check.name for check in report.blockers}
 
-    # Two capabilities really are unfinished, and the gate says so rather than
-    # rounding up to ready.
-    assert "capabilities_verified" in blockers
+    # Final capability closure removes the software blocker. This fixture has
+    # explicitly enabled LIVE and supplied credentials, so only advisories may
+    # remain after FIRST BOOT is complete.
+    assert _named(report, "capabilities_verified").passed
+    assert "capabilities_verified" not in blockers
+    assert report.ready
 
 
 def test_a_broken_gate_stays_shut() -> None:

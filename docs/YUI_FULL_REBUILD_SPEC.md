@@ -959,10 +959,11 @@ DIARY_READING
 candidate
 selected_for_context
 consciously_recalled
+spontaneously_recalled
 used_in_reply
 ```
 
-Memory practice は `consciously_recalled` または `used_in_reply` の場合のみ。
+Memory practice は `consciously_recalled` / `spontaneously_recalled` / `used_in_reply` の場合のみ。
 
 Debug search は practice 0。
 

@@ -7,15 +7,17 @@ higher, and higher-scoring memories were searched into every conversation. The
 production database ended with memories pinned near accessibility 1.0 that had
 never once been the answer to anything.
 
-Five states, and the transitions between them are the whole fix::
+Six states, and the transitions between them are the whole fix::
 
     candidate            it was found. Nothing else is true of it yet.
     relevance_passed     Stage 2 judged it actually about the query.
     selected             Stage 3 judged it reachable, and put it in context.
     consciously_recalled she was trying to remember, and this is what came.
+    spontaneously_recalled an associative cue actually brought it to mind.
     used_in_reply        the reply she sent actually rests on it.
 
-Only the last two practise (§2K). Being a candidate is worth zero, forever.
+Only the three actual-recall/use states practise (§2K/17.6). Being a candidate
+is worth zero, forever.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ RetrievalState = Literal[
     "relevance_passed",
     "selected",
     "consciously_recalled",
+    "spontaneously_recalled",
     "used_in_reply",
 ]
 
@@ -41,12 +44,15 @@ RETRIEVAL_STATES: tuple[RetrievalState, ...] = (
     "relevance_passed",
     "selected",
     "consciously_recalled",
+    "spontaneously_recalled",
     "used_in_reply",
 )
 
 #: States that mean the memory was actually remembered, not merely found.
 #: These and only these practise (§2K).
-PRACTISING_STATES: frozenset[str] = frozenset({"consciously_recalled", "used_in_reply"})
+PRACTISING_STATES: frozenset[str] = frozenset(
+    {"consciously_recalled", "spontaneously_recalled", "used_in_reply"}
+)
 
 #: Rebuild spec 17.3 Stage 2 (§2E). A category, not a decimal: the model is
 #: being asked a judgement it can defend, and a closed set removes the room

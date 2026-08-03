@@ -60,6 +60,8 @@ _EXPORTS: dict[str, str] = {
     "ProcessingRunRepository": "runs",
     "ProactiveDeliberationRepository": "runtime",
     "RuntimeTickRepository": "runtime",
+    "SpontaneousMemoryCue": "runtime",
+    "SpontaneousMemoryCueRepository": "runtime",
     "RebuildEpochRepository": "rebuild",
     "SelfRepository": "social",
     "SnapshotRepository": "snapshots",
@@ -131,6 +133,8 @@ __all__ = [
     "RebuildEpochRepository",
     "ProactiveDeliberationRepository",
     "RuntimeTickRepository",
+    "SpontaneousMemoryCue",
+    "SpontaneousMemoryCueRepository",
     "SelfRepository",
     "SimulationRepository",
     "SleepRepository",
@@ -210,6 +214,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.storage.repositories.runtime import (
         ProactiveDeliberationRepository,
         RuntimeTickRepository,
+        SpontaneousMemoryCue,
+        SpontaneousMemoryCueRepository,
     )
     from app.storage.repositories.simulation import SimulationRepository
     from app.storage.repositories.snapshots import SnapshotRepository

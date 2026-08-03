@@ -135,38 +135,45 @@ what the Ollama regression above is for.
 | MEM-17.5 | Retrieval is not recall; practice only on conscious recall or use | `app/memory/engine.py` (`mark_used_in_reply`), migration 0020 | `test_only_a_recalled_memory_practises`, `test_a_memory_the_reply_ignored_does_not_practise` | `test_a_candidate_lookup_is_not_a_repetition` | `test_the_whole_retrieval_path_fires_on_a_real_turn` | `memory_retrievals.state` | E2E_VERIFIED |
 | MEM-2M | Practice alone cannot pin a memory at perfect recall | `config/policies/memory.yaml` (`practice.max_accessibility`) | `test_rumination_cannot_pin_a_memory_at_the_ceiling` | `test_repeated_practice_diminishes` | `test_the_whole_retrieval_path_fires_on_a_real_turn` | `episodic_memories.accessibility` | E2E_VERIFIED |
 | MEM-2Q | A debug preview never changes memory state | `app/memory/inspector.py`, `app/main.py` | `test_the_inspector_holds_no_writer`, `test_ten_debug_searches_leave_accessibility_untouched` | `test_a_debug_preview_changes_nothing` | `test_the_inspector_sees_the_same_decision_without_changing_it` | `python -m app.main memory-find` | E2E_VERIFIED |
-| MEM-17.6 | Spontaneous recall produces a real event | `app/memory/engine.py` (`associate`) | `test_associate_recalls_from_cues` | — | — | — | CODE_ONLY (the API exists; nothing drives it until the Autonomous Runtime in Phase 6, and no `MEMORY_SPONTANEOUSLY_RECALLED` event is emitted yet) |
+| MEM-17.6 | Spontaneous recall produces a real event | `app/runtime/spontaneous_memory.py`, `app/memory/engine.py` (`mark_spontaneously_recalled`), migration 0032 | `test_spontaneous_practice_transition_is_exactly_once`, `test_irrelevant_accessible_memory_produces_no_event` | `test_unchanged_cue_is_suppressed_and_survives_restart`, `test_user_turn_defers_without_retrieval` | `test_spontaneous_recall_slice` | `!yui memory spontaneous`, `runtime_ticks`, `memory_retrievals` | E2E_VERIFIED |
 
 
 ### Phase 2 gate (spec 4.7)
 
 1. **Spec IDs implemented.** MEM-001, MEM-002, MEM-17.3, MEM-17.4, MEM-17.5,
-   MEM-2M, MEM-2Q. MEM-17.6's API exists and nothing drives it — `CODE_ONLY`,
-   deliberately.
+   MEM-17.6, MEM-2M, MEM-2Q. MEM-17.6 is driven by durable world cues through
+   the ordinary Autonomous Runtime and Decision Engine.
 2. **Runtime trigger.** A USER Discord message, through
    `ConversationService.handle_inbound`; and `python -m app.main memory-find`
    for the debug path.
-3. **Events produced.** Unchanged for this phase — retrieval writes rows, not
-   events. `MEMORY_SPONTANEOUSLY_RECALLED` arrives with the Autonomous Runtime.
+3. **Events produced.** Ordinary retrieval writes rows, not events. A selected
+   associative action emits `MEMORY_SPONTANEOUSLY_RECALLED` only after at least
+   one selected memory crosses the idempotent practice boundary.
 4. **Rows written.** `memory_retrievals` (one row per candidate, with mode,
    relevance, source, reject stage, accessibility at the time, availability and
    how it was found), and `episodic_memories` accessibility/recall_count for
    what actually practised.
-5. **State change.** Only memories the reply rests on, or that a deliberate
-   lookup recalled, gain accessibility — capped at 0.90.
+5. **State change.** Only memories the reply rests on, a deliberate lookup
+   recalled, or a selected spontaneous association actually brought to mind
+   gain accessibility — capped at 0.90. The recall event also reaches the
+   ordinary appraisal/emotion/mood/needs path.
 6. **Debug.** `python -m app.main memory-find 海 [--mode ...]` prints each
    candidate with its relevance, accessibility, whether it was selected and
    why not, and confirms `practice applied: no`.
-7. **Restart.** `test_the_retrieval_record_survives_a_restart` reopens the
-   repository and finds the state and practice flags intact.
+7. **Restart.** `test_the_retrieval_record_survives_a_restart` reopens retrieval
+   history; `test_unchanged_cue_is_suppressed_and_survives_restart` proves cue
+   cooldown/consumption cannot be reset by rebooting.
 8. **Unit tests.** 987 pass in total; 40 are new in this phase.
 9. **Integration / E2E.** `test_the_whole_retrieval_path_fires_on_a_real_turn`
    drives one inbound message through candidate generation, the LLM relevance
    call, the hard gate, availability selection, the reply prompt, delivery,
    used-memory marking, practice and the database — and asserts candidates > 0,
    judgements > 0, selected > 0, practice rows > 0, rejected-as-irrelevant > 0.
-   Plus `test_the_inspector_sees_the_same_decision_without_changing_it` and
-   `test_a_turn_that_reminds_her_of_nothing_still_replies`.
+   Plus `test_the_inspector_sees_the_same_decision_without_changing_it`,
+   `test_a_turn_that_reminds_her_of_nothing_still_replies`, and
+   `test_spontaneous_recall_slice`, which drives cue → candidate → decision →
+   associative retrieval → one practice → event → psychology and checks every
+   committed row.
 10. **Not done.** The Phase 2 real-Ollama gate — the fixed question set, and
     the 100-200 turn run checking that no single memory saturates — has not
     been run: this container has no Ollama host. Phase 1's gate is outstanding
@@ -923,7 +930,8 @@ those would credit the mode with restraint that was Python's.
    gateway wiring in `app/main.py`, `!yui live` and `yui live-check`.
 2. **Behaviour.** The Discord character plane opens only when every blocking
    condition on §54's machine-checkable list holds, and the OWNER has said so.
-3. **Tests.** 1493 pass in total; 32 in `test_live_readiness.py`.
+3. **Tests.** 1516 pass in total in the final deterministic light gate; the
+   complete `test_live_readiness.py` suite is included.
 4. **Invariants.** No combination of conditions becoming true on their own adds
    up to going live. A LIVE capability that shadow never observed blocks.
 5. **Deferred.** Going live itself — a real token, a real Discord connection, a
@@ -935,11 +943,31 @@ takes nineteen years to satisfy, and it is exactly the one that would feel like
 the finish line — so there is a test asserting that a born YUI with everything
 else unmet still finds the door shut.
 
-**The gate currently blocks, honestly.** `capabilities_verified` fails on this
-repository, because `normal_reply` is `WIRED` and `spontaneous_memory` is
-`NOT_STARTED`. That is the correct output, not a bug in the check: §54 requires
-all required IDs `E2E_VERIFIED`, and two of them are not. A gate that passed
-here would be a gate worth nothing.
+**The capability portion of the gate now passes honestly.** `normal_reply` and
+`spontaneous_memory` both have production-path fixture E2E proofs, so every
+required contract is `E2E_VERIFIED`. The complete live gate may still block on
+explicit enablement, FIRST BOOT, owner/channel/token, shadow evidence or other
+machine state; this status does not grant permission to connect to Discord.
+
+---
+
+## Final capability closure
+
+| ID | Requirement | Code | Unit / negative proof | Integration | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| TRANSPORT-NORMAL | A validated normal reply becomes a sent fact only after the production Discord transport succeeds | `app/interfaces/discord/gateway.py`, `app/conversation/service.py` (`confirm_sent`) | `test_transport_failure_never_records_a_sent_reply`, `test_hard_suppression_never_reaches_transport`, `test_intentional_silence_never_calls_transport`, `test_rejected_admission_creates_no_conversation_fact`, `test_admin_command_bypasses_character_conversation`, `test_closed_character_gate_blocks_before_conversation` | actual `Application` wiring with deterministic offline structured model and fake Discord message/channel | `test_normal_reply_production_transport_e2e` | `!yui trace`, `conversation_traces`, events and turns | E2E_VERIFIED |
+| FINAL-LIGHT | One offline command audits every capability, schema/integrity, production Runtime registration and the complete deterministic suite without contacting Ollama or Discord | `app/admin/acceptance.py`, `app/main.py` (`acceptance`) | `test_capability_audit_matches_tests_and_production_wiring`, `test_run_light_records_the_deterministic_command_and_never_a_heavy_gate` | `test_preflight_reports_machine_state_without_probing_ollama` | `python -m app.main acceptance run-light`: 1516 passed in 458.14s | `acceptance preflight`, `acceptance report`, JSON/Markdown artifacts | E2E_VERIFIED |
+
+The transport proof asserts one and only one send, `USER_MESSAGE_RECEIVED`
+before `YUI_MESSAGE_SENT`, both turn projections, the final validated text in
+the sent payload, and a trace with Discord send and outbound projection marks.
+No real Discord connection or Ollama call is used.
+
+The final light gate passed with schema 32, SQLite integrity `ok`, 20/20
+capability contracts verified, 10 production opportunity sources, 11 claimed
+kinds, 11 executable actions and zero recently unclaimed Runtime kinds. Real
+Ollama loops, the real Discord send, long Shadow/human review and GEN-GATE stay
+explicitly deferred and are not implied by this result.
 
 ---
 
@@ -971,13 +999,13 @@ The contracts are the source of truth; this is a snapshot for reading.
 
 | Capability | Status |
 |---|---|
-| normal_reply | WIRED |
+| normal_reply | E2E_VERIFIED |
 | natural_conversation_realization | E2E_VERIFIED |
 | intentional_silence | E2E_VERIFIED |
 | activity | E2E_VERIFIED |
 | sleep | E2E_VERIFIED |
 | diary | E2E_VERIFIED |
-| spontaneous_memory | NOT_STARTED |
+| spontaneous_memory | E2E_VERIFIED |
 | npc_interaction | E2E_VERIFIED |
 | group_activity | E2E_VERIFIED |
 | goal_action | E2E_VERIFIED |

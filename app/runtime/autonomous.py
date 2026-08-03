@@ -152,6 +152,10 @@ class AutonomousRuntime:
     def last_tick(self) -> RuntimeTick | None:
         return self._last_tick
 
+    def wiring_audit(self) -> dict[str, tuple[str, ...]]:
+        """Read-only production registry evidence for acceptance tooling."""
+        return self._registry.audit()
+
     # --- the loop ------------------------------------------------------------
     async def _run(self) -> None:
         reason: WakeReason = "startup"

@@ -72,6 +72,11 @@ from app.runtime.proactive import (
 from app.live.readiness import LiveReadiness
 from app.runtime.shadow import ShadowController
 from app.runtime.social import GroupSource, NPCSource, SocialActions, SocialCandidates
+from app.runtime.spontaneous_memory import (
+    SpontaneousMemoryActions,
+    SpontaneousMemoryCandidates,
+    SpontaneousMemorySource,
+)
 from app.runtime.sources import Registry as RuntimeRegistry, SchedulerSource
 from app.events.store import EventStore
 from app.consolidation.events import DEEP_CONSOLIDATION_REVIEW
@@ -188,6 +193,7 @@ from app.storage.repositories import (
     ProactiveDeliberationRepository,
     ProcessingRunRepository,
     RuntimeTickRepository,
+    SpontaneousMemoryCueRepository,
     SearchCallRepository,
     ShadowDecisionRepository,
     SelfRepository,
@@ -257,6 +263,7 @@ class Application:
     proactive: ProactiveEngine
     runtime: AutonomousRuntime
     runtime_ticks: RuntimeTickRepository
+    spontaneous_memory_cues: SpontaneousMemoryCueRepository
     diary: DiaryService
     investigation: InvestigationService
     genesis_runner: GenesisRunner
@@ -646,6 +653,7 @@ class Application:
         # habits, NPCs, knowledge and proactive contact. None of them edits the
         # loop.
         runtime_tick_repo = RuntimeTickRepository(db)
+        spontaneous_memory_cues = SpontaneousMemoryCueRepository(db)
         runtime_registry = RuntimeRegistry()
         runtime_registry.add_source(SchedulerSource(scheduler))
         autonomous_runtime = AutonomousRuntime(
@@ -798,6 +806,32 @@ class Application:
         life_actions.register(
             runtime_registry,
             sources=(sleep_source, ActivitySource(world_service, clock=resolved_clock)),
+        )
+
+        # --- associative memory, driven by durable world cues (spec 17.6) ---
+        # Collecting a cue may only claim its offer window. Retrieval and
+        # practice stay behind the Decision Engine and the selected handler.
+        spontaneous_source = SpontaneousMemorySource(
+            cues=spontaneous_memory_cues,
+            activities=activity_repo,
+            interactions=npc_interaction_repo,
+            world=world_service,
+            clock=resolved_clock,
+        )
+        spontaneous_candidates = SpontaneousMemoryCandidates(
+            cues=spontaneous_memory_cues,
+            world=world_service,
+            state=state_repo,
+        )
+        SpontaneousMemoryActions(
+            cues=spontaneous_memory_cues,
+            memory=memory_engine,
+            processor=processor,
+            clock=resolved_clock,
+        ).register(
+            runtime_registry,
+            source=spontaneous_source,
+            candidates=spontaneous_candidates,
         )
 
         # --- goals, habits, NPCs and groups (spec 29-31 — Phase 8) -----------
@@ -1189,6 +1223,7 @@ class Application:
                     common_ground=common_ground_repo,
                     admin_actions=admin_action_repo,
                     runtime_ticks=runtime_tick_repo,
+                    spontaneous_memory=spontaneous_memory_cues,
                     proactive_deliberations=proactive_deliberations,
                     shadow=shadow,
                     shadow_decisions=shadow_decisions,
@@ -1310,6 +1345,7 @@ class Application:
             proactive=proactive_engine,
             runtime=autonomous_runtime,
             runtime_ticks=runtime_tick_repo,
+            spontaneous_memory_cues=spontaneous_memory_cues,
             diary=diary_service,
             investigation=investigation,
             genesis_runner=genesis_runner,

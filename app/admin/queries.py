@@ -79,6 +79,7 @@ class DebugSources:
     common_ground: Any = None
     admin_actions: Any = None
     runtime_ticks: Any = None
+    spontaneous_memory: Any = None
     proactive_deliberations: Any = None
     #: Phase 9. Both are read-only collaborators: the engine only
     #: assesses, and the source only looks for a trigger.

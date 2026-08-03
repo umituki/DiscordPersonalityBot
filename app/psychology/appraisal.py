@@ -22,6 +22,7 @@ from app.events.model import Event
 from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator
 from app.llm.types import LLMMessage
+from app.memory.events import MEMORY_SPONTANEOUSLY_RECALLED
 from app.orchestrator.run_view import Interpretation
 from app.psychology.heuristic import appraise_event
 from app.psychology.models import Appraisal, AppraisalCandidate
@@ -48,6 +49,11 @@ APPRAISABLE_CATEGORIES = frozenset({"social", "world", "action", "knowledge"})
 #: category, provided they carry the simulated-past origin.
 APPRAISABLE_SIMULATED_TYPES = frozenset({"SIMULATED_EXPERIENCE"})
 SIMULATED_ORIGIN = "simulated_past"
+
+# Internal events are normally bookkeeping rather than situations to feel.
+# An actual memory coming to mind is the narrow exception: it happened to her
+# internally and must reach the same appraisal -> emotion/mood/needs path.
+APPRAISABLE_INTERNAL_TYPES = frozenset({MEMORY_SPONTANEOUSLY_RECALLED})
 
 #: Patch spec 5.3: YUI's own outbound message is not something that happened
 #: *to* her, and re-reading it through the appraisal prompt spends a model call
@@ -111,6 +117,8 @@ class AppraisalEngine:
     def is_appraisable(event: Event) -> bool:
         """Whether this event is read at all (patch spec 12.1)."""
         if event.category in APPRAISABLE_CATEGORIES:
+            return True
+        if event.event_type in APPRAISABLE_INTERNAL_TYPES:
             return True
         return (
             event.event_type in APPRAISABLE_SIMULATED_TYPES

@@ -2086,6 +2086,42 @@ _0031_SHADOW_DECISIONS = Migration(
 )
 
 
+_0032_SPONTANEOUS_MEMORY_CUES = Migration(
+    version=32,
+    name="spontaneous_memory_cues",
+    statements=(
+        # Rebuild spec 17.6. A cue is a durable opportunity, not a memory and
+        # not an event. Keeping it here makes restart/cooldown behaviour an
+        # objective fact instead of an in-process timer.
+        """
+        CREATE TABLE spontaneous_memory_cues (
+            cue_id              TEXT PRIMARY KEY,
+            cue_type            TEXT NOT NULL,
+            source_kind         TEXT NOT NULL,
+            source_id           TEXT NOT NULL,
+            cue_hash            TEXT NOT NULL UNIQUE,
+            detail              TEXT NOT NULL DEFAULT '',
+            cues_json           TEXT NOT NULL DEFAULT '[]',
+            salience            REAL NOT NULL DEFAULT 0.3,
+            first_seen_at       TEXT NOT NULL,
+            last_offered_at     TEXT,
+            cooldown_until      TEXT,
+            consumed_at         TEXT,
+            outcome             TEXT NOT NULL DEFAULT 'pending',
+            reason              TEXT NOT NULL DEFAULT '',
+            retrieval_group_id  TEXT,
+            primary_memory_id   TEXT,
+            event_id            TEXT
+        )
+        """,
+        "CREATE INDEX idx_spontaneous_cues_ready ON spontaneous_memory_cues "
+        "(consumed_at, cooldown_until, first_seen_at)",
+        "CREATE INDEX idx_spontaneous_cues_recent ON spontaneous_memory_cues "
+        "(first_seen_at DESC)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -2118,6 +2154,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0029_GENESIS_EXPERIENCES,
     _0030_FIRST_BOOT,
     _0031_SHADOW_DECISIONS,
+    _0032_SPONTANEOUS_MEMORY_CUES,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

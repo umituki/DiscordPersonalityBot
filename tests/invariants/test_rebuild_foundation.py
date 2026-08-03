@@ -325,6 +325,9 @@ def test_an_unknown_status_is_an_error(tmp_path) -> None:
 #: phase that verified them lands. Rebuild spec 4.4: instantiation is not
 #: completion, so this list may only grow deliberately.
 VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
+    # Final transport closure: the production DiscordGateway sends exactly
+    # once and only then records the YUI event and turn projection.
+    "normal_reply",
     # Phase 3: a real inbound message drives interpretation, planning,
     # reference lookup, realization, the hard gates and delivery, and
     # tests/invariants/test_conversation_realization_e2e.py asserts the rows.
@@ -344,6 +347,9 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     "autonomous_runtime",
     "activity",
     "sleep",
+    # A durable world cue reaches associative retrieval only after the
+    # Decision Engine selects it, then practises and emits exactly once.
+    "spontaneous_memory",
     # Phase 8: §31's "connect the existing engines to the runtime", plus the
     # people and groups that stop the USER being her only source of company.
     "goal_action",
@@ -441,5 +447,6 @@ def test_the_cli_reports_capability_status(temp_config, capsys) -> None:
 
     report = json.loads(capsys.readouterr().out)
     assert set(report["capabilities"]) == set(REQUIRED_CAPABILITIES)
-    # Non-zero while anything is unfinished, so it is usable as a gate.
-    assert code == 1
+    # All required contracts now have transport/fixture E2E evidence.
+    assert code == 0
+    assert report["summary"]["E2E_VERIFIED"] == len(REQUIRED_CAPABILITIES)
