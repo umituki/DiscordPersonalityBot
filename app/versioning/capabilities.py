@@ -54,6 +54,10 @@ REQUIRED_CAPABILITIES: tuple[str, ...] = (
     "proactive_contact",
     "web_search",
     "genesis",
+    # Rebuild spec 30, Phase 5. Two contracts, not one: reading must change
+    # nothing, and `backup` writes a file.
+    "admin_debug_readonly",
+    "admin_backup",
 )
 
 #: Every field 4.3's example carries. All of them are required: a contract with

@@ -134,6 +134,8 @@ def _build_gateway(application: Application, config: AppConfig) -> DiscordGatewa
     return DiscordGateway(
         application.conversation,
         token=config.secrets.require_discord_token(),
+        # Rebuild spec 30, Phase 5: admin is routed before conversation.
+        admin=application.admin_router,
         clock=application.clock,
     )
 

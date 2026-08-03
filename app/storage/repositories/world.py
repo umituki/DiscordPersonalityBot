@@ -287,6 +287,14 @@ class ProactiveRepository:
         value = self._db.scalar("SELECT MAX(sent_at) FROM proactive_contacts")
         return None if value is None else from_iso(value)
 
+    def recent(self, *, limit: int = 20) -> list[sqlite3.Row]:
+        """The contact history, newest first. A read, for inspection only."""
+        return self._db.query_all(
+            "SELECT contact_id, opportunity, sent_at, answered_at, event_id "
+            "FROM proactive_contacts ORDER BY sent_at DESC LIMIT ?",
+            (limit,),
+        )
+
     def count(self) -> int:
         return int(self._db.scalar("SELECT COUNT(*) FROM proactive_contacts") or 0)
 

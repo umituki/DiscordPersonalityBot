@@ -338,3 +338,114 @@ async def test_a_failure_before_the_decision_shows_no_typing_at_all(
         await gateway.handle_message(message)
 
     assert channel.events == []
+
+
+# --- the admin plane (rebuild spec 30, Phase 5) ------------------------------
+
+
+class _RecordingService:
+    """A conversation service that must never be reached by an admin command."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def intends_to_reply(self, inbound) -> bool:
+        self.seen.append(inbound.text)
+        return True
+
+    def start_trace(self, inbound):  # pragma: no cover - never reached
+        raise AssertionError("an admin command reached the conversation service")
+
+    async def handle_inbound(self, inbound, **kwargs):  # pragma: no cover
+        raise AssertionError("an admin command reached the conversation service")
+
+
+class _AnsweringAdmin:
+    def __init__(self, outcome: Any) -> None:
+        self._outcome = outcome
+        self.calls: list[str] = []
+
+    async def route(self, *, text: str, author_id: str, channel_id: str) -> Any:
+        self.calls.append(text)
+        return self._outcome
+
+
+def _outcome(**kwargs: Any) -> Any:
+    from app.admin.router import AdminOutcome
+
+    return AdminOutcome(**kwargs)
+
+
+async def test_an_admin_command_is_routed_before_the_conversation_service(clock) -> None:
+    """Spec 30. "Notice afterwards and undo" does not exist: by then the USER
+    event is written, the appraisal has run and the episode is open."""
+    from app.admin.results import DebugResult
+
+    service = _RecordingService()
+    admin = _AnsweringAdmin(
+        _outcome(handled=True, result=DebugResult.of("status", summary="ok", rows=[{"a": 1}]))
+    )
+    gateway = DiscordGateway(service, token="fake-token", admin=admin, clock=clock)
+    channel = TypingChannel()
+    message = FakeMessage(
+        channel=channel, author=FakeAuthor(), content="!yui status", created_at=clock.now()
+    )
+
+    result = await gateway.handle_message(message)
+
+    assert admin.calls == ["!yui status"]
+    assert service.seen == []  # the conversation service never saw it
+    assert result.accepted is False
+    assert channel.sent  # the operator got an answer
+
+
+async def test_admin_output_shows_no_typing_indicator(clock) -> None:
+    """Typing means YUI is composing. Reading the database is not that."""
+    from app.admin.results import DebugResult
+
+    admin = _AnsweringAdmin(
+        _outcome(handled=True, result=DebugResult.of("status", summary="ok", rows=[{"a": 1}]))
+    )
+    gateway = DiscordGateway(
+        _RecordingService(), token="fake-token", admin=admin, clock=clock
+    )
+    channel = TypingChannel()
+    message = FakeMessage(
+        channel=channel, author=FakeAuthor(), content="!yui status", created_at=clock.now()
+    )
+
+    await gateway.handle_message(message)
+
+    assert "start" not in channel.events
+    assert channel.events == ["send"]
+
+
+async def test_a_refused_admin_command_says_nothing_at_all(clock) -> None:
+    """A non-owner must not get a reply, in character or out of it."""
+    service = _RecordingService()
+    admin = _AnsweringAdmin(_outcome(handled=True, refusal="not_the_owner"))
+    gateway = DiscordGateway(service, token="fake-token", admin=admin, clock=clock)
+    channel = TypingChannel()
+    message = FakeMessage(
+        channel=channel, author=FakeAuthor(), content="!yui status", created_at=clock.now()
+    )
+
+    await gateway.handle_message(message)
+
+    assert channel.events == []
+    assert service.seen == []
+
+
+async def test_an_ordinary_message_still_reaches_the_conversation(service_factory, clock) -> None:
+    """The admin plane is a boundary, not a filter on everything."""
+    admin = _AnsweringAdmin(_outcome(handled=False))
+    service = service_factory(['{"text": "やっほー。"}'])
+    gateway = DiscordGateway(service, token="fake-token", admin=admin, clock=clock)
+    channel = TypingChannel()
+    message = FakeMessage(
+        channel=channel, author=FakeAuthor(), content="やっほー", created_at=clock.now()
+    )
+
+    await gateway.handle_message(message)
+
+    assert channel.sent

@@ -297,6 +297,54 @@ not the responsibility.
 
 ---
 
+## Phase 5 — Admin / Debug
+
+| Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| ADM-30.1 | `!yui` is caught above conversation, never undone afterwards | `app/admin/router.py`, `app/interfaces/discord/gateway.py` (`handle_message`) | `test_an_admin_command_is_routed_before_the_conversation_service` | `test_ordinary_messages_are_not_handled` | `test_an_admin_command_never_reaches_the_conversation_service` | `!yui help` | E2E_VERIFIED |
+| ADM-30.2 | The query service is structurally read-only | `app/admin/queries.py` | `test_the_query_service_holds_no_engine_that_could_write` | `test_memory_find_practises_nothing` | `test_every_read_only_command_leaves_her_life_identical` | `!yui memory find` | E2E_VERIFIED |
+| ADM-30.3 | `backup` is `SAFE_MUTATING`, not read-only | `app/admin/commands.py`, `app/admin/router.py` (`_take_backup`) | `test_backup_is_not_counted_as_read_only` | — | `test_backup_writes_a_file_and_still_no_row` | `!yui backup` | E2E_VERIFIED |
+| ADM-30.4 | Admin input never enters her history | `app/admin/router.py`, gateway routing order | `test_a_refused_admin_command_says_nothing_at_all` | `test_an_admin_command_never_reaches_the_conversation_service` | `test_every_read_only_command_leaves_her_life_identical` (26-table fingerprint) | `events` (unchanged) | E2E_VERIFIED |
+| ADM-30.5 | No typing indicator for admin output | `app/interfaces/discord/gateway.py` (`_answer_admin`) | `test_admin_output_shows_no_typing_indicator` | — | — | — | E2E_VERIFIED |
+| ADM-30.6 | Ownership is checked in exactly one place, and a refusal does not fall through | `app/admin/router.py` (`route`) | `test_ownership_is_checked_in_exactly_one_place` | `test_a_disallowed_channel_is_refused` | `test_a_non_owner_is_refused_and_does_not_fall_through` | logs | E2E_VERIFIED |
+| ADM-30.7 | Secrets and prompts are redacted at construction | `app/admin/results.py` | `test_a_secret_or_prompt_field_is_never_printed`, `test_a_credential_shaped_value_is_redacted_whatever_it_is_called` | `test_redaction_reaches_into_nested_payloads` | `test_the_llm_command_shows_health_not_content` | `!yui llm` | E2E_VERIFIED |
+| ADM-30.8 | Discord limits are respected by pagination, never mid-row truncation | `app/admin/formatter.py` | `test_a_long_result_is_paginated_rather_than_truncated`, `test_a_short_result_is_one_page` | — | — | — | E2E_VERIFIED |
+| ADM-30.9 | A debug failure stays an admin failure | `app/admin/router.py` (`route` except branch) | `test_an_unknown_command_is_answered_not_ignored` | `test_a_broken_query_does_not_become_a_psychological_failure` | — | `failures` (unchanged) | E2E_VERIFIED |
+| ADM-30.10 | Every command names a real source and method | `app/admin/queries.py` (`listing`), `app/admin/commands.py` | `test_a_typo_in_a_source_name_is_loud` | `test_the_registry_covers_the_documented_commands` | `test_only_the_unlanded_subsystems_report_not_wired` | `!yui help` | E2E_VERIFIED |
+
+### Phase 5 gate (spec 4.7)
+
+1. **Spec IDs implemented.** ADM-30.1 … ADM-30.10.
+2. **Runtime trigger.** A Discord message from the owner beginning with `!yui`,
+   in an allowed channel. `DiscordGateway.handle_message` calls
+   `AdminRouter.route` **before** anything conversational.
+3. **Events produced.** None, deliberately. A debug question is not something
+   that happened to her, so there is no event to produce.
+4. **Rows written.** None in any of her tables. `test_every_read_only_command_
+   leaves_her_life_identical` hashes 26 life tables before and after the whole
+   read-only registry and requires byte equality.
+5. **State change.** None.
+6. **Debug.** The phase *is* the debug path: `!yui help` lists the registry,
+   and every listing command names its own source, method and printed fields.
+7. **Restart.** Not applicable — nothing is persisted. The read-only property
+   is checked against a database seeded by real processor runs, not an empty one.
+8. **Unit tests.** 1132 pass in total; 34 are new in this phase.
+9. **Integration / E2E.** `tests/invariants/test_admin_readonly_e2e.py` drives
+   `application.admin_router` — the object the running system uses — rather
+   than a parallel one assembled in the test.
+10. **Deferred.** Nothing. This phase has no heavy real-model component.
+
+Two storage-layer additions were needed rather than worked around downstream
+(§22): `ProcessingRunRepository.recent` and `ProactiveRepository.recent` did not
+exist, and the commands that needed them belong to the repository boundary, not
+to a hand-rolled query in `app/admin/`.
+
+`diary` is the one command that answers "not wired yet in this phase". That is
+pinned by a test, so Phase 10 has to shrink the list deliberately; a typo in a
+source name fails loudly instead of hiding behind the same message.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -304,7 +352,7 @@ statuses is exactly the failure this ledger exists to prevent.
 
 | Phase | Subject | Status |
 |---|---|---|
-| 5 | Admin / debug router | NOT_STARTED |
+| 5 | Admin / debug router | STRUCTURALLY_COMPLETE |
 | 6 | Autonomous Runtime | NOT_STARTED |
 | 7 | Activity / Sleep / Scheduler | NOT_STARTED |
 | 8 | NPC / Groups / Goals / Habits | NOT_STARTED |
@@ -339,6 +387,8 @@ The contracts are the source of truth; this is a snapshot for reading.
 | proactive_contact | NOT_STARTED |
 | web_search | CODE_ONLY |
 | genesis | CODE_ONLY |
+| admin_debug_readonly | E2E_VERIFIED |
+| admin_backup | E2E_VERIFIED |
 
 `natural_conversation_realization` is the first `E2E_VERIFIED` capability: a
 real inbound message drives interpretation, planning, reference lookup,

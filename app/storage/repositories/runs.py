@@ -90,6 +90,15 @@ class ProcessingRunRepository:
     def get(self, run_id: str) -> sqlite3.Row | None:
         return self._db.query_one("SELECT * FROM processing_runs WHERE run_id = ?", (run_id,))
 
+    def recent(self, *, limit: int = 20) -> list[sqlite3.Row]:
+        """The last runs, newest first. A read, for inspection only."""
+        return self._db.query_all(
+            "SELECT run_id, root_event_id, status, started_at, finished_at, "
+            "proposals_received, proposals_accepted, proposals_rejected "
+            "FROM processing_runs ORDER BY started_at DESC LIMIT ?",
+            (limit,),
+        )
+
     def unfinished(self) -> list[sqlite3.Row]:
         """Runs left ``running`` by a crash; recovery must resolve them."""
         return self._db.query_all(

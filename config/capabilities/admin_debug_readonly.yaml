@@ -1,0 +1,19 @@
+# Capability Contract (rebuild spec 4.3, 30 — Phase 5)
+capability: "admin_debug_readonly"
+trigger: "a message from the owner beginning with `!yui`, in an allowed channel"
+runtime_entry: "DiscordGateway.handle_message → AdminRouter.route (before ConversationService)"
+candidate_source: "app.admin.commands.REGISTRY — a named query method per command, no handlers"
+hard_gate: "owner check and channel check in AdminRouter.route only; a refusal is still `handled`, so it never falls through to conversation"
+actual_action: "DebugQueryService reads repositories and MemoryInspector; a typed DebugResult is redacted at construction and rendered by DiscordAdminFormatter"
+success_event: "none — a debug question is not something that happened to her, so no event is written"
+persistence: "none in YUI's tables; the read-only E2E fingerprints 26 life tables before and after and requires byte equality"
+recovery: "an admin error stays an admin error — no FailureRecord, no psychological failure, no character reply"
+observability: "!yui help lists the registry; every command names its own source, method and fields"
+acceptance_test: "tests/invariants/test_admin_readonly_e2e.py"
+status: "E2E_VERIFIED"
+note: >
+  Deliberately produces no event and no row. The completion condition for this
+  capability is not "the commands reply" but "running all of them does not
+  advance her life by one row". `backup` is NOT part of this capability — see
+  admin_backup.yaml — because it writes a file, and mixing it in here would make
+  the read-only guarantee a half-truth.

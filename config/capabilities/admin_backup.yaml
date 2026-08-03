@@ -1,0 +1,17 @@
+# Capability Contract (rebuild spec 4.3, 30 — Phase 5)
+capability: "admin_backup"
+trigger: "`!yui backup` from the owner"
+runtime_entry: "AdminRouter._take_backup (wired to BackupService, not to DebugQueryService)"
+candidate_source: "the live SQLite database"
+hard_gate: "owner check in AdminRouter.route; the backup is only reported as taken when BackupService returns a verified record"
+actual_action: "a verified backup file is written outside the database"
+success_event: "none in YUI's timeline — an operator taking a backup is not an experience of hers"
+persistence: "a backup file plus whatever BackupService records; no row in any life table"
+recovery: "a failed backup returns an admin error and leaves no half-written claim of success"
+observability: "the command reports path, integrity and size"
+acceptance_test: "tests/invariants/test_admin_readonly_e2e.py::test_backup_writes_a_file_and_still_no_row"
+status: "E2E_VERIFIED"
+note: >
+  SAFE_MUTATING, kept as its own capability on purpose. It changes nothing in
+  the database and still writes to the filesystem, so it must not be counted
+  under admin_debug_readonly.

@@ -14,6 +14,7 @@ import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
+from app.admin.formatter import DiscordAdminFormatter
 from app.clock import Clock, SystemClock, ensure_aware
 from app.conversation.service import ConversationResult, ConversationService
 from app.interfaces.discord.dto import InboundMessage
@@ -69,12 +70,17 @@ class DiscordGateway:
         service: ConversationService,
         *,
         token: str,
+        admin: Any = None,
         clock: Clock | None = None,
     ) -> None:
         if not token:
             raise DiscordGatewayError("a Discord bot token is required")
         self._service = service
         self._token = token
+        #: Rebuild spec 30, Phase 5. Checked *before* the conversation service,
+        #: so an admin command never becomes something that happened to her.
+        self._admin = admin
+        self._admin_formatter = DiscordAdminFormatter()
         self._clock = clock or SystemClock()
         self._client: Any = None
 
@@ -100,6 +106,43 @@ class DiscordGateway:
         return client
 
     async def handle_message(self, message: Any) -> ConversationResult:
+        """Route admin first, then converse — never the other way round.
+
+        Rebuild spec 30, Phase 5. An admin command is caught before the
+        conversation service sees it, because "notice afterwards and undo" is
+        not available: by then the USER message event exists, the appraisal has
+        run, the relationship has moved and an episode is open. There is no
+        cancel, only never-started.
+        """
+        if self._admin is not None:
+            outcome = await self._admin.route(
+                text=str(getattr(message, "content", "") or ""),
+                author_id=str(getattr(getattr(message, "author", None), "id", "")),
+                channel_id=str(getattr(getattr(message, "channel", None), "id", "")),
+            )
+            if outcome.handled:
+                await self._answer_admin(message, outcome)
+                # Not a conversation result: nothing was said in character, and
+                # nothing about her life moved.
+                return ConversationResult(accepted=False)
+
+        return await self._handle_conversation(message)
+
+    async def _answer_admin(self, message: Any, outcome: Any) -> None:
+        """Send the debug answer. No typing indicator: this is not YUI speaking."""
+        if outcome.refused:
+            logger.info("admin command refused reason=%s", outcome.refusal)
+            return
+        if outcome.result is None:
+            return
+        for page in self._admin_formatter.format(outcome.result):
+            try:
+                await self._send(message, page)
+            except Exception:  # noqa: BLE001 - a debug send is never load-bearing
+                logger.exception("failed to send admin output")
+                return
+
+    async def _handle_conversation(self, message: Any) -> ConversationResult:
         """Process one gateway message and send the reply, if any.
 
         The typing indicator wraps everything the USER is waiting for and

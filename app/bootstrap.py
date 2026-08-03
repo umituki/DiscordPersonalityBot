@@ -22,6 +22,8 @@ import logging
 from dataclasses import dataclass
 
 from app.admin.control_plane import AdminControlPlane
+from app.admin.queries import DebugQueryService, DebugSources
+from app.admin.router import AdminRouter
 from app.admin.legacy import LegacyHealthScanner
 from app.admin.rebuild import RebuildService
 from app.admin.repair import RepairService
@@ -129,6 +131,7 @@ from app.storage.repositories import (
     ConversationRepository,
     ConversationTraceRepository,
     CommonGroundRepository,
+    RebuildEpochRepository,
     DriftRepository,
     MemoryAdminRepository,
     MemoryRepository,
@@ -197,6 +200,7 @@ class Application:
     memories: MemoryRepository
     memory: MemoryEngine
     memory_inspector: MemoryInspector
+    admin_router: AdminRouter
     memory_policy: MemoryPolicy
     psychology_policy: PsychologyPolicy
     relationship_policy: RelationshipPolicy
@@ -352,8 +356,9 @@ class Application:
         health_repo = HealthRepository(db)
         # Patch spec 19.2: one row per turn, so the USER's wait can be read
         # stage by stage instead of guessed at.
+        trace_repo = ConversationTraceRepository(db)
         conversation_tracer = ConversationTracer(
-            ConversationTraceRepository(db), clock=resolved_clock
+            trace_repo, clock=resolved_clock
         )
 
         # --- crash recovery (spec 32) ---------------------------------------
@@ -741,6 +746,12 @@ class Application:
         )
 
         # --- operations (spec 30, 32, 33) -------------------------------------
+        # Rebuild spec 30, Phase 5. The debug plane reads repositories and the
+        # memory inspector, and holds no engine that could commit, encode,
+        # practise or send. It is deliberately built from read APIs only.
+        memory_inspector = MemoryInspector(memory_engine.retriever, clock=resolved_clock)
+
+        admin_action_repo = AdminActionRepository(db)
         backup_service = BackupService(
             db, backups_dir=resolved_config.backups_dir, clock=resolved_clock
         )
@@ -754,7 +765,7 @@ class Application:
                 resolved_config.database_path,
             )
         admin_control_plane = AdminControlPlane(
-            actions=AdminActionRepository(db),
+            actions=admin_action_repo,
             memories=MemoryAdminRepository(db),
             memory=memory_engine,
             backups=backup_service,
@@ -785,10 +796,61 @@ class Application:
 
         # The conversation path exists only when the single USER is identified
         # (spec 1.2). Without it, YUI has no one to talk to and stays offline.
-        conversation: ConversationService | None = None
+        # Rebuild spec 30, Phase 5. Built before the conversation service so
+        # the gateway can route admin first; ownership is checked here and
+        # nowhere else.
         owner_user_id = resolved_config.secrets.discord_owner_user_id
+        channel_id = resolved_config.secrets.discord_channel_id
+        admin_router = AdminRouter(
+            DebugQueryService(
+                DebugSources(
+                    state=state_repo,
+                    events=event_store,
+                    conversations=conversation_repo,
+                    traces=trace_repo,
+                    memories=memory_repo,
+                    memory_inspector=memory_inspector,
+                    failures=failures,
+                    runs=runs,
+                    llm_calls=llm_call_repo,
+                    beliefs=belief_repo,
+                    self_model=self_repo,
+                    personality=trait_repo,
+                    values=value_repo,
+                    narrative=narrative_repo,
+                    adaptations=adaptation_repo,
+                    consolidations=consolidation_repo,
+                    drift=drift_repo,
+                    activities=activity_repo,
+                    sleep=sleep_repo,
+                    jobs=job_repo,
+                    proactive=proactive_repo,
+                    goals=goal_repo,
+                    habits=habit_repo,
+                    plans=plan_repo,
+                    decisions=decision_repo,
+                    npcs=npc_repo,
+                    npc_relationships=npc_relationship_repo,
+                    npc_interactions=npc_interaction_repo,
+                    groups=group_repo,
+                    knowledge=knowledge_repo,
+                    acquisitions=acquisition_repo,
+                    health=health_repo,
+                    manifests=manifest_repo,
+                    rebuild=RebuildEpochRepository(db),
+                    common_ground=common_ground_repo,
+                    admin_actions=admin_action_repo,
+                ),
+                clock=resolved_clock,
+            ),
+            owner_user_id=owner_user_id,
+            allowed_channel_ids=frozenset({channel_id} if channel_id else set()),
+            backup=backup_service,
+            clock=resolved_clock,
+        )
+
+        conversation: ConversationService | None = None
         if owner_user_id:
-            channel_id = resolved_config.secrets.discord_channel_id
             conversation = ConversationService(
                 processor=processor,
                 engine=conversation_engine,
@@ -858,9 +920,8 @@ class Application:
             memory=memory_engine,
             # Phase 2 §2Q: a separate object with no writer, so a debug search
             # cannot practise a memory however ``recall`` later changes.
-            memory_inspector=MemoryInspector(
-                memory_engine.retriever, clock=resolved_clock
-            ),
+            memory_inspector=memory_inspector,
+            admin_router=admin_router,
             memory_policy=memory_policy,
             psychology_policy=psychology_policy,
             relationship_policy=relationship_policy,

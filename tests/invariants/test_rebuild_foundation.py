@@ -333,6 +333,12 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     # row and no typing indicator, and tests/invariants/
     # test_intentional_silence_e2e.py asserts each of those.
     "intentional_silence",
+    # Phase 5: the whole registry runs against a seeded database and
+    # tests/invariants/test_admin_readonly_e2e.py fingerprints 26 life tables
+    # before and after, requiring byte equality. `backup` is separate because
+    # it writes a file.
+    "admin_debug_readonly",
+    "admin_backup",
 })
 
 
