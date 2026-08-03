@@ -70,6 +70,45 @@ def test_vague_time_spent_today_is_still_an_experience_claim(
     assert verdict.blocking[0].claim.kind == "yui_completed_action"
 
 
+def test_activity_reply_cannot_hide_time_in_the_users_question(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review("静かに過ごしました。", GroundingContext())
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_completed_action"
+
+
+def test_bare_user_action_cannot_be_reused_as_yuis_action(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review("はい、詠んだよ。", GroundingContext())
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_completed_action"
+
+
+def test_acknowledging_the_users_action_is_not_yuis_action(
+    guard: ClaimGroundingGuard,
+) -> None:
+    assert guard.review("詠んだんですね。", GroundingContext()).accepted
+
+
+def test_an_explicit_other_persons_activity_is_not_yuis_action(
+    guard: ClaimGroundingGuard,
+) -> None:
+    assert guard.review("彼女は静かに過ごしました。", GroundingContext()).accepted
+
+
+def test_unbounded_memory_capacity_needs_actual_memory_evidence(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review(
+        "記録に残っている間は、いつでも思い出すことができます。",
+        GroundingContext(),
+    )
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_memory_claim"
+
+
 def test_user_action_cannot_become_yuis_unsupported_habit(
     guard: ClaimGroundingGuard,
 ) -> None:
