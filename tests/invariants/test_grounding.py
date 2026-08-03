@@ -59,6 +59,44 @@ def test_a_completed_action_is_a_claim(guard: ClaimGroundingGuard) -> None:
     assert verdict.blocking[0].claim.kind == "yui_completed_action"
 
 
+def test_vague_time_spent_today_is_still_an_experience_claim(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review(
+        "今日は特に何もせず、ただ時間を過ごしていました。",
+        GroundingContext(),
+    )
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_completed_action"
+
+
+def test_user_action_cannot_become_yuis_unsupported_habit(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review(
+        "少し詠むと気持ちが落ち着きますね。",
+        GroundingContext(),
+    )
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_experience_habit"
+
+
+def test_recorded_habit_can_support_experience_disclosure(
+    guard: ClaimGroundingGuard,
+) -> None:
+    context = GroundingContext(
+        known_semantic_memories=(
+            Evidence(
+                kind="semantic_memory",
+                reference="sem_poetry",
+                summary="詩を詠むと気持ちが落ち着く",
+                subject="yui",
+            ),
+        )
+    )
+    assert guard.review("詩を詠むと気持ちが落ち着きます。", context).accepted
+
+
 def test_a_question_is_not_a_claim(guard: ClaimGroundingGuard) -> None:
     """An assertion needs evidence. Asking is not asserting."""
     assert guard.review("今日は本を読んだ？", GroundingContext()).accepted

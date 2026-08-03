@@ -28,6 +28,7 @@ from typing import Literal
 #: because each one asserts something outside the sentence itself.
 ClaimKind = Literal[
     "yui_completed_action",
+    "yui_experience_habit",
     "yui_perception",
     "yui_memory_claim",
     "user_past_fact",
@@ -39,6 +40,7 @@ ClaimKind = Literal[
 
 CLAIM_KINDS: tuple[ClaimKind, ...] = (
     "yui_completed_action",
+    "yui_experience_habit",
     "yui_perception",
     "yui_memory_claim",
     "user_past_fact",
@@ -73,6 +75,16 @@ EvidenceKind = Literal[
 #: today's reading real.
 ACCEPTED_EVIDENCE: dict[ClaimKind, tuple[EvidenceKind, ...]] = {
     "yui_completed_action": ("activity", "objective_event"),
+    # A repeated-experience claim ("reading calms me") is not today's
+    # activity, but it still needs a life record or a memory/belief produced
+    # from one.  The USER having just mentioned the same action is never
+    # evidence that YUI has done it.
+    "yui_experience_habit": (
+        "activity",
+        "objective_event",
+        "subjective_memory",
+        "semantic_memory",
+    ),
     "yui_perception": ("activity", "objective_event", "world_state"),
     "yui_memory_claim": ("subjective_memory", "objective_event", "diary_entry"),
     "user_past_fact": ("objective_event", "verified_user_fact", "subjective_memory"),
