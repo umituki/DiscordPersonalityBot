@@ -275,6 +275,7 @@ class LifeActions:
         policy: Any,
         source: SleepSource,
         candidates: LifeCandidates | None = None,
+        diary: Any = None,
         clock: Clock | None = None,
         activities: Sequence[tuple[str, str, float]] = (),
     ) -> None:
@@ -284,6 +285,9 @@ class LifeActions:
         self._policy = policy
         self._source = source
         self._candidates = candidates or LifeCandidates(policy=policy)
+        #: Spec 26.3. The diary is written at bedtime, and it may not delay it:
+        #: whatever happens in there, she goes to sleep afterwards.
+        self._diary = diary
         self._clock = clock or SystemClock()
         #: What she might do, as (name, kind, minutes). Phase 8 replaces this
         #: with the ``activity_candidates`` model call of spec 24.1; until then
@@ -297,6 +301,12 @@ class LifeActions:
         if self._world.current_sleep() is not None:
             return False  # already asleep; the opportunity went stale
         signals = self._source.signals(now)
+
+        # 26.3: reflection comes before the transition, and cannot prevent it.
+        # A model that hangs leaves the entry owed and she sleeps anyway; the
+        # retry writes it later as `late_written`.
+        await self._reflect()
+
         episode, _ = self._world.fall_asleep(
             signals=signals,
             reason="exhausted" if candidate.expected_value >= 1.0 else "sleepy",
@@ -317,6 +327,14 @@ class LifeActions:
         episode, slept = self._world.wake_up()
         if episode is None:
             return False
+        # 26.2: waking starts the day the diary will be about. Only a main
+        # sleep does — a nap does not end a day, and treating it as one would
+        # give her two diaries for one afternoon.
+        if self._diary is not None and not episode.is_nap:
+            try:
+                self._diary.begin_day(sleep_episode_id=episode.sleep_id)
+            except Exception:  # noqa: BLE001 - a missing day is not a reason to stay in bed
+                logger.exception("could not open a life day on waking")
         signals = self._source.signals(now)
         await self._emit(
             WOKE_UP_EVENT,
@@ -382,6 +400,24 @@ class LifeActions:
             ),
         )
         return True
+
+    def attach_diary(self, diary: Any) -> None:
+        """Late-bind the diary, which is built after this is (bootstrap order).
+
+        Not optional in the running application: without it she goes to sleep
+        without ever looking back at the day, which is a silent hole rather
+        than a visible one.
+        """
+        self._diary = diary
+
+    async def _reflect(self) -> None:
+        """Look back at the day, with a hard promise that sleep follows."""
+        if self._diary is None:
+            return
+        try:
+            await self._diary.reflect_at_bedtime()
+        except Exception:  # noqa: BLE001 - 26.3, in one line
+            logger.exception("bedtime reflection failed; going to sleep anyway")
 
     # --- registration --------------------------------------------------------
     def register(self, registry: Any, *, sources: Sequence[Any] = ()) -> None:

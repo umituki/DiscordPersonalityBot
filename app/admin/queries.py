@@ -85,10 +85,11 @@ class DebugSources:
     proactive_engine: Any = None
     proactive_source: Any = None
     backups: Any = None
-    #: Declared but not built until Phase 10. A declared-and-``None`` source is
-    #: "that subsystem has not landed"; an *undeclared* name is a typo, and
-    #: :meth:`DebugQueryService.listing` tells the two apart on purpose.
+    #: Phase 10 built these. The declared-and-``None`` convention stays for
+    #: whatever lands next: a declared source that is ``None`` has not been
+    #: built yet, and an *undeclared* name is a typo.
     diary: Any = None
+    life_days: Any = None
 
 
 class DebugQueryService:

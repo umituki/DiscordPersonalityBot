@@ -56,6 +56,7 @@ from app.jobs.proactive import ProactiveEngine
 from app.jobs.scheduler import Scheduler
 from app.runtime.autonomous import AutonomousRuntime
 from app.runtime.agency import AgencyActions, AgencyCandidates, GoalSource, HabitSource
+from app.diary.service import DiaryContextBuilder, DiaryService
 from app.runtime.life import ActivitySource, LifeActions, SleepSource
 from app.runtime.proactive import (
     ProactiveActions,
@@ -138,6 +139,7 @@ from app.storage.repositories import (
     ConsolidationRepository,
     CoverageJobRepository,
     DecisionRepository,
+    DiaryRepository,
     ConversationRepository,
     ConversationTraceRepository,
     CommonGroundRepository,
@@ -154,6 +156,7 @@ from app.storage.repositories import (
     HealthRepository,
     JobRepository,
     KnowledgeRepository,
+    LifeDayRepository,
     HabitRepository,
     LLMCallRepository,
     ManifestRepository,
@@ -234,6 +237,9 @@ class Application:
     proactive: ProactiveEngine
     runtime: AutonomousRuntime
     runtime_ticks: RuntimeTickRepository
+    diary: DiaryService
+    diaries: DiaryRepository
+    life_days: LifeDayRepository
     proactive_deliberation: ProactiveDeliberation
     proactive_deliberations: ProactiveDeliberationRepository
     growth_policy: GrowthPolicy
@@ -790,6 +796,31 @@ class Application:
         owner_user_id = resolved_config.secrets.discord_owner_user_id
         channel_id = resolved_config.secrets.discord_channel_id
 
+        # --- diary (spec 26 — Phase 10) --------------------------------------
+        # 26.3's constraint shapes the wiring: the service is handed to the
+        # sleep action, which awaits it and then goes to sleep regardless.
+        life_day_repo = LifeDayRepository(db)
+        diary_repo = DiaryRepository(db)
+        diary_service = DiaryService(
+            days=life_day_repo,
+            diaries=diary_repo,
+            builder=DiaryContextBuilder(
+                world=world_service,
+                conversations=conversation_repo,
+                society=society_service,
+                memories=memory_repo,
+                goals=goal_engine,
+                state=state_repo,
+                clock=resolved_clock,
+            ),
+            processor=processor,
+            structured=structured,
+            prompts=prompts,
+            memory=memory_engine,
+            clock=resolved_clock,
+        )
+        life_actions.attach_diary(diary_service)
+
         # --- proactive contact (spec 28 — Phase 9) ---------------------------
         # SHADOW by default (28.4: 初期運用は SHADOW). The sender is the null one
         # unless the mode is LIVE, so shadow is not "a real sender we remember
@@ -976,6 +1007,8 @@ class Application:
                     proactive_deliberations=proactive_deliberations,
                     proactive_engine=proactive_engine,
                     proactive_source=proactive_source,
+                    diary=diary_repo,
+                    life_days=life_day_repo,
                 ),
                 clock=resolved_clock,
             ),
@@ -1081,6 +1114,9 @@ class Application:
             proactive=proactive_engine,
             runtime=autonomous_runtime,
             runtime_ticks=runtime_tick_repo,
+            diary=diary_service,
+            diaries=diary_repo,
+            life_days=life_day_repo,
             proactive_deliberation=proactive_deliberation,
             proactive_deliberations=proactive_deliberations,
             growth_policy=growth_policy,

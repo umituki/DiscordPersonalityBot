@@ -1645,6 +1645,69 @@ _0025_PROACTIVE_DELIBERATIONS = Migration(
 )
 
 
+_0026_DIARY = Migration(
+    version=26,
+    name="diary",
+    statements=(
+        # Rebuild spec 26, 36 — Phase 10.
+        #
+        # 26.2: the day boundary is not midnight. A life day runs from one
+        # major waking to the next major sleep, because that is the unit she
+        # actually experiences — a night that starts at 01:40 belongs to the
+        # day before it, not to the calendar date it happens to fall on.
+        """
+        CREATE TABLE life_days (
+            life_day_id     TEXT PRIMARY KEY,
+            started_at      TEXT NOT NULL,
+            ended_at        TEXT,
+            wake_sleep_id   TEXT,
+            sleep_sleep_id  TEXT,
+            ordinal         INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        "CREATE INDEX idx_life_days_started ON life_days (started_at DESC)",
+        "CREATE UNIQUE INDEX idx_life_days_open ON life_days (ended_at) WHERE ended_at IS NULL",
+        # 36. `intended_at` and `generated_at` are separate columns because
+        # 26.3 requires it: a diary retried at four in the morning is still
+        # last night's diary, and collapsing the two would make every late
+        # entry claim she was awake and reflective when she was asleep.
+        """
+        CREATE TABLE diary_entries (
+            diary_id         TEXT PRIMARY KEY,
+            life_day_id      TEXT NOT NULL,
+            intended_at      TEXT NOT NULL,
+            generated_at     TEXT,
+            sleep_episode_id TEXT,
+            content          TEXT NOT NULL DEFAULT '',
+            summary          TEXT NOT NULL DEFAULT '',
+            importance       REAL NOT NULL DEFAULT 0.3,
+            mood_valence     REAL NOT NULL DEFAULT 0.0,
+            mood_arousal     REAL NOT NULL DEFAULT 0.0,
+            prompt_version   TEXT NOT NULL DEFAULT '',
+            model_version    TEXT NOT NULL DEFAULT '',
+            attempts         INTEGER NOT NULL DEFAULT 0,
+            status           TEXT NOT NULL DEFAULT 'pending'
+        )
+        """,
+        "CREATE INDEX idx_diary_day ON diary_entries (life_day_id)",
+        "CREATE INDEX idx_diary_status ON diary_entries (status, intended_at)",
+        "CREATE UNIQUE INDEX idx_diary_one_per_day ON diary_entries (life_day_id)",
+        # 26.7: the diary does not copy itself into memory. What it *does*
+        # record is which memories she actually looked at while writing, so a
+        # light recall practice can be applied to those and only those.
+        """
+        CREATE TABLE diary_references (
+            diary_id          TEXT NOT NULL,
+            reference_type    TEXT NOT NULL,
+            reference_id      TEXT NOT NULL,
+            mentioned_in_text INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (diary_id, reference_type, reference_id)
+        )
+        """,
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1671,6 +1734,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0023_RUNTIME_TICKS,
     _0024_LIFE_DRIVEN_BY_THE_RUNTIME,
     _0025_PROACTIVE_DELIBERATIONS,
+    _0026_DIARY,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

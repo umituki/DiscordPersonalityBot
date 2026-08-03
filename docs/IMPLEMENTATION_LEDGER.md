@@ -567,6 +567,55 @@ shadow mode exists to answer.
 
 ---
 
+## Phase 10 — Diary
+
+| Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| DIA-26.1 | Event ≠ Memory ≠ Diary | `app/diary/models.py`, migration 0026 | `test_the_diary_text_is_never_copied_into_memory` | — | `test_the_diary_text_is_never_copied_into_memory` | `!yui diary` | E2E_VERIFIED |
+| DIA-26.2 | A life day runs from waking to sleeping, not midnight | `app/storage/repositories/diary.py` (`LifeDayRepository`), `app/runtime/life.py` | `test_a_day_runs_from_waking_to_sleeping`, `test_opening_a_day_twice_gives_one_day` | `test_a_nap_does_not_end_a_day` | `test_a_night_starts_the_next_day` | `!yui diary days` | E2E_VERIFIED |
+| DIA-26.3 | An LLM failure must never keep her awake | `app/diary/service.py` (`reflect_at_bedtime`), `app/runtime/life.py` (`_reflect`) | `test_a_broken_model_does_not_keep_her_awake`, `test_an_empty_draft_leaves_the_entry_owed` | `test_a_hanging_model_does_not_keep_her_awake` | `test_she_writes_before_sleeping` | `diary_entries.status` | E2E_VERIFIED |
+| DIA-26.3b | A late entry keeps its intended bedtime and says it was late | `app/diary/service.py` (`retry_pending`), migration 0026 | `test_a_late_entry_is_not_the_same_status_as_a_punctual_one`, `test_attempts_are_counted` | `test_the_retry_keeps_the_bedtime_it_was_meant_for` | `test_the_retry_keeps_the_bedtime_it_was_meant_for` | `diary_entries.generated_at` | E2E_VERIFIED |
+| DIA-26.4 | Compressed by importance, never a dump of every event | `app/diary/service.py` (`DiaryContextBuilder`) | `test_an_empty_day_says_so` | `test_the_context_is_compressed` | `test_she_writes_before_sleeping` | — | E2E_VERIFIED |
+| DIA-26.5 | Free prose, no fixed form, short days allowed | `app/diary/models.py` (`DiaryDraft`), `config/prompts/diary/v1.md` | `test_the_draft_schema_imposes_no_form` | `test_a_day_where_nothing_happened_is_allowed_to_be_short` | `test_she_writes_before_sleeping` | `config/prompts/diary/v1.md` | E2E_VERIFIED |
+| DIA-26.7 | The text is never copied into memory; only what she wrote about is practised | `app/diary/service.py` (`_practise`), `diary_references.mentioned_in_text` | `test_only_what_she_wrote_about_is_marked_as_mentioned`, `test_writing_it_is_an_experience` | `test_the_diary_text_is_never_copied_into_memory` | `test_the_diary_text_is_never_copied_into_memory` | `diary_references` | E2E_VERIFIED |
+| DIA-26.8 | Ordinary recall can never read the diary | `app/memory/` (no diary import), `app/diary/service.py` (`read`) | `test_an_unwritten_entry_cannot_be_read` | `test_ordinary_recall_cannot_reach_the_diary` | `test_reading_the_diary_is_its_own_event` | `DIARY_READ` events | E2E_VERIFIED |
+| DIA-GATE | Real-model diary quality over many days | — | — | — | — | — | DEFERRED_TO_FINAL_REAL_MACHINE_GATE |
+
+### Phase 10 gate (spec 4.7)
+
+1. **Spec IDs implemented.** 26.1 … 26.8, and the 36 data model.
+2. **Runtime trigger.** The sleep decision. `LifeActions.go_to_sleep` awaits
+   the reflection and then falls asleep *regardless of what it returns*.
+3. **Events produced.** `BEDTIME_REFLECTION_STARTED`, `DIARY_WRITTEN`,
+   `DIARY_READ`.
+4. **Rows written.** `life_days`, `diary_entries`, `diary_references`.
+5. **State change.** Through the processor, from `DIARY_WRITTEN` — the *act*
+   of writing is an experience (26.7). The text is not, and nothing copies it
+   into memory.
+6. **Debug.** `!yui diary` and `!yui diary days`. The Phase 5 test that pinned
+   `diary` as the one "not wired yet" command now asserts the opposite.
+7. **Restart.** A pending entry survives and is written later as
+   `late_written`, keeping the bedtime it was meant for.
+8. **Unit tests.** 1278 pass in total; 24 are new in `test_diary.py`.
+9. **Integration / E2E.** `tests/invariants/test_diary.py` drives the real
+   sleep path with a model that hangs, raises, returns nothing, and works.
+10. **Deferred.** `DIA-GATE` — whether the prose is any good over many real
+    days. `DEFERRED_TO_FINAL_REAL_MACHINE_GATE`.
+
+**The ordering is the design.** 26.3 says an LLM failure must not keep her
+awake, which rules out generate-then-sleep. So the entry is marked *owed*
+before the model is asked, the attempt is bounded, and sleep proceeds on every
+path — hang, exception, empty draft. A test sets the timeout to 50ms against a
+model that sleeps for an hour and asserts she is asleep afterwards.
+
+**26.8 is kept structurally rather than by discipline.** Nothing in
+`app/memory/` imports the diary, asserted by parsing the imports. A forgotten
+day cannot be quietly recovered from the record she wrote about it; reading the
+diary is a deliberate act with its own event, and the read-only `!yui diary`
+view is not that act.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -579,7 +628,7 @@ statuses is exactly the failure this ledger exists to prevent.
 | 7 | Activity / Sleep / Scheduler | STRUCTURALLY_COMPLETE |
 | 8 | NPC / Groups / Goals / Habits | STRUCTURALLY_COMPLETE |
 | 9 | Proactive contact | STRUCTURALLY_COMPLETE |
-| 10 | Diary | NOT_STARTED |
+| 10 | Diary | STRUCTURALLY_COMPLETE |
 | 11 | Search / Knowledge | NOT_STARTED |
 | 12 | Genesis v2 | NOT_STARTED |
 | 13 | Full FIRST BOOT | NOT_STARTED |
@@ -600,7 +649,7 @@ The contracts are the source of truth; this is a snapshot for reading.
 | intentional_silence | E2E_VERIFIED |
 | activity | E2E_VERIFIED |
 | sleep | E2E_VERIFIED |
-| diary | NOT_STARTED |
+| diary | E2E_VERIFIED |
 | spontaneous_memory | NOT_STARTED |
 | npc_interaction | E2E_VERIFIED |
 | group_activity | E2E_VERIFIED |

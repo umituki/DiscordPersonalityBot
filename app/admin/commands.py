@@ -170,7 +170,26 @@ def _build_registry() -> dict[str, AdminCommand]:
         AdminCommand(
             "diary",
             "diary entries",
-            _listing("diary", "diary", "recent", ("entry_id", "life_day", "written_at")),
+            _listing(
+                "diary", "diary", "recent",
+                (
+                    "diary_id",
+                    "life_day_id",
+                    "intended_at",
+                    "generated_at",
+                    "status",
+                    "summary",
+                ),
+            ),
+        ),
+        AdminCommand(
+            "diary",
+            "life days, waking to sleeping",
+            _listing(
+                "diary days", "life_days", "recent",
+                ("life_day_id", "ordinal", "started_at", "ended_at"),
+            ),
+            subcommand="days",
         ),
         AdminCommand(
             "knowledge",

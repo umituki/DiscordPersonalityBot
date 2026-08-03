@@ -1,14 +1,20 @@
-# Capability Contract (rebuild spec 4.3): diary
+# Capability Contract (rebuild spec 4.3, 26 — Phase 10)
 capability: "diary"
-trigger: "bedtime (major sleep decision)"
-runtime_entry: "AutonomousRuntime → DiaryService"
-candidate_source: "LLM diary_generation over a frozen DailyDiaryContext"
-hard_gate: "bounded timeout; failure never blocks sleep"
-actual_action: "DiaryRepository write"
-success_event: "DIARY_WRITTEN"
-persistence: "diary_entries, diary_references"
-recovery: "pending diary retried from its frozen context; intended_at kept"
-observability: "!yui diary"
-acceptance_test: "test_bedtime_diary_slice"
-status: "NOT_STARTED"
-note: "rebuild spec 26"
+trigger: "the sleep decision, at the moment she is about to go to bed (26.3)"
+runtime_entry: "LifeActions.go_to_sleep → DiaryService.reflect_at_bedtime → DiaryContextBuilder.build → generation; and DiaryService.retry_pending for what was owed"
+candidate_source: "DailyDiaryContext — the day compressed by importance, never a dump of every event (26.4)"
+hard_gate: "26.3: the attempt is bounded and sleep proceeds regardless; the entry is marked owed before the model is asked, so a hang leaves something for the retry rather than nothing"
+actual_action: "free prose written by the model (26.5), stored against the life day"
+success_event: "DIARY_WRITTEN — the act is an experience; the text is not (26.7)"
+persistence: "life_days, diary_entries (intended_at and generated_at separately), diary_references; BEDTIME_REFLECTION_STARTED and DIARY_READ events"
+recovery: "a pending entry survives a restart and is written later as late_written, keeping the bedtime it was meant for"
+observability: "!yui diary / !yui diary days"
+acceptance_test: "tests/invariants/test_diary.py"
+status: "E2E_VERIFIED"
+note: >
+  26.1's line is the one to hold: Event ≠ Memory ≠ Diary. The diary text is
+  never copied into episodic memory, and only the memories she actually wrote
+  about are marked as mentioned, which is all 26.7 permits practice on. 26.8's
+  rule is kept structurally: nothing in app/memory imports the diary, so a
+  forgotten day cannot be quietly recovered from the record she wrote about it
+  — reading the diary is a deliberate act with its own event.

@@ -29,6 +29,8 @@ _EXPORTS: dict[str, str] = {
     "CommonGroundRepository": "common_ground",
     "CoverageJobRepository": "knowledge",
     "DecisionRepository": "agency",
+    "DiaryRepository": "diary",
+    "LifeDayRepository": "diary",
     "DeliveryDecision": "deliveries",
     "DeliveryRepository": "deliveries",
     "EventRepository": "events",
@@ -80,6 +82,8 @@ __all__ = [
     "CommonGroundRepository",
     "CoverageJobRepository",
     "DecisionRepository",
+    "DiaryRepository",
+    "LifeDayRepository",
     "DeliveryDecision",
     "DeliveryRepository",
     "DriftRepository",
@@ -171,6 +175,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.storage.repositories.manifests import ManifestRepository
     from app.storage.repositories.health import HealthRepository
     from app.storage.repositories.memory import MemoryRepository
+    from app.storage.repositories.diary import DiaryRepository, LifeDayRepository
     from app.storage.repositories.rebuild import RebuildEpochRepository
     from app.storage.repositories.runs import ProcessingRunRepository
     from app.storage.repositories.runtime import (

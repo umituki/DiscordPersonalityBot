@@ -353,6 +353,8 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     # Phase 9: the gate, the judgment and the shadow record. A real unprompted
     # message to the real USER is a final-gate item, not this one.
     "proactive_contact",
+    # Phase 10.
+    "diary",
 })
 
 

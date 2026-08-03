@@ -471,8 +471,13 @@ async def test_only_the_unlanded_subsystems_report_not_wired(
 
     ``listing`` answers "not wired yet in this phase" when a declared source is
     still ``None``. That is honest for a subsystem which genuinely has not
-    landed, and a trap for a mistyped source name — so the set is pinned. When
-    Phase 10 builds the diary, this list shrinks, deliberately.
+    landed, and a trap for a mistyped source name — so the set is pinned and
+    may only shrink deliberately.
+
+    It is empty as of Phase 10, which built the diary — the last source that
+    was declared and unbuilt. It stays here rather than being deleted: the next
+    phase that declares a source ahead of building it has to add itself to this
+    set on purpose, which is the whole mechanism.
     """
     unwired = set()
     for key in READ_ONLY_COMMANDS:
@@ -483,7 +488,7 @@ async def test_only_the_unlanded_subsystems_report_not_wired(
         if "not wired yet" in outcome.result.summary:
             unwired.add(key)
 
-    assert unwired == {"diary"}, unwired
+    assert unwired == set(), unwired
 
 
 def test_a_typo_in_a_source_name_is_loud() -> None:
