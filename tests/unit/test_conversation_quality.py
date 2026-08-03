@@ -168,6 +168,28 @@ def test_short_acknowledgement_may_repeat_once(quality, clock) -> None:
     assert verdict.accepted
 
 
+def test_replaying_a_recent_user_turn_under_yuis_name_is_rejected(
+    quality, clock
+) -> None:
+    recent = (
+        turn(
+            clock,
+            "user",
+            "いや、今の説明は違うよ。私はそうは言っていない",
+            minutes=2,
+        ),
+        turn(clock, "yui", "そうですか、勘違いしていました。", minutes=1),
+    )
+    verdict = quality.review(
+        "いや、今の説明は違うよ。私はそうは言っていない",
+        allows_question=NO_QUESTION,
+        user_text="前に好きだと言った食べ物、覚えてる？",
+        recent_turns=recent,
+    )
+    assert verdict.rejected
+    assert QualityIssue.ECHOES_USER in verdict.issues
+
+
 # --- the rejection is legible to the repair prompt --------------------------
 def test_the_rejection_is_described_in_words(quality) -> None:
     verdict = quality.review("初めまして、はじめまして。", allows_question=NO_QUESTION, user_text="初めまして～")

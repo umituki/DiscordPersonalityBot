@@ -149,6 +149,11 @@ class ConversationQualityGuard:
         if self._echoes_user(stripped, user_text):
             issues.append(QualityIssue.ECHOES_USER)
             details.append("the reply is mostly the USER's own words")
+        else:
+            echoed = self._echoes_recent_user(stripped, recent_turns)
+            if echoed:
+                issues.append(QualityIssue.ECHOES_USER)
+                details.append("the reply replays a recent USER turn")
 
         if not allows_question and looks_like_question(stripped):
             # Patch spec 10.4 and 8.1, now spending the SurfacePlan's question
@@ -214,6 +219,21 @@ class ConversationQualityGuard:
         if user not in reply:
             return False
         return len(user) / len(reply) >= self._max_echo_ratio
+
+    def _echoes_recent_user(
+        self, text: str, recent_turns: Sequence[ConversationTurn]
+    ) -> str | None:
+        """A prior USER sentence is still theirs on the next turn.
+
+        The current-message echo check cannot see a model copying USER-1 while
+        answering USER-2.  That exact failure made a correction sentence come
+        back under YUI's name during the real-machine gate.
+        """
+        recent_user = [turn for turn in recent_turns if turn.speaker == "user"]
+        for turn in reversed(recent_user[-self._recent_question_window :]):
+            if self._echoes_user(text, turn.content):
+                return turn.content
+        return None
 
     def _formulaic(self, text: str, recent_turns: Sequence[ConversationTurn]) -> str | None:
         """The same stock sentence turn after turn (patch spec 10.7).

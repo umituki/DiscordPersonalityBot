@@ -24,6 +24,20 @@ def test_conversation_metrics_flags_trailing_structured_residue():
     assert metrics["automatic_hard_fail"] is True
 
 
+def test_conversation_metrics_flags_replayed_prior_user_message():
+    metrics = conversation_metrics(
+        [
+            {"prompt": "私はそうは言っていない", "reply": "わかりました"},
+            {"prompt": "覚えてる？", "reply": "私はそうは言っていない"},
+        ]
+    )
+
+    assert metrics["replayed_user_messages"] == [
+        {"reply_turn": 2, "source_user_turn": 1}
+    ]
+    assert metrics["automatic_hard_fail"] is True
+
+
 def test_conversation_metrics_accepts_varied_non_question_replies():
     metrics = conversation_metrics(
         [

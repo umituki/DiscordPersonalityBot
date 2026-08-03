@@ -125,6 +125,17 @@ def conversation_metrics(turns: Sequence[dict[str, Any]]) -> dict[str, Any]:
     duplicate_replies = sorted(
         {reply for reply in normalized if normalized.count(reply) > 1}
     )
+    replayed_user_messages: list[dict[str, Any]] = []
+    prior_prompts: list[tuple[int, str]] = []
+    for index, turn in enumerate(turns, start=1):
+        reply = re.sub(r"\s+", "", str(turn.get("reply") or ""))
+        for prompt_turn, prompt in prior_prompts:
+            if len(prompt) >= 8 and prompt == reply:
+                replayed_user_messages.append(
+                    {"reply_turn": index, "source_user_turn": prompt_turn}
+                )
+        prompt = re.sub(r"\s+", "", str(turn.get("prompt") or ""))
+        prior_prompts.append((index, prompt))
     return {
         "turns": len(turns),
         "outbound": sum(bool(reply) for reply in replies),
@@ -133,8 +144,14 @@ def conversation_metrics(turns: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "question_turns": sum(question_flags),
         "max_consecutive_question_turns": maximum_streak,
         "duplicate_replies": duplicate_replies,
+        "replayed_user_messages": replayed_user_messages,
         "leak_matches": leaks,
-        "automatic_hard_fail": bool(leaks or duplicate_replies or maximum_streak >= 4),
+        "automatic_hard_fail": bool(
+            leaks
+            or duplicate_replies
+            or replayed_user_messages
+            or maximum_streak >= 4
+        ),
         "human_review_required": [
             "unsupported or hallucinated self-experience",
             "false read/watch/search claim",
