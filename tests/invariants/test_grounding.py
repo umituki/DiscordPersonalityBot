@@ -109,6 +109,34 @@ def test_unbounded_memory_capacity_needs_actual_memory_evidence(
     assert verdict.blocking[0].claim.kind == "yui_memory_claim"
 
 
+def test_never_forgetting_recorded_things_needs_memory_evidence(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review(
+        "記録に残っている限りは、忘れることなく語り続けています。",
+        GroundingContext(),
+    )
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_memory_claim"
+
+
+def test_bare_remembering_claim_needs_memory_evidence(
+    guard: ClaimGroundingGuard,
+) -> None:
+    verdict = guard.review(
+        "あ、覚えてますよ。その時みたいに喜んでくれていいですね。",
+        GroundingContext(),
+    )
+    assert verdict.blocking
+    assert verdict.blocking[0].claim.kind == "yui_memory_claim"
+
+
+def test_honest_memory_limit_is_not_a_memory_claim(
+    guard: ClaimGroundingGuard,
+) -> None:
+    assert guard.review("記録にないことは思い出せません。", GroundingContext()).accepted
+
+
 def test_user_action_cannot_become_yuis_unsupported_habit(
     guard: ClaimGroundingGuard,
 ) -> None:
