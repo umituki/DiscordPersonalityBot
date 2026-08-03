@@ -357,6 +357,8 @@ VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
     "diary",
     # Phase 11: the formal entrance for information from outside.
     "web_search",
+    # Phase 12.
+    "genesis",
 })
 
 

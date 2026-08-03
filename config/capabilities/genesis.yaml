@@ -1,14 +1,22 @@
-# Capability Contract (rebuild spec 4.3): genesis
+# Capability Contract (rebuild spec 4.3, 34, 35 — Phase 12)
 capability: "genesis"
-trigger: "rebuild-reset leaves genesis_status=pending; OWNER runs Genesis"
-runtime_entry: "GenesisService / genesis pipeline"
-candidate_source: "LLM genesis_year / genesis_month / extraction, with critics"
-hard_gate: "critics + FIRST BOOT audits"
-actual_action: "psychological replay through the normal processor"
-success_event: "FIRST_BOOT"
-persistence: "genesis_runs, life_years, life_months, life_entities, events, memories"
-recovery: "checkpoint/resume; a replayed month is never replayed twice"
-observability: "!yui genesis"
-acceptance_test: "test_full_genesis_acceptance"
-status: "CODE_ONLY"
-note: "rebuild spec 34; v2 Genesis exists but is block-based, not annual/monthly"
+trigger: "an explicit FIRST BOOT command; never startup — a bootstrap that could start Genesis is one that can start it by accident"
+runtime_entry: "GenesisRunner.run → Stage A scaffolds → Stage B months → critics → Stage C synthesis → extraction → replay → first_boot_audits"
+candidate_source: "LifeAnchors (decided once, ages computed in Python), the continuity ledger's relevant subset, and the previous year"
+hard_gate: "GEN-CRITIC-001 — a blocking critic issue stops the year rather than logging; and 34.20's nine audits gate FIRST_BOOT_COMPLETE"
+actual_action: "SIMULATED_EXPERIENCE events replayed forwards through the ordinary processor"
+success_event: "SIMULATED_EXPERIENCE per extracted experience; FIRST_BOOT once every audit passes"
+persistence: "genesis_runs, genesis_checkpoints, life_anchors, life_years, life_months, life_entities, life_entity_snapshots, generation_audits"
+recovery: "34.18/34.19 — checkpoints per year and per stage, unique so a resume cannot replay a year twice"
+observability: "!yui genesis / !yui genesis years / !yui genesis audits"
+acceptance_test: "tests/invariants/test_genesis_v2.py"
+status: "E2E_VERIFIED"
+note: >
+  Structure verified with a scripted storyteller over one year rather than
+  nineteen with a real model: the 19-year run is a heavy real-machine item and
+  is recorded as deferred, not claimed. What is proven here is the shape —
+  ages are Python's, the scaffold survives the synthesis that supersedes it, a
+  routine month gets no detail call, a blocking audit stops the year and leaves
+  a row, a resume relives nothing, narrative never becomes memory, and the nine
+  first-boot audits actually fail when given a body, a real USER message or
+  knowledge from the future.

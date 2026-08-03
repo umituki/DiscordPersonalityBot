@@ -45,6 +45,8 @@ from app.events.model import Event, SystemStartedPayload, SystemStoppedPayload
 from app.epistemics.actions import EpistemicActionSelector
 from app.knowledge.builder import KnowledgeBuilder
 from app.knowledge.coverage import CoveragePlanner
+from app.genesis.critics import CriticBoard
+from app.genesis.runner import GenesisRunner
 from app.knowledge.investigation import InvestigationService
 from app.knowledge.providers import BundleProvider, ProviderRegistry
 from app.knowledge.search import FixtureSearchProvider
@@ -154,6 +156,8 @@ from app.storage.repositories import (
     EventRepository,
     ExposureRepository,
     FailureRepository,
+    GenerationAuditRepository,
+    GenesisRunRepository,
     GoalRepository,
     GroupRepository,
     HealthRepository,
@@ -161,6 +165,8 @@ from app.storage.repositories import (
     KnowledgeGapRepository,
     KnowledgeRepository,
     LifeDayRepository,
+    LifeEntityRepository,
+    LifeRecordRepository,
     HabitRepository,
     LLMCallRepository,
     ManifestRepository,
@@ -244,6 +250,11 @@ class Application:
     runtime_ticks: RuntimeTickRepository
     diary: DiaryService
     investigation: InvestigationService
+    genesis_runner: GenesisRunner
+    genesis_runs: GenesisRunRepository
+    life_records: LifeRecordRepository
+    life_entities: LifeEntityRepository
+    generation_audits: GenerationAuditRepository
     gaps: KnowledgeGapRepository
     knowledge_repo: KnowledgeRepository
     searches: SearchCallRepository
@@ -805,6 +816,35 @@ class Application:
         owner_user_id = resolved_config.secrets.discord_owner_user_id
         channel_id = resolved_config.secrets.discord_channel_id
 
+        # --- Genesis v2 (spec 34, 35 — Phase 12) -----------------------------
+        # Built here and driven by the CLI, not by startup: Genesis is a
+        # once-ever FIRST BOOT process, and a bootstrap that could start one is
+        # a bootstrap that can start one by accident.
+        genesis_run_repo = GenesisRunRepository(db)
+        life_record_repo = LifeRecordRepository(db)
+        life_entity_repo = LifeEntityRepository(db)
+        generation_audit_repo = GenerationAuditRepository(db)
+        genesis_runner = GenesisRunner(
+            runs=genesis_run_repo,
+            records=life_record_repo,
+            entities=life_entity_repo,
+            audits=generation_audit_repo,
+            critics=CriticBoard(
+                audits=generation_audit_repo,
+                structured=structured,
+                prompts=prompts,
+                clock=resolved_clock,
+            ),
+            structured=structured,
+            prompts=prompts,
+            processor=processor,
+            memory=memory_repo,
+            society=society_service,
+            knowledge_repo=knowledge_repo,
+            event_store=event_store,
+            clock=resolved_clock,
+        )
+
         # --- search and knowledge (spec 17, 32 — Phase 11) -------------------
         # The formal entrance for information from outside. The provider is
         # reached through the tool, never beside it, so ToolManager stays the
@@ -1052,6 +1092,9 @@ class Application:
                     diary=diary_repo,
                     gaps=gap_repo,
                     searches=search_repo,
+                    genesis_runs=genesis_run_repo,
+                    life_records=life_record_repo,
+                    generation_audits=generation_audit_repo,
                     life_days=life_day_repo,
                 ),
                 clock=resolved_clock,
@@ -1160,6 +1203,11 @@ class Application:
             runtime_ticks=runtime_tick_repo,
             diary=diary_service,
             investigation=investigation,
+            genesis_runner=genesis_runner,
+            genesis_runs=genesis_run_repo,
+            life_records=life_record_repo,
+            life_entities=life_entity_repo,
+            generation_audits=generation_audit_repo,
             gaps=gap_repo,
             knowledge_repo=knowledge_repo,
             searches=search_repo,

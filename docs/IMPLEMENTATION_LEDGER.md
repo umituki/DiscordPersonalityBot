@@ -679,6 +679,64 @@ today's clock is how a 2012 Genesis reads about 2025.
 
 ---
 
+## Phase 12 — Genesis v2
+
+| Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| GEN-34.1 | Every age is computed in Python from exact dates | `app/genesis/anchors.py` (`age_at`, `year_spans`) | `test_an_age_is_arithmetic_not_an_opinion`, `test_a_birthday_that_has_not_arrived_does_not_count`, `test_a_leap_day_birthday_does_not_crash` | `test_a_life_year_is_all_one_age` | `test_the_years_view_shows_the_ages` | `!yui genesis years` | E2E_VERIFIED |
+| GEN-34.2 | The seed is a rough bias, not a personality | `app/genesis/anchors.py` (`TemperamentSeed`) | `test_the_temperament_seed_is_thin` | — | — | `life_anchors.temperament_json` | E2E_VERIFIED |
+| GEN-34.3/4 | Stage A scaffolds are provisional; Stage B expands them | `app/genesis/runner.py`, migration 0028 | `test_a_year_is_scaffolded_then_expanded_then_synthesised` | `test_the_scaffold_is_not_regenerated_on_resume` | `test_a_year_is_scaffolded_then_expanded_then_synthesised` | `!yui genesis years` | E2E_VERIFIED |
+| GEN-34.5 | Only meaningful months earn a detail call | `app/genesis/models.py` (`WORTH_DETAIL`), runner | `test_a_routine_month_gets_no_detail_call`, `test_a_meaningful_month_does` | — | `life_months.importance_class` | `!yui genesis years` | E2E_VERIFIED |
+| GEN-34.6 | Stage C prefers the months, and the scaffold survives | `LifeRecordRepository.synthesise` | `test_the_scaffold_survives_the_synthesis` | `test_a_year_is_scaffolded_then_expanded_then_synthesised` | — | `life_years.final_summary` | E2E_VERIFIED |
+| GEN-34.7/8 | Continuity is a queryable ledger with a relevant subset | `app/genesis/ledger.py` | `test_the_relevant_subset_is_a_subset`, `test_an_open_thread_stays_relevant_however_old`, `test_someone_not_yet_born_into_her_life_is_not_offered` | `test_a_person_mentioned_every_month_is_one_person` | `test_survivors_become_runtime_npcs` | `life_entities` | E2E_VERIFIED |
+| GEN-34.8b | People who faded stay in the archive | `ContinuityLedger.retire`, `survivors` | `test_someone_who_faded_stays_in_the_archive` | — | — | `life_entities.status` | E2E_VERIFIED |
+| GEN-CRITIC-001 | A failed audit stops the stage and leaves a row | `app/genesis/critics.py`, `GenesisRunner._year` | `test_the_chronology_critic_needs_no_model`, `test_the_identity_critic_catches_a_body`, `test_a_critic_that_could_not_run_is_not_a_pass` | `test_a_failed_audit_is_a_row` | `test_a_blocking_issue_stops_the_year` | `!yui genesis audits` | E2E_VERIFIED |
+| GEN-34.11/13 | Experiences, not sentences; narrative is not memory | `app/genesis/runner.py` (`_extract`, `Extraction`) | `test_a_repeated_routine_is_one_compressed_experience` | `test_a_month_does_not_become_thirty_events` | `test_narrative_is_not_memory` | `episodic_memories` | E2E_VERIFIED |
+| GEN-34.12 | Replay runs forwards through the ordinary processor | `GenesisRunner._replay` | — | `test_experiences_are_replayed_forwards` | `test_experiences_are_replayed_forwards` | `SIMULATED_EXPERIENCE` events | E2E_VERIFIED |
+| GEN-34.18/19 | Checkpoints, and a resume that relives nothing | `GenesisRunRepository.checkpoint`, migration 0028 | `test_the_checkpoint_names_are_the_specs`, `test_a_checkpoint_is_written_once` | `test_the_scaffold_is_not_regenerated_on_resume` | `test_a_resume_does_not_relive_a_year` | `genesis_checkpoints` | E2E_VERIFIED |
+| GEN-34.20 | Nine audits gate FIRST_BOOT_COMPLETE | `GenesisRunner.first_boot_audits` | `test_there_are_nine_first_boot_audits` | `test_the_audits_run_and_pass_on_a_clean_run` | `test_a_real_user_message_fails_the_audit`, `test_a_body_in_the_record_fails_the_identity_audit`, `test_future_knowledge_fails_the_chronology_audit` | `genesis_checkpoints` | E2E_VERIFIED |
+| GEN-GATE | A real nineteen-year run with a real model | — | — | — | — | — | DEFERRED_TO_FINAL_REAL_MACHINE_GATE |
+
+### Phase 12 gate (spec 4.7)
+
+1. **Spec IDs implemented.** 34.1 … 34.20 and the 35 data model.
+2. **Runtime trigger.** An explicit FIRST BOOT command. Genesis is built in
+   bootstrap and never started by it: a bootstrap that *could* start a
+   nineteen-year run is one that can start it by accident.
+3. **Events produced.** `SIMULATED_EXPERIENCE` — the existing type, not a new
+   one. Genesis v2 changes how the past is generated, not what an experience
+   is, and a second event type would give appraisal and memory two things
+   meaning the same thing.
+4. **Rows written.** `genesis_runs`, `genesis_checkpoints`, `life_anchors`,
+   `life_years`, `life_months`, `life_entities`, `life_entity_snapshots`,
+   `generation_audits`.
+5. **State change.** Only through replay, forwards, via the ordinary
+   processor. Nothing writes a trait.
+6. **Debug.** `!yui genesis`, `!yui genesis years`, `!yui genesis audits` —
+   the last one showing the failures, which is what GEN-CRITIC-001 needs.
+7. **Restart.** Checkpoints per stage and per year, uniquely indexed. A resume
+   regenerates no scaffold and replays no experience twice.
+8. **Unit tests.** 1346 pass in total; 39 are new in `test_genesis_v2.py`.
+9. **Integration / E2E.** One year end to end with a scripted storyteller,
+   plus each of the nine audits proven to *fail* when given a body, a real
+   USER message, or knowledge from after the present.
+10. **Deferred.** `GEN-GATE` — a real nineteen-year run with a real model.
+    `DEFERRED_TO_FINAL_REAL_MACHINE_GATE`.
+
+**Phase 11's discipline is what makes 34.9 checkable.** The knowledge
+chronology audit reads `available_from` — the provenance column Phase 11 made
+mandatory — and fails on anything dated after the present. Without that column
+this audit could only have been a promise.
+
+**The two critics that need no model are the two that catch arithmetic.**
+Chronology and identity run in Python, because a model asked to check an age it
+might itself have got wrong puts the same failure on both sides of the check. A
+critic that *cannot* run is recorded as not having approved, rather than as
+having passed — an unavailable critic returning `True` is precisely the silent
+pass GEN-CRITIC-001 forbids.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -693,7 +751,7 @@ statuses is exactly the failure this ledger exists to prevent.
 | 9 | Proactive contact | STRUCTURALLY_COMPLETE |
 | 10 | Diary | STRUCTURALLY_COMPLETE |
 | 11 | Search / Knowledge | STRUCTURALLY_COMPLETE |
-| 12 | Genesis v2 | NOT_STARTED |
+| 12 | Genesis v2 | STRUCTURALLY_COMPLETE |
 | 13 | Full FIRST BOOT | NOT_STARTED |
 | 14 | Shadow runtime evaluation | NOT_STARTED |
 | 15 | Live | NOT_STARTED |
@@ -720,7 +778,7 @@ The contracts are the source of truth; this is a snapshot for reading.
 | habit_action | E2E_VERIFIED |
 | proactive_contact | E2E_VERIFIED |
 | web_search | E2E_VERIFIED |
-| genesis | CODE_ONLY |
+| genesis | E2E_VERIFIED |
 | admin_debug_readonly | E2E_VERIFIED |
 | admin_backup | E2E_VERIFIED |
 | autonomous_runtime | E2E_VERIFIED |

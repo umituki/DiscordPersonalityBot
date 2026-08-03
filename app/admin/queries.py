@@ -93,6 +93,9 @@ class DebugSources:
     gaps: Any = None
     searches: Any = None
     tools: Any = None
+    genesis_runs: Any = None
+    life_records: Any = None
+    generation_audits: Any = None
 
 
 class DebugQueryService:

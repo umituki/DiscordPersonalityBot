@@ -1776,6 +1776,165 @@ _0027_SEARCH_AND_PROVENANCE = Migration(
 )
 
 
+_0028_GENESIS_V2 = Migration(
+    version=28,
+    name="genesis_v2",
+    statements=(
+        # Rebuild spec 34, 35 — Phase 12.
+        #
+        # 34.19: every generated thing carries the run and generation that made
+        # it, so a resume can tell what has already been replayed. Without that
+        # a crash halfway through year nine replays year nine twice, and she
+        # lives a fortnight of 2019 in duplicate.
+        """
+        CREATE TABLE genesis_runs (
+            genesis_run_id TEXT PRIMARY KEY,
+            started_at     TEXT NOT NULL,
+            finished_at    TEXT,
+            birth_datetime TEXT NOT NULL,
+            present_datetime TEXT NOT NULL,
+            years          INTEGER NOT NULL DEFAULT 0,
+            stage          TEXT NOT NULL DEFAULT 'anchors',
+            status         TEXT NOT NULL DEFAULT 'running',
+            failure_reason TEXT NOT NULL DEFAULT '',
+            prompt_version TEXT NOT NULL DEFAULT '',
+            model_version  TEXT NOT NULL DEFAULT ''
+        )
+        """,
+        # 34.18: checkpoints are not an optimisation. A nineteen-year run that
+        # cannot resume is a run that has to be perfect the first time.
+        """
+        CREATE TABLE genesis_checkpoints (
+            checkpoint_id  TEXT PRIMARY KEY,
+            genesis_run_id TEXT NOT NULL REFERENCES genesis_runs (genesis_run_id),
+            name           TEXT NOT NULL,
+            year_number    INTEGER,
+            reached_at     TEXT NOT NULL,
+            detail         TEXT NOT NULL DEFAULT ''
+        )
+        """,
+        "CREATE UNIQUE INDEX idx_checkpoint_once ON genesis_checkpoints "
+        "(genesis_run_id, name, COALESCE(year_number, -1))",
+        # 34.1: the anchors are decided once and never negotiated afterwards.
+        # Ages are computed in Python from `birth_datetime`; the model is never
+        # asked to do arithmetic it can get wrong in a way nothing detects.
+        """
+        CREATE TABLE life_anchors (
+            genesis_run_id TEXT PRIMARY KEY REFERENCES genesis_runs (genesis_run_id),
+            birth_datetime TEXT NOT NULL,
+            present_datetime TEXT NOT NULL,
+            gender_identity TEXT NOT NULL DEFAULT '',
+            embodiment     TEXT NOT NULL DEFAULT '',
+            language       TEXT NOT NULL DEFAULT 'ja',
+            culture        TEXT NOT NULL DEFAULT '',
+            home           TEXT NOT NULL DEFAULT '',
+            family         TEXT NOT NULL DEFAULT '',
+            social         TEXT NOT NULL DEFAULT '',
+            education      TEXT NOT NULL DEFAULT '',
+            immutable_rules TEXT NOT NULL DEFAULT '',
+            temperament_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """,
+        # 34.3 / 34.6. `scaffold_text` is Stage A's provisional draft and
+        # `final_summary` is Stage C's rewrite from the months that actually
+        # happened. Two columns rather than one, because 34.6 says the months
+        # win when they disagree, and overwriting the scaffold would destroy
+        # the evidence that they did.
+        """
+        CREATE TABLE life_years (
+            year_id        TEXT PRIMARY KEY,
+            genesis_run_id TEXT NOT NULL REFERENCES genesis_runs (genesis_run_id),
+            year_number    INTEGER NOT NULL,
+            calendar_start TEXT NOT NULL,
+            calendar_end   TEXT NOT NULL,
+            age_start      INTEGER NOT NULL,
+            age_end        INTEGER NOT NULL,
+            scaffold_text  TEXT NOT NULL DEFAULT '',
+            final_summary  TEXT NOT NULL DEFAULT '',
+            status         TEXT NOT NULL DEFAULT 'scaffolded',
+            prompt_version TEXT NOT NULL DEFAULT '',
+            model_version  TEXT NOT NULL DEFAULT '',
+            created_at     TEXT NOT NULL
+        )
+        """,
+        "CREATE UNIQUE INDEX idx_life_year_once ON life_years (genesis_run_id, year_number)",
+        # 34.4, 34.5.
+        """
+        CREATE TABLE life_months (
+            month_id       TEXT PRIMARY KEY,
+            year_id        TEXT NOT NULL REFERENCES life_years (year_id),
+            month_number   INTEGER NOT NULL,
+            month_start    TEXT NOT NULL,
+            month_end      TEXT NOT NULL,
+            age_start      INTEGER NOT NULL,
+            age_end        INTEGER NOT NULL,
+            narrative      TEXT NOT NULL DEFAULT '',
+            importance_class TEXT NOT NULL DEFAULT 'routine',
+            status         TEXT NOT NULL DEFAULT 'drafted',
+            prompt_version TEXT NOT NULL DEFAULT '',
+            model_version  TEXT NOT NULL DEFAULT ''
+        )
+        """,
+        "CREATE UNIQUE INDEX idx_life_month_once ON life_months (year_id, month_number)",
+        "CREATE INDEX idx_life_month_class ON life_months (importance_class)",
+        # 34.7: the continuity ledger. Kept apart from the narrative because a
+        # nineteen-year prompt cannot carry every person, place and thread —
+        # the relevant subset is retrieved, and that needs the subset to be
+        # queryable rather than embedded in prose.
+        """
+        CREATE TABLE life_entities (
+            entity_id      TEXT PRIMARY KEY,
+            genesis_run_id TEXT NOT NULL REFERENCES genesis_runs (genesis_run_id),
+            type           TEXT NOT NULL,
+            canonical_name TEXT NOT NULL,
+            introduced_at  TEXT NOT NULL,
+            retired_at     TEXT,
+            last_seen_at   TEXT,
+            status         TEXT NOT NULL DEFAULT 'active',
+            objective_json TEXT NOT NULL DEFAULT '{}',
+            npc_id         TEXT
+        )
+        """,
+        "CREATE INDEX idx_life_entities_type ON life_entities (genesis_run_id, type, status)",
+        "CREATE UNIQUE INDEX idx_life_entity_name ON life_entities "
+        "(genesis_run_id, type, canonical_name)",
+        """
+        CREATE TABLE life_entity_snapshots (
+            snapshot_id  TEXT PRIMARY KEY,
+            entity_id    TEXT NOT NULL REFERENCES life_entities (entity_id),
+            month_id     TEXT,
+            recorded_at  TEXT NOT NULL,
+            note         TEXT NOT NULL DEFAULT '',
+            state_json   TEXT NOT NULL DEFAULT '{}'
+        )
+        """,
+        "CREATE INDEX idx_entity_snapshots ON life_entity_snapshots (entity_id, recorded_at)",
+        # 34.10, GEN-CRITIC-001. Every critic verdict is a row, including the
+        # failures. An audit that failed and was passed over silently is the
+        # one outcome the spec names as forbidden, and it is only detectable if
+        # the failure was written down.
+        """
+        CREATE TABLE generation_audits (
+            audit_id       TEXT PRIMARY KEY,
+            genesis_run_id TEXT,
+            target_type    TEXT NOT NULL,
+            target_id      TEXT NOT NULL,
+            critic_type    TEXT NOT NULL,
+            passed         INTEGER NOT NULL DEFAULT 0,
+            severity       TEXT NOT NULL DEFAULT '',
+            issues_json    TEXT NOT NULL DEFAULT '[]',
+            repaired       INTEGER NOT NULL DEFAULT 0,
+            model_version  TEXT NOT NULL DEFAULT '',
+            prompt_version TEXT NOT NULL DEFAULT '',
+            created_at     TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_audits_target ON generation_audits (target_type, target_id)",
+        "CREATE INDEX idx_audits_failed ON generation_audits (passed, severity)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1804,6 +1963,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0025_PROACTIVE_DELIBERATIONS,
     _0026_DIARY,
     _0027_SEARCH_AND_PROVENANCE,
+    _0028_GENESIS_V2,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

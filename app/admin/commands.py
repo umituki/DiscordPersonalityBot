@@ -265,6 +265,24 @@ def _build_registry() -> dict[str, AdminCommand]:
             ),
         ),
         AdminCommand("genesis", "rebuild epoch and Genesis status", lambda s, a: s.genesis()),
+        AdminCommand(
+            "genesis",
+            "the life record: years, ages and how they were classified",
+            _listing(
+                "genesis years", "life_records", "years_overview",
+                ("year_number", "age_start", "age_end", "status", "months", "synthesised"),
+            ),
+            subcommand="years",
+        ),
+        AdminCommand(
+            "genesis",
+            "critic verdicts, including the ones that failed",
+            _listing(
+                "genesis audits", "generation_audits", "recent",
+                ("created_at", "target_type", "critic_type", "passed", "severity", "repaired"),
+            ),
+            subcommand="audits",
+        ),
         # --- memory -----------------------------------------------------
         AdminCommand("memory", "recent memories", lambda s, a: s.memory(limit=_limit(a))),
         AdminCommand(
