@@ -346,6 +346,57 @@ source name fails loudly instead of hiding behind the same message.
 
 ---
 
+## Phase 6 — Autonomous Runtime
+
+| Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| RUNTIME-001 | The runtime writes no psychological state | `app/runtime/autonomous.py` | `test_the_runtime_holds_nothing_that_can_write_state`, `test_the_runtime_module_imports_no_psychology` | — | `test_a_tick_changes_no_psychological_state` | `!yui state` (unchanged) | E2E_VERIFIED |
+| RUNTIME-002 | A scheduler opportunity is never an action | `app/runtime/autonomous.py`, `app/runtime/sources.py` | `test_an_opportunity_is_not_an_action`, `test_the_decision_engine_chooses_not_the_loop` | `test_a_builder_may_decline` | `test_a_due_job_becomes_an_opportunity_and_stops_there`, `test_a_tick_writes_no_event` | `!yui runtime` | E2E_VERIFIED |
+| RUNTIME-003 | A USER message outranks background action | `app/runtime/autonomous.py` (`user_turn`), `app/conversation/service.py` | `test_a_user_turn_defers_background_action`, `test_nested_user_turns_release_together` | `test_the_loop_acts_again_once_the_turn_is_over` | `test_a_real_turn_holds_the_loop_back`, `test_a_failing_turn_still_releases_the_loop` | `runtime_ticks.deferred_reason` | E2E_VERIFIED |
+| RUNTIME-004 | Start/stop belong to the lifecycle, and shutdown drains | `app/bootstrap.py` (`start`/`stop`), `app/runtime/autonomous.py` | `test_start_and_stop_are_symmetric`, `test_starting_twice_is_refused` | `test_shutdown_drains_a_running_action` | `test_the_lifecycle_starts_and_drains_the_loop`, `test_the_loop_starts_after_recovery_not_before` | logs | E2E_VERIFIED |
+| RUNTIME-21.1 | Next-due-time sleep, never a per-second poll | `app/runtime/autonomous.py` (`_next_wake`, `_sleep`) | `test_the_next_wake_is_the_soonest_source`, `test_an_already_due_source_does_not_busy_wait` | `test_a_distant_due_time_is_capped_by_the_idle_interval` | `test_the_loop_ticks_when_it_is_woken` | `runtime_ticks.next_wake_at` | E2E_VERIFIED |
+| RUNTIME-4.5 | Quiet wake-ups and unclaimed kinds are visible | migration 0023, `app/storage/repositories/runtime.py` | `test_an_empty_tick_is_still_recorded`, `test_an_unclaimed_kind_is_recorded_not_swallowed` | `test_the_audit_can_ask_what_fires_and_nobody_wants` | `test_the_audit_query_names_what_nobody_claimed`, `test_the_runtime_command_shows_the_wake_ups` | `!yui runtime` | E2E_VERIFIED |
+
+### Phase 6 gate (spec 4.7)
+
+1. **Spec IDs implemented.** RUNTIME-001 … RUNTIME-004, plus 21.1's sleep rule
+   and 4.5's audit surface.
+2. **Runtime trigger.** A next-due time reported by an opportunity source, or a
+   USER message waking the loop early. `Application.start` starts it when
+   `runtime.autonomous` is on; `Application.stop` cancels and drains it.
+3. **Events produced.** None of its own, deliberately. Spec 22: an opportunity
+   is a possibility, and only a selected *and executed* one becomes an event —
+   which the action handler owns, not the loop.
+4. **Rows written.** `runtime_ticks`, one per wake-up including the quiet ones,
+   and `decisions` when a choice is made.
+5. **State change.** None from the loop. State moves the way it always does:
+   an action produces an event, the event runs through the processor, the
+   domains propose and the arbitrator commits.
+6. **Debug.** `!yui runtime` shows the recent wake-ups — added as a registry
+   entry with no change to the Phase 5 router, which is what that architecture
+   was for. `runtime_ticks.unclaimed_kinds()` is the §4.5 zero-row audit.
+7. **Restart.** `test_a_tick_survives_a_restart` reopens the repository and
+   finds the row. `test_the_loop_starts_after_recovery_not_before` pins the
+   startup order: waking into a half-recovered world is how she acts on a job
+   the restore was about to retire.
+8. **Unit tests.** 1178 pass in total; 40 are new in this phase (26 in
+   `test_autonomous_runtime.py`, 14 in the E2E).
+9. **Integration / E2E.** `tests/invariants/test_autonomous_runtime_e2e.py`
+   drives `application.runtime` — the object bootstrap built, with the real
+   scheduler behind it — and the real `ConversationService.handle_inbound` for
+   RUNTIME-003.
+10. **Deferred.** Nothing heavy. But see the capability note: the *capability*
+    is `WIRED`, not `E2E_VERIFIED`, because Phase 6 registers no candidate
+    builders and no action handlers, so no autonomous action has yet run end
+    to end. The individual RUNTIME rows are verified; the capability they serve
+    is not finished until Phase 7 lands the first handler.
+
+The loop is deliberately off by default (`runtime.autonomous = false`). A test,
+a CLI command or a migration run must not silently start a background loop that
+acts while nobody is watching.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -354,7 +405,7 @@ statuses is exactly the failure this ledger exists to prevent.
 | Phase | Subject | Status |
 |---|---|---|
 | 5 | Admin / debug router | STRUCTURALLY_COMPLETE |
-| 6 | Autonomous Runtime | NOT_STARTED |
+| 6 | Autonomous Runtime | STRUCTURALLY_COMPLETE |
 | 7 | Activity / Sleep / Scheduler | NOT_STARTED |
 | 8 | NPC / Groups / Goals / Habits | NOT_STARTED |
 | 9 | Proactive contact | NOT_STARTED |
@@ -390,6 +441,7 @@ The contracts are the source of truth; this is a snapshot for reading.
 | genesis | CODE_ONLY |
 | admin_debug_readonly | E2E_VERIFIED |
 | admin_backup | E2E_VERIFIED |
+| autonomous_runtime | WIRED |
 
 `natural_conversation_realization` is the first `E2E_VERIFIED` capability: a
 real inbound message drives interpretation, planning, reference lookup,

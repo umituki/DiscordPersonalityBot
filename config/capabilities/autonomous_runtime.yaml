@@ -1,0 +1,20 @@
+# Capability Contract (rebuild spec 4.3, 21 — Phase 6)
+capability: "autonomous_runtime"
+trigger: "a next-due time from an opportunity source, or a USER message waking the loop early"
+runtime_entry: "Application.start → AutonomousRuntime.start → AutonomousRuntime._run → .tick"
+candidate_source: "OpportunitySource.collect, then the owning domain's CandidateBuilder — never the loop's own judgement"
+hard_gate: "RUNTIME-002 the Decision Engine chooses, not the loop; RUNTIME-003 a USER turn in flight defers every background action"
+actual_action: "the registered ActionHandler for the chosen action; Phase 6 ships the loop, and Phases 7-11 register the handlers"
+success_event: "none of its own — spec 22, only a selected and executed opportunity becomes an event, and the handler owns it"
+persistence: "runtime_ticks, one row per wake-up including the quiet ones; decisions via DecisionRepository"
+recovery: "the loop starts after crash recovery, world catch-up and scheduler restore; shutdown cancels and drains it"
+observability: "!yui runtime; runtime_ticks.unclaimed_kinds() names every kind that fires and nobody claims"
+acceptance_test: "tests/invariants/test_autonomous_runtime_e2e.py"
+status: "WIRED"
+note: >
+  Deliberately WIRED and not E2E_VERIFIED. The loop is built, started by the
+  application lifecycle, driven by the real scheduler and proven to record its
+  wake-ups — but Phase 6 registers no candidate builders and no action
+  handlers, so no autonomous action has yet run end to end. Claiming
+  E2E_VERIFIED now would be exactly the §4.4 error this file exists to prevent.
+  It moves when Phase 7 lands the first real handler.

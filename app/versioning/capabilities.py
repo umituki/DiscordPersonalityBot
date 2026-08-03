@@ -58,6 +58,8 @@ REQUIRED_CAPABILITIES: tuple[str, ...] = (
     # nothing, and `backup` writes a file.
     "admin_debug_readonly",
     "admin_backup",
+    # Rebuild spec 21, Phase 6.
+    "autonomous_runtime",
 )
 
 #: Every field 4.3's example carries. All of them are required: a contract with

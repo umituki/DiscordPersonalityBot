@@ -47,6 +47,10 @@ class SchedulerPolicy(_Frozen):
     max_opportunities_per_tick: int = Field(default=5, ge=1)
     window_grace_minutes: float = Field(default=15.0, ge=0.0)
     default_misfire_policy: str = "skip"
+    #: Spec 21.1. How long the autonomous runtime sleeps when no source can say
+    #: when it would next have something. Not the normal cadence — the floor
+    #: under "nobody knows", so the loop never becomes a per-second poll.
+    idle_wake_seconds: float = Field(default=300.0, ge=1.0)
 
 
 class ProactivePolicy(_Frozen):

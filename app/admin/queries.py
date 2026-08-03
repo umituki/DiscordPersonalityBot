@@ -77,6 +77,7 @@ class DebugSources:
     rebuild: Any = None
     common_ground: Any = None
     admin_actions: Any = None
+    runtime_ticks: Any = None
     backups: Any = None
     #: Declared but not built until Phase 10. A declared-and-``None`` source is
     #: "that subsystem has not landed"; an *undeclared* name is a typo, and

@@ -54,6 +54,8 @@ from app.simulation.policy import SimulationPolicy
 from app.simulation.seed import SeedBuilder
 from app.jobs.proactive import ProactiveEngine
 from app.jobs.scheduler import Scheduler
+from app.runtime.autonomous import AutonomousRuntime
+from app.runtime.sources import Registry as RuntimeRegistry, SchedulerSource
 from app.events.store import EventStore
 from app.consolidation.events import DEEP_CONSOLIDATION_REVIEW
 from app.conversation.engine import ConversationEngine
@@ -156,6 +158,7 @@ from app.storage.repositories import (
     PlanRepository,
     ProactiveRepository,
     ProcessingRunRepository,
+    RuntimeTickRepository,
     SelfRepository,
     SimulationRepository,
     SleepRepository,
@@ -220,6 +223,8 @@ class Application:
     world: WorldService
     scheduler: Scheduler
     proactive: ProactiveEngine
+    runtime: AutonomousRuntime
+    runtime_ticks: RuntimeTickRepository
     growth_policy: GrowthPolicy
     adaptations: AdaptationEngine
     growth: GrowthEngine
@@ -564,6 +569,21 @@ class Application:
             agency_policy.epistemic, clock=resolved_clock
         )
 
+        # --- autonomous runtime (spec 21, 22) --------------------------------
+        # The loop is wired here with the scheduler as its only source. Phases
+        # 7-11 register activity, sleep, goal, habit, NPC, knowledge and
+        # proactive sources into the same registry; none of them edits the loop.
+        runtime_tick_repo = RuntimeTickRepository(db)
+        runtime_registry = RuntimeRegistry()
+        runtime_registry.add_source(SchedulerSource(scheduler))
+        autonomous_runtime = AutonomousRuntime(
+            runtime_registry,
+            decisions=decision_engine,
+            ticks=runtime_tick_repo,
+            clock=resolved_clock,
+            idle_seconds=world_policy.scheduler.idle_wake_seconds,
+        )
+
         belief_engine = BeliefEngine(belief_repo, belief_self_policy.belief, clock=resolved_clock)
         self_engine = SelfEngine(self_repo, belief_self_policy.self_schema, clock=resolved_clock)
 
@@ -840,6 +860,7 @@ class Application:
                     rebuild=RebuildEpochRepository(db),
                     common_ground=common_ground_repo,
                     admin_actions=admin_action_repo,
+                    runtime_ticks=runtime_tick_repo,
                 ),
                 clock=resolved_clock,
             ),
@@ -883,6 +904,8 @@ class Application:
                     clock=resolved_clock,
                 ),
                 tracer=conversation_tracer,
+                # RUNTIME-003: a USER turn outranks anything the loop wanted.
+                runtime=autonomous_runtime,
                 clock=resolved_clock,
             )
         else:
@@ -941,6 +964,8 @@ class Application:
             world=world_service,
             scheduler=scheduler,
             proactive=proactive_engine,
+            runtime=autonomous_runtime,
+            runtime_ticks=runtime_tick_repo,
             growth_policy=growth_policy,
             adaptations=adaptation_engine,
             growth=growth_engine,
@@ -1030,10 +1055,18 @@ class Application:
                 self.config.llm.base_url,
             )
 
+        # RUNTIME-004. Last, on purpose: the loop must not start looking for
+        # things to do until recovery, catch-up and scheduler restore have
+        # settled. Waking into a half-recovered world is how she acts on a job
+        # that the restore was about to retire.
+        if self.config.runtime.autonomous:
+            await self.runtime.start()
+
         logger.info(
-            "application ready mode=%s llm_healthy=%s",
+            "application ready mode=%s llm_healthy=%s autonomous=%s",
             self.config.runtime.mode,
             self.llm_healthy,
+            self.config.runtime.autonomous,
         )
         return event
 
@@ -1047,6 +1080,10 @@ class Application:
         )
 
     async def stop(self, reason: str = "shutdown") -> None:
+        # RUNTIME-004, first on purpose: cancel and drain the loop before the
+        # database closes. An action half-done at exit is how a plan turns into
+        # a memory of something that never happened.
+        await self.runtime.stop()
         if self.started:
             event = Event.create(
                 event_type="SYSTEM_STOPPED",

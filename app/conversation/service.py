@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable
+from contextlib import contextmanager
+from typing import Awaitable, Iterator
 from dataclasses import dataclass
 
 from app.clock import Clock, SystemClock
@@ -120,6 +121,7 @@ class ConversationService:
         grounding: GroundingContextBuilder | None = None,
         common_ground: CommonGroundTracker | None = None,
         tracer: ConversationTracer | None = None,
+        runtime: object | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._processor = processor
@@ -150,6 +152,10 @@ class ConversationService:
         #: The band she is currently in, kept so the hysteresis of §16 has a
         #: previous value to resist moving away from.
         self._band: RelationshipBand = "stranger"
+        #: RUNTIME-003. The autonomous loop, so a USER turn can outrank a
+        #: background action. Optional: the conversation path must work
+        #: whether or not her life is running on its own.
+        self._runtime = runtime
         self._clock = clock or SystemClock()
 
     # --- inbound -----------------------------------------------------------
@@ -176,7 +182,32 @@ class ConversationService:
         going to say something (rebuild spec 12.4). The Discord gateway hangs
         the typing indicator off it, so an intentional silence never shows the
         USER three dots for a message that is not coming.
+
+        Rebuild spec RUNTIME-003: for the length of this call the autonomous
+        loop is told the USER is here. It still wakes and still records what it
+        saw; it does not start a background action on top of a conversation.
         """
+        with self._user_turn():
+            return await self._handle_inbound(
+                message, trace=trace, on_speaking=on_speaking
+            )
+
+    @contextmanager
+    def _user_turn(self) -> Iterator[None]:
+        """RUNTIME-003, optional so the service still works with no runtime."""
+        if self._runtime is None:
+            yield
+            return
+        with self._runtime.user_turn():
+            yield
+
+    async def _handle_inbound(
+        self,
+        message: InboundMessage,
+        *,
+        trace: ConversationTrace | None = None,
+        on_speaking: "Awaitable[None] | None" = None,
+    ) -> ConversationResult:
         # Patch spec 19.2. The interface may have started the trace already —
         # the typing indicator goes up before this call — so one is adopted
         # when offered and started here otherwise.

@@ -49,6 +49,7 @@ _EXPORTS: dict[str, str] = {
     "MemoryRepository": "memory",
     "PlanRepository": "agency",
     "ProcessingRunRepository": "runs",
+    "RuntimeTickRepository": "runtime",
     "RebuildEpochRepository": "rebuild",
     "SelfRepository": "social",
     "SnapshotRepository": "snapshots",
@@ -105,6 +106,7 @@ __all__ = [
     "ProactiveRepository",
     "ProcessingRunRepository",
     "RebuildEpochRepository",
+    "RuntimeTickRepository",
     "SelfRepository",
     "SimulationRepository",
     "SleepRepository",
@@ -169,6 +171,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.storage.repositories.memory import MemoryRepository
     from app.storage.repositories.rebuild import RebuildEpochRepository
     from app.storage.repositories.runs import ProcessingRunRepository
+    from app.storage.repositories.runtime import RuntimeTickRepository
     from app.storage.repositories.simulation import SimulationRepository
     from app.storage.repositories.snapshots import SnapshotRepository
     from app.storage.repositories.social import BeliefRepository, SelfRepository

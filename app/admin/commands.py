@@ -164,6 +164,23 @@ def _build_registry() -> dict[str, AdminCommand]:
                 ("consolidation_id", "kind", "status", "started_at", "ended_at"),
             ),
         ),
+        AdminCommand(
+            "runtime",
+            "recent autonomous wake-ups",
+            _listing(
+                "runtime", "runtime_ticks", "recent",
+                (
+                    "woke_at",
+                    "wake_reason",
+                    "opportunities",
+                    "opportunity_kinds",
+                    "candidates",
+                    "chosen_action",
+                    "outcome",
+                    "next_wake_at",
+                ),
+            ),
+        ),
         AdminCommand("genesis", "rebuild epoch and Genesis status", lambda s, a: s.genesis()),
         # --- memory -----------------------------------------------------
         AdminCommand("memory", "recent memories", lambda s, a: s.memory(limit=_limit(a))),

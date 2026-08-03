@@ -1545,6 +1545,45 @@ _0022_RESPONSE_INTENT_TRACE = Migration(
 )
 
 
+_0023_RUNTIME_TICKS = Migration(
+    version=23,
+    name="runtime_ticks",
+    statements=(
+        # Rebuild spec 21, Phase 6. One row per wake-up.
+        #
+        # This is the table §0 and §4.5 are really about. The previous build had
+        # Activity, Goal, Habit, NPC and Proactive constructed at startup and
+        # never once driven, and nothing in the database said so. "The runtime
+        # woke four hundred times, collected nothing and executed nothing" is a
+        # finding; without a row per wake-up it is invisible.
+        #
+        # It is runtime telemetry, not psychology. RUNTIME-001: nothing here is
+        # state she has — it is a record of the loop that asked.
+        """
+        CREATE TABLE runtime_ticks (
+            tick_id             TEXT PRIMARY KEY,
+            woke_at             TEXT NOT NULL,
+            wake_reason         TEXT NOT NULL,
+            opportunities       INTEGER NOT NULL DEFAULT 0,
+            opportunity_kinds   TEXT NOT NULL DEFAULT '',
+            unclaimed_kinds     TEXT NOT NULL DEFAULT '',
+            candidates          INTEGER NOT NULL DEFAULT 0,
+            decision_id         TEXT,
+            chosen_action       TEXT,
+            executed            INTEGER NOT NULL DEFAULT 0,
+            outcome             TEXT NOT NULL DEFAULT 'idle',
+            deferred_reason     TEXT NOT NULL DEFAULT '',
+            next_wake_at        TEXT,
+            duration_ms         INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        "CREATE INDEX idx_runtime_ticks_time ON runtime_ticks (woke_at DESC)",
+        # The audit query: which kinds fired and never turned into anything.
+        "CREATE INDEX idx_runtime_ticks_outcome ON runtime_ticks (outcome, woke_at DESC)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1568,6 +1607,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0020_RETRIEVAL_STAGES,
     _0021_REALIZATION_TRACE,
     _0022_RESPONSE_INTENT_TRACE,
+    _0023_RUNTIME_TICKS,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)
