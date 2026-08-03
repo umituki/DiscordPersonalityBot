@@ -25,7 +25,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 from app import ids
 from app.clock import Clock, SystemClock
@@ -54,7 +54,39 @@ CRITICS: tuple[CriticType, ...] = (
 #: model outage cannot turn an age error into a silent pass.
 DETERMINISTIC: frozenset[str] = frozenset({"chronology", "identity"})
 
+#: Critics that must actually run before a year may advance. Being unable to
+#: reach the model is not the same as the model approving, and treating it as
+#: approval is the silent pass GEN-CRITIC-001 forbids — so an unavailable
+#: required critic blocks, retryably.
+REQUIRED: frozenset[str] = frozenset(
+    {"chronology", "identity", "continuity", "historical_reality"}
+)
+
 PROMPT_PREFIX = "genesis_critic"
+
+
+#: What a critic actually concluded. Three states, not two: a critic that
+#: could not run has neither approved nor objected, and collapsing that into
+#: either is a lie in one direction or the other.
+Outcome = Literal["pass", "fail", "unavailable"]
+
+
+@dataclass(frozen=True, slots=True)
+class Review:
+    """The board's verdict on one target."""
+
+    ok: bool
+    blocking: tuple[CriticIssue, ...] = ()
+    unavailable: tuple[str, ...] = ()
+
+    @property
+    def retryable(self) -> bool:
+        """True when the block is "we could not check", not "this is wrong".
+
+        The difference decides what a resume does: an unreachable model is
+        worth trying again, and a fatal continuity break is not.
+        """
+        return bool(self.unavailable) and not self.blocking
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,48 +196,67 @@ class CriticBoard:
         self._clock = clock or SystemClock()
         self._enabled = tuple(enabled)
 
-    async def review(self, target: ReviewTarget) -> tuple[bool, tuple[CriticIssue, ...]]:
-        """Every enabled critic, in order. Returns whether the stage may go on.
+    async def review(self, target: ReviewTarget) -> Review:
+        """Every enabled critic, in order. Says whether the stage may go on.
 
         GEN-CRITIC-001: a blocking issue means it may not, and the verdict is
         written down either way. An audit that failed and was passed over
         silently is the one outcome the spec forbids, and it is only detectable
         because the failure is a row.
+
+        A *required* critic that could not run also stops the stage. It has not
+        approved anything — it has not looked — and letting the year proceed on
+        that basis is the same silent pass wearing a different hat.
         """
         blocking: list[CriticIssue] = []
+        unavailable: list[str] = []
         for critic in self._enabled:
-            verdict = await self._run(critic, target)
+            verdict, outcome = await self._run(critic, target)
             self._record(critic, target, verdict)
             blocking.extend(verdict.blocking_issues)
-        if blocking:
+            if outcome == "unavailable" and critic in REQUIRED:
+                unavailable.append(critic)
+        if blocking or unavailable:
             logger.warning(
-                "genesis audit blocked target=%s issues=%s",
+                "genesis audit blocked target=%s issues=%s unavailable=%s",
                 target.target_id,
                 [issue.code for issue in blocking],
+                unavailable,
             )
-        return not blocking, tuple(blocking)
+        return Review(
+            ok=not blocking and not unavailable,
+            blocking=tuple(blocking),
+            unavailable=tuple(unavailable),
+        )
 
-    async def _run(self, critic: CriticType, target: ReviewTarget) -> CriticVerdict:
+    async def _run(
+        self, critic: CriticType, target: ReviewTarget
+    ) -> tuple[CriticVerdict, Outcome]:
         if critic == "chronology":
-            return check_chronology(target)
+            verdict = check_chronology(target)
+            return verdict, ("pass" if verdict.passed else "fail")
         if critic == "identity":
-            return check_identity(target)
+            verdict = check_identity(target)
+            return verdict, ("pass" if verdict.passed else "fail")
         if self._structured is None or self._prompts is None:
             # No model. Not a pass: a critic that could not run has not
             # approved anything, and saying otherwise is the silent pass
             # GEN-CRITIC-001 names. It is recorded as an unrun critic with a
             # medium issue, which does not block but is visible in the audit.
-            return CriticVerdict(
-                passed=False,
-                issues=(
-                    CriticIssue(
-                        severity="medium",
-                        target_id=target.target_id,
-                        code="CRITIC_UNAVAILABLE",
-                        reason=f"{critic} could not run: no model",
-                        repair_scope="none",
+            return (
+                CriticVerdict(
+                    passed=False,
+                    issues=(
+                        CriticIssue(
+                            severity="medium",
+                            target_id=target.target_id,
+                            code="CRITIC_UNAVAILABLE",
+                            reason=f"{critic} could not run: no model",
+                            repair_scope="none",
+                        ),
                     ),
                 ),
+                "unavailable",
             )
         try:
             template = self._prompts.get(f"{PROMPT_PREFIX}_{critic}")
@@ -228,21 +279,41 @@ class CriticBoard:
             )
         except Exception:  # noqa: BLE001
             logger.exception("critic %s failed to run", critic)
-            return CriticVerdict(
-                passed=False,
-                issues=(
-                    CriticIssue(
-                        severity="medium",
-                        target_id=target.target_id,
-                        code="CRITIC_ERROR",
-                        reason=f"{critic} raised",
-                        repair_scope="none",
+            return (
+                CriticVerdict(
+                    passed=False,
+                    issues=(
+                        CriticIssue(
+                            severity="medium",
+                            target_id=target.target_id,
+                            code="CRITIC_ERROR",
+                            reason=f"{critic} raised",
+                            repair_scope="none",
+                        ),
                     ),
                 ),
+                "unavailable",
             )
         if not getattr(outcome, "ok", True) or outcome.value is None:
-            return CriticVerdict(passed=True)
-        return outcome.value
+            # Unparseable output is not approval either. The critic produced
+            # nothing usable, which is exactly what "unavailable" means.
+            return (
+                CriticVerdict(
+                    passed=False,
+                    issues=(
+                        CriticIssue(
+                            severity="medium",
+                            target_id=target.target_id,
+                            code="CRITIC_UNREADABLE",
+                            reason=f"{critic} returned nothing usable",
+                            repair_scope="none",
+                        ),
+                    ),
+                ),
+                "unavailable",
+            )
+        verdict = outcome.value
+        return verdict, ("pass" if verdict.passed else "fail")
 
     def _record(
         self, critic: CriticType, target: ReviewTarget, verdict: CriticVerdict
@@ -290,7 +361,10 @@ def _stated_ages(text: str) -> tuple[int, ...]:
 __all__ = [
     "CRITICS",
     "DETERMINISTIC",
+    "REQUIRED",
     "CriticBoard",
+    "Outcome",
+    "Review",
     "ReviewTarget",
     "check_chronology",
     "check_identity",

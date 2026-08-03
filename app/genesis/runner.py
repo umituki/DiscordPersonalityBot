@@ -37,9 +37,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Sequence
 
-from app.clock import Clock, SystemClock
+from app.clock import Clock, SystemClock, from_iso
 from app.genesis.anchors import LifeAnchors, LifeYearSpan, month_spans
-from app.genesis.critics import CriticBoard, ReviewTarget
+from app.genesis.critics import CriticBoard, Review, ReviewTarget
 from app.genesis.ledger import ContinuityLedger
 from app.genesis.models import (
     WORTH_DETAIL,
@@ -74,6 +74,9 @@ CHECKPOINTS: tuple[str, ...] = (
 
 #: 34.20. Every one of these must pass before FIRST_BOOT_COMPLETE is written.
 FIRST_BOOT_AUDITS: tuple[str, ...] = (
+    # Hardening 1: her past has to reach the present. A run that stopped at the
+    # last completed birthday leaves months missing that nothing else notices.
+    "coverage",
     "chronology",
     "continuity",
     "identity",
@@ -109,16 +112,37 @@ class GenesisProgress:
     months_detailed: int = 0
     experiences_extracted: int = 0
     experiences_replayed: int = 0
+    memories_encoded: int = 0
     audits_run: int = 0
     audits_failed: int = 0
     blocked_by: list[CriticIssue] = field(default_factory=list)
+    #: Required critics that could not run. Different from `blocked_by`: this
+    #: is "we could not check", which is worth retrying, rather than "this is
+    #: wrong", which is not.
+    unavailable_critics: list[str] = field(default_factory=list)
+    #: Postconditions that were not met, named. A run with anything here is
+    #: incomplete and resumable, never finished.
+    incomplete: list[str] = field(default_factory=list)
+    #: The year the run stopped at, if it stopped.
+    stopped_at: int | None = None
+
+    @property
+    def complete(self) -> bool:
+        return self.stopped_at is None and not self.incomplete
+
+    @property
+    def retryable(self) -> bool:
+        """True when what stopped it was "unverified", not "wrong"."""
+        return bool(self.incomplete or self.unavailable_critics) and not self.blocked_by
 
     def describe(self) -> str:
         return (
             f"years={self.years_scaffolded} months={self.months_written} "
             f"detailed={self.months_detailed} experiences={self.experiences_extracted} "
-            f"replayed={self.experiences_replayed} audits={self.audits_run} "
-            f"failed={self.audits_failed}"
+            f"replayed={self.experiences_replayed} encoded={self.memories_encoded} "
+            f"audits={self.audits_run} "
+            f"failed={self.audits_failed} stopped_at={self.stopped_at} "
+            f"incomplete={len(self.incomplete)}"
         )
 
 
@@ -141,11 +165,13 @@ class GenesisRunner:
         records: Any,
         entities: Any,
         audits: Any,
+        experiences: Any = None,
         critics: CriticBoard | None = None,
         structured: Any = None,
         prompts: Any = None,
         processor: Any = None,
         memory: Any = None,
+        memory_engine: Any = None,
         society: Any = None,
         knowledge_repo: Any = None,
         event_store: Any = None,
@@ -155,11 +181,18 @@ class GenesisRunner:
         self._records = records
         self._entities = entities
         self._audits = audits
+        #: 34.19 at experience granularity. Without it a crash mid-replay
+        #: leaves the year checkpoint unwritten and the resume relives every
+        #: experience in the year.
+        self._experiences = experiences
         self._critics = critics
         self._structured = structured
         self._prompts = prompts
         self._processor = processor
+        #: The repository, for the audit to count rows.
         self._memory = memory
+        #: The engine, which is the only way an experience becomes a memory.
+        self._memory_engine = memory_engine
         self._society = society
         self._knowledge_repo = knowledge_repo
         self._events = event_store
@@ -186,19 +219,45 @@ class GenesisRunner:
 
         # --- Stage A -----------------------------------------------------
         self._runs.set_stage(run_id, "stage_a")
-        previous: AnnualScaffold | None = None
         for span in spans:
-            previous = await self._scaffold(run_id, anchors, span, previous, ledger, progress)
-        self._runs.checkpoint(run_id, name="annual_scaffolds_done", now=self._clock.now())
+            await self._scaffold(run_id, anchors, span, ledger, progress)
+
+        # The checkpoint is a *postcondition*, not a place in the code. It says
+        # every year has a scaffold, and it is only written when that is true —
+        # a model that returned nothing for year seven leaves the run
+        # incomplete and retryable rather than marked done (hardening 2).
+        if self._all_scaffolded(run_id, spans):
+            self._runs.checkpoint(
+                run_id, name="annual_scaffolds_done", now=self._clock.now()
+            )
+        else:
+            progress.incomplete.append("annual_scaffolds")
+            logger.warning("Stage A incomplete; not checkpointing")
 
         # --- Stage B and C, year by year ---------------------------------
         for span in spans:
             year = self._records.year(run_id, span.year_number)
-            if year is None:  # pragma: no cover - Stage A just wrote it
-                continue
-            await self._year(run_id, anchors, span, year, ledger, progress)
+            if year is None:
+                # Stage A produced nothing for this year. Later years depend on
+                # it as their `previous`, so continuing would generate a life
+                # with a hole in the middle.
+                progress.incomplete.append(f"year_{span.year_number}_scaffold")
+                progress.stopped_at = span.year_number
+                break
+            proceed = await self._year(run_id, anchors, span, year, ledger, progress)
+            if not proceed:
+                # Hardening 3: a blocked year stops the *run*. Continuing into
+                # year eight while year seven is known to be wrong builds
+                # everything after it on a foundation that is being repaired.
+                progress.stopped_at = span.year_number
+                logger.error(
+                    "genesis stopped at year %d; later years not attempted",
+                    span.year_number,
+                )
+                break
 
-        self._runs.set_stage(run_id, "audits")
+        if progress.stopped_at is None:
+            self._runs.set_stage(run_id, "audits")
         return progress
 
     # --- Stage A (34.3) ------------------------------------------------------
@@ -207,15 +266,17 @@ class GenesisRunner:
         run_id: str,
         anchors: LifeAnchors,
         span: LifeYearSpan,
-        previous: AnnualScaffold | None,
         ledger: ContinuityLedger,
         progress: GenesisProgress,
-    ) -> AnnualScaffold | None:
+    ) -> None:
         existing = self._records.year(run_id, span.year_number)
         if existing is not None and existing["scaffold_text"]:
             progress.years_scaffolded += 1
-            return None  # already done; a resume must not regenerate it
+            return  # already done; a resume must not regenerate it
 
+        # Hardening 5: the previous year comes from the *record*, not from a
+        # local variable. A resume that started mid-Stage-A would otherwise
+        # hand year eight a `previous` of None and restart her life there.
         scaffold = await self._generate(
             SCAFFOLD_PROMPT,
             AnnualScaffold,
@@ -223,12 +284,13 @@ class GenesisRunner:
             age_start=span.age_start,
             age_end=span.age_end,
             period=f"{span.start.date()} 〜 {span.end.date()}",
-            previous=previous.summary if previous else "-",
+            previous=self._previous_year_text(run_id, span.year_number),
             continuity=ledger.render(span.start),
             temperament=str(anchors.temperament.as_dict()),
         )
         if scaffold is None:
-            return previous
+            progress.incomplete.append(f"year_{span.year_number}_scaffold")
+            return
 
         self._records.add_year(
             run_id=run_id,
@@ -244,7 +306,6 @@ class GenesisRunner:
         )
         self._note_all(ledger, scaffold.people, scaffold.interests, scaffold.threads, span.start)
         progress.years_scaffolded += 1
-        return scaffold
 
     # --- one year of Stage B + C --------------------------------------------
     async def _year(
@@ -255,15 +316,31 @@ class GenesisRunner:
         year: Any,
         ledger: ContinuityLedger,
         progress: GenesisProgress,
-    ) -> None:
+    ) -> bool:
+        """One year, all stages. Returns whether the run may continue.
+
+        False means something is wrong or unverified in *this* year, and
+        hardening 3 says the run stops rather than building year eight on it.
+        """
         year_id = year["year_id"]
+        expected_months = span.months
 
         if not self._runs.reached(run_id, "year_months_done", span.year_number):
-            previous: MonthNarrative | None = None
-            for number, start, end, age in month_spans(span, anchors.birth_datetime):
-                previous = await self._month(
-                    run_id, anchors, year, number, start, end, age, previous, ledger, progress
+            for number, start_at, end_at, age in month_spans(span, anchors.birth_datetime):
+                await self._month(
+                    run_id, anchors, year, number, start_at, end_at, age, ledger, progress
                 )
+            written = [
+                row for row in self._records.months(year_id) if row["narrative"]
+            ]
+            if len(written) < expected_months:
+                # Hardening 2: not done, so not checkpointed. A resume comes
+                # back and generates the months that are missing.
+                progress.incomplete.append(
+                    f"year_{span.year_number}_months "
+                    f"({len(written)}/{expected_months})"
+                )
+                return False
             self._runs.checkpoint(
                 run_id, name="year_months_done", year_number=span.year_number,
                 now=self._clock.now(),
@@ -271,31 +348,63 @@ class GenesisRunner:
 
         # --- critics, before anything is believed (34.10, GEN-CRITIC-001) --
         if not self._runs.reached(run_id, "year_critics_done", span.year_number):
-            ok = await self._review_year(run_id, anchors, span, year_id, ledger, progress)
-            if not ok:
-                # A blocking issue stops this year. Not a warning, not a log
-                # line — the stage does not advance, which is the whole of
-                # GEN-CRITIC-001.
+            review = await self._review_year(run_id, anchors, span, year_id, ledger, progress)
+            if not review.ok:
                 logger.error(
-                    "genesis year %d blocked by audit; not proceeding", span.year_number
+                    "genesis year %d blocked: issues=%s unavailable=%s",
+                    span.year_number,
+                    [issue.code for issue in review.blocking],
+                    review.unavailable,
                 )
-                return
+                return False
             self._runs.checkpoint(
                 run_id, name="year_critics_done", year_number=span.year_number,
                 now=self._clock.now(),
             )
 
         # --- Stage C (34.6) ------------------------------------------------
-        await self._synthesise(run_id, anchors, span, year_id)
+        if not await self._synthesise(run_id, anchors, span, year_id):
+            progress.incomplete.append(f"year_{span.year_number}_synthesis")
+            return False
 
-        # --- extraction and replay (34.11, 34.12) --------------------------
+        # --- extraction, persisted before any replay (34.11, 34.19) --------
+        if not self._runs.reached(run_id, "year_extraction_done", span.year_number):
+            extracted = await self._extract(run_id, year_id, span, progress)
+            if not extracted:
+                progress.incomplete.append(f"year_{span.year_number}_extraction")
+                return False
+            self._runs.checkpoint(
+                run_id, name="year_extraction_done", year_number=span.year_number,
+                now=self._clock.now(),
+            )
+
+        # --- replay, one experience at a time (34.12) ----------------------
         if not self._runs.reached(run_id, "year_replay_done", span.year_number):
-            experiences = await self._extract(run_id, year_id, span, progress)
-            await self._replay(experiences, progress)
+            if not await self._replay(run_id, span.year_number, progress):
+                progress.incomplete.append(f"year_{span.year_number}_replay")
+                return False
             self._runs.checkpoint(
                 run_id, name="year_replay_done", year_number=span.year_number,
                 now=self._clock.now(),
             )
+
+        # --- memory (34.13): the encoding the replay produced ---------------
+        # Hardening 8: this checkpoint used to be named and never written.
+        # It now records a real postcondition — every experience of the year
+        # went through the processor, which is the only route into memory.
+        if not self._runs.reached(run_id, "year_memory_done", span.year_number):
+            pending = self._pending_count(run_id, span.year_number)
+            if pending:
+                progress.incomplete.append(
+                    f"year_{span.year_number}_memory ({pending} unreplayed)"
+                )
+                return False
+            self._runs.checkpoint(
+                run_id, name="year_memory_done", year_number=span.year_number,
+                now=self._clock.now(),
+                detail=f"{self._replayed_count(run_id, span.year_number)} experiences encoded",
+            )
+        return True
 
     async def _month(
         self,
@@ -306,27 +415,31 @@ class GenesisRunner:
         start: datetime,
         end: datetime,
         age: int,
-        previous: MonthNarrative | None,
         ledger: ContinuityLedger,
         progress: GenesisProgress,
-    ) -> MonthNarrative | None:
+    ) -> None:
         existing = self._records.month(year["year_id"], number)
         if existing is not None and existing["narrative"]:
             progress.months_written += 1
-            return None
+            return
 
+        # Hardening 5 again: the previous month is read back, so a resume that
+        # restarts inside a year does not hand month seven an empty past.
         month = await self._generate(
             MONTH_PROMPT,
             MonthNarrative,
             anchors=anchors.describe(),
             scaffold=year["scaffold_text"],
-            previous=previous.narrative if previous else "-",
+            previous=self._previous_month_text(run_id, year, number),
             continuity=ledger.render(start),
             age=age,
             period=f"{start.date()} 〜 {end.date()}",
         )
         if month is None:
-            return previous
+            progress.incomplete.append(
+                f"year_{year['year_number']}_month_{number}"
+            )
+            return
 
         # 34.5: only meaningful and above earn a second call. A routine month
         # may still be richly described, but it does not get a crisis added to
@@ -350,7 +463,6 @@ class GenesisRunner:
             ledger, month.people, month.interests, month.threads, start, month_id=month_id
         )
         progress.months_written += 1
-        return month
 
     async def _review_year(
         self,
@@ -360,10 +472,11 @@ class GenesisRunner:
         year_id: str,
         ledger: ContinuityLedger,
         progress: GenesisProgress,
-    ) -> bool:
+    ) -> Review:
         if self._critics is None:
-            return True
+            return Review(ok=True)
         blocked: list[CriticIssue] = []
+        unavailable: list[str] = []
         for month in self._records.months(year_id):
             target = ReviewTarget(
                 target_type="month",
@@ -374,25 +487,34 @@ class GenesisRunner:
                 anchors=anchors.describe(),
                 continuity=ledger.render(span.start),
             )
-            ok, issues = await self._critics.review(target)
+            review = await self._critics.review(target)
             progress.audits_run += 1
-            if not ok:
+            if not review.ok:
                 progress.audits_failed += 1
-                blocked.extend(issues)
+                blocked.extend(review.blocking)
+                unavailable.extend(review.unavailable)
         progress.blocked_by.extend(blocked)
-        return not blocked
+        progress.unavailable_critics.extend(unavailable)
+        return Review(
+            ok=not blocked and not unavailable,
+            blocking=tuple(blocked),
+            unavailable=tuple(dict.fromkeys(unavailable)),
+        )
 
     async def _synthesise(
         self, run_id: str, anchors: LifeAnchors, span: LifeYearSpan, year_id: str
-    ) -> None:
+    ) -> bool:
+        year = self._records.year(run_id, span.year_number)
+        if year is not None and year["final_summary"]:
+            return True  # a resume must not rewrite a finished synthesis
         months = self._records.months(year_id)
         if not months:
-            return
+            return False
         synthesis = await self._generate(
             SYNTHESIS_PROMPT,
             AnnualSynthesis,
             anchors=anchors.describe(),
-            scaffold=(self._records.year(run_id, span.year_number) or {})["scaffold_text"],
+            scaffold=year["scaffold_text"] if year is not None else "-",
             months="\n\n".join(
                 f"[{row['month_number']}月 / {row['importance_class']}]\n{row['narrative']}"
                 for row in months
@@ -400,18 +522,32 @@ class GenesisRunner:
             age_start=span.age_start,
             age_end=span.age_end,
         )
-        if synthesis is None:
-            return
+        if synthesis is None or not synthesis.summary.strip():
+            # Hardening 2: no summary means the year is not synthesised. Saying
+            # otherwise would leave `final_summary` empty behind a status that
+            # claims it is not.
+            return False
         # 34.6: where they disagree, the months win. The scaffold stays on the
         # row so the disagreement remains visible.
         self._records.synthesise(year_id, summary=synthesis.summary)
+        return True
 
     # --- 34.11: experiences, not sentences ----------------------------------
     async def _extract(
         self, run_id: str, year_id: str, span: LifeYearSpan, progress: GenesisProgress
-    ) -> list[ExperienceCandidate]:
-        candidates: list[ExperienceCandidate] = []
+    ) -> bool:
+        """Pull experiences out of the months and *persist* them.
+
+        Persisted before any replay, and keyed on (month, sequence), so a crash
+        between extraction and replay loses nothing and a re-extraction after
+        one produces the same rows rather than a second set.
+        """
+        if self._experiences is None:
+            return True
+        staged = 0
         for month in self._records.months(year_id):
+            if self._experiences.for_month(month["month_id"]):
+                continue  # already extracted; a resume does not redo it
             extracted = await self._generate(
                 EXTRACTION_PROMPT,
                 Extraction,
@@ -420,38 +556,41 @@ class GenesisRunner:
                 importance=month["importance_class"],
             )
             if extracted is None:
-                continue
-            for candidate in extracted.experiences:
-                candidates.append(
-                    candidate.model_copy(update={"source_month_id": month["month_id"]})
+                progress.incomplete.append(f"month_{month['month_id']}_extraction")
+                return False
+            for sequence, candidate in enumerate(extracted.experiences):
+                self._experiences.stage(
+                    genesis_run_id=run_id,
+                    month_id=month["month_id"],
+                    year_number=span.year_number,
+                    sequence=sequence,
+                    candidate=candidate,
                 )
-        progress.experiences_extracted += len(candidates)
-        self._runs.checkpoint(
-            run_id, name="year_extraction_done", year_number=span.year_number,
-            now=self._clock.now(),
-        )
-        return candidates
+                staged += 1
+        progress.experiences_extracted += staged
+        return True
 
     # --- 34.12: forwards, through the ordinary pipeline ----------------------
     async def _replay(
-        self, experiences: Sequence[ExperienceCandidate], progress: GenesisProgress
-    ) -> None:
-        """Live it, in order.
+        self, run_id: str, year_number: int, progress: GenesisProgress
+    ) -> bool:
+        """Live it, in order, one experience at a time.
 
         最終人格へ逆算しない: each experience goes through the same processor a
         real message does, and whatever personality comes out the other end is
         the answer rather than the target.
+
+        The row is marked replayed immediately after its event is processed, so
+        a crash on experience 41 leaves the first 40 marked and the resume
+        starts at 41. Marking the whole year at the end would replay all of
+        them, and she would live the same fortnight twice.
         """
-        if self._processor is None:
-            return
+        if self._processor is None or self._experiences is None:
+            return True
         from app.events.model import Event
         from app.simulation.events import SIMULATED_EXPERIENCE, SimulatedExperiencePayload
 
-        for candidate in sorted(experiences, key=lambda item: item.occurred_at):
-            # Deliberately the *existing* simulated-experience event rather
-            # than a new one. Genesis v2 changes how the past is generated, not
-            # what an experience is, and a second event type would give the
-            # appraisal and memory pipelines two things to mean the same thing.
+        for row in self._experiences.pending(run_id, year_number=year_number):
             event = Event.create(
                 event_type=SIMULATED_EXPERIENCE,
                 category="internal",
@@ -460,38 +599,80 @@ class GenesisRunner:
                 origin="simulated_past",
                 priority="P4",
                 payload=SimulatedExperiencePayload(
-                    block_id=candidate.source_month_id,
-                    experience_class=candidate.importance,
-                    summary=candidate.action or candidate.context,
+                    block_id=row["month_id"],
+                    experience_class=row["importance"],
+                    summary=row["action"] or row["context"],
                     text=" ".join(
                         part
-                        for part in (candidate.context, candidate.action, candidate.outcome)
+                        for part in (row["context"], row["action"], row["outcome"])
                         if part
                     ),
-                    felt_significance=candidate.social_significance,
-                    involves_other_person=bool(candidate.actors),
+                    felt_significance=row["social_significance"],
+                    involves_other_person=bool(row["actors"]),
                 ),
                 clock=self._clock,
-                occurred_at=candidate.occurred_at,
+                occurred_at=from_iso(row["occurred_at"]),
             )
             await self._processor.process(event)
+            # 34.13: the *only* route from the life record into what she
+            # remembers. The narrative is not memory; this is where an
+            # experience is offered to the encoder, which may refuse it.
+            await self._encode(event, progress)
+            # Marked immediately, and only after both returned. An exception
+            # above leaves this row `pending`, which is exactly right.
+            self._experiences.mark_replayed(
+                row["experience_id"], event_id=event.event_id, now=self._clock.now()
+            )
             progress.experiences_replayed += 1
+        return True
+
+    async def _encode(self, event: Any, progress: GenesisProgress) -> None:
+        """Offer the experience to the Memory Engine, on simulated time.
+
+        Forgetting runs as the years pass rather than once at the end, so a
+        memory from her fourth year has had fifteen years of decay by the time
+        she boots — which is what makes what survives a selection rather than
+        a complete record.
+        """
+        if self._memory_engine is None:
+            return
+        try:
+            self._memory_engine.observe(
+                event, conversation_id=None, now=event.occurred_at
+            )
+            self._memory_engine.close_due_episodes(now=event.occurred_at)
+            results = await self._memory_engine.encode_pending(
+                limit=20, now=event.occurred_at
+            )
+            self._memory_engine.apply_forgetting(now=event.occurred_at)
+        except Exception:  # noqa: BLE001 - recorded, and the life continues
+            logger.exception("genesis memory encoding failed")
+            return
+        progress.memories_encoded += sum(1 for result in results if result.encoded)
 
     # --- 34.20: the nine audits ---------------------------------------------
-    async def first_boot_audits(self, run_id: str, anchors: LifeAnchors) -> tuple[AuditResult, ...]:
+    async def first_boot_audits(
+        self, run_id: str, anchors: LifeAnchors
+    ) -> tuple[AuditResult, ...]:
         """Everything that must pass before the gateway may come online.
 
         Failing any of them is not a warning. 34.20 makes FIRST_BOOT_COMPLETE
         conditional on all nine, and the Discord character gateway conditional
         on FIRST_BOOT_COMPLETE.
+
+        No audit passes because it could not look. A missing dependency is
+        reported as ``unavailable`` and blocks, because "I could not check
+        whether her memory is intact" and "her memory is intact" are not the
+        same sentence.
         """
         results = [
+            self._audit_coverage(run_id, anchors),
             self._audit_chronology(run_id, anchors),
             self._audit_continuity(run_id),
             self._audit_identity(run_id),
             self._audit_replay(run_id),
-            self._audit_memory_health(),
-            self._audit_personality_growth(),
+            self._audit_memory_health(run_id),
+            self._audit_personality_growth(run_id),
             self._audit_knowledge_chronology(anchors),
             self._audit_npc_continuity(run_id),
             self._audit_no_real_user(),
@@ -502,13 +683,51 @@ class GenesisRunner:
             )
         return tuple(results)
 
+    def _audit_coverage(self, run_id: str, anchors: LifeAnchors) -> AuditResult:
+        """Hardening 1: her past reaches the present with no gap.
+
+        A run that stopped at the last completed birthday leaves up to twelve
+        months missing between the end of Genesis and her first real
+        conversation, and nothing else here would notice.
+        """
+        years = self._records.years(run_id)
+        if not years:
+            return AuditResult("coverage", False, "no years were generated")
+        expected = {span.year_number for span in anchors.years}
+        got = {row["year_number"] for row in years}
+        missing = sorted(expected - got)
+        if missing:
+            return AuditResult("coverage", False, f"years missing: {missing}")
+
+        last_span = anchors.years[-1]
+        months = self._records.months(
+            next(row["year_id"] for row in years if row["year_number"] == last_span.year_number)
+        )
+        if len(months) < last_span.months:
+            return AuditResult(
+                "coverage",
+                False,
+                f"the final year has {len(months)}/{last_span.months} months",
+            )
+        latest = max(from_iso(row["month_end"]) for row in months)
+        if latest < anchors.present_datetime:
+            return AuditResult(
+                "coverage",
+                False,
+                f"her past ends at {latest.date()}, before {anchors.present_datetime.date()}",
+            )
+        return AuditResult("coverage", True)
+
     def _audit_chronology(self, run_id: str, anchors: LifeAnchors) -> AuditResult:
         """Ages line up with the years they are attached to.
 
         Checked against Python's own arithmetic rather than against anything
         the model said, which is the point of 34.1.
         """
-        for year in self._records.years(run_id):
+        years = self._records.years(run_id)
+        if not years:
+            return AuditResult("chronology", False, "no years to check")
+        for year in years:
             if year["age_start"] != year["year_number"] - 1:
                 return AuditResult(
                     "chronology",
@@ -527,10 +746,12 @@ class GenesisRunner:
 
     def _audit_continuity(self, run_id: str) -> AuditResult:
         entities = self._entities.all_for(run_id)
-        orphaned = [
-            entity for entity in entities if entity["last_seen_at"] is None
-        ]
-        if len(orphaned) > len(entities) // 2 and entities:
+        if not entities:
+            return AuditResult(
+                "continuity", False, "the continuity ledger is empty"
+            )
+        orphaned = [entity for entity in entities if entity["last_seen_at"] is None]
+        if len(orphaned) > len(entities) // 2:
             return AuditResult(
                 "continuity", False, f"{len(orphaned)}/{len(entities)} entities never recur"
             )
@@ -539,8 +760,10 @@ class GenesisRunner:
     def _audit_identity(self, run_id: str) -> AuditResult:
         from app.genesis.critics import check_identity
 
+        checked = 0
         for year in self._records.years(run_id):
             for month in self._records.months(year["year_id"]):
+                checked += 1
                 verdict = check_identity(
                     ReviewTarget(
                         target_type="month",
@@ -552,35 +775,107 @@ class GenesisRunner:
                     return AuditResult(
                         "identity", False, verdict.issues[0].reason if verdict.issues else ""
                     )
-        return AuditResult("identity", True)
+        if not checked:
+            return AuditResult("identity", False, "there was nothing to check")
+        return AuditResult("identity", True, f"{checked} months")
 
     def _audit_replay(self, run_id: str) -> AuditResult:
         """34.13: narrative is not memory. Replay is the only route in."""
-        if self._events is None:
-            return AuditResult("experience_replay", True, "no event store to check")
-        from app.simulation.events import SIMULATED_EXPERIENCE
-
-        replayed = sum(
-            1
-            for event in self._events.recent(limit=2000)
-            if event.event_type == SIMULATED_EXPERIENCE
-        )
-        months = self._records.month_count()
-        if months and not replayed:
+        if self._experiences is None:
             return AuditResult(
-                "experience_replay", False, f"{months} months and nothing replayed"
+                "experience_replay", False, "no experience record to audit"
             )
+        pending = self._experiences.count(
+            genesis_run_id=run_id, replay_status="pending"
+        )
+        replayed = self._experiences.count(
+            genesis_run_id=run_id, replay_status="replayed"
+        )
+        if pending:
+            return AuditResult(
+                "experience_replay", False, f"{pending} experiences never replayed"
+            )
+        if not replayed:
+            return AuditResult(
+                "experience_replay", False, "nothing was replayed at all"
+            )
+        # And the events really exist: a marked row with no event is a lie.
+        if self._events is not None:
+            from app.simulation.events import SIMULATED_EXPERIENCE
+
+            in_store = sum(
+                1
+                for event in self._events.recent(limit=5000)
+                if event.event_type == SIMULATED_EXPERIENCE
+            )
+            if in_store < replayed:
+                return AuditResult(
+                    "experience_replay",
+                    False,
+                    f"{replayed} marked replayed but {in_store} events exist",
+                )
         return AuditResult("experience_replay", True, f"{replayed} experiences")
 
-    def _audit_memory_health(self) -> AuditResult:
+    def _audit_memory_health(self, run_id: str) -> AuditResult:
+        """Did replay actually reach the Memory Engine?
+
+        A count of zero after a nineteen-year replay means the encoding path is
+        broken, and reporting "0 memories" as a pass is the shape of audit this
+        hardening exists to remove.
+        """
         if self._memory is None:
-            return AuditResult("memory_health", True, "no memory repository to check")
+            return AuditResult(
+                "memory_health", False, "no memory repository to audit"
+            )
+        if self._experiences is None:
+            return AuditResult("memory_health", False, "no experience record")
+        replayed = self._experiences.count(
+            genesis_run_id=run_id, replay_status="replayed"
+        )
         count = self._memory.memory_count()
+        if replayed and not count:
+            return AuditResult(
+                "memory_health",
+                False,
+                f"{replayed} experiences replayed and no memory was encoded",
+            )
         return AuditResult("memory_health", True, f"{count} memories")
 
-    def _audit_personality_growth(self) -> AuditResult:
-        """最終人格へ逆算しない — so this checks that nothing wrote one."""
-        return AuditResult("personality_growth", True)
+    def _audit_personality_growth(self, run_id: str) -> AuditResult:
+        """最終人格へ逆算しない — so this checks that growth *came from* replay.
+
+        Two failures to catch. A personality that never moved means the replay
+        did not reach the psychological pipeline. A personality that exists
+        with no replay behind it means something wrote one directly, which is
+        the back-calculation 34.12 forbids.
+        """
+        if self._experiences is None:
+            return AuditResult("personality_growth", False, "no experience record")
+        replayed = self._experiences.count(
+            genesis_run_id=run_id, replay_status="replayed"
+        )
+        if self._events is None:
+            return AuditResult("personality_growth", False, "no event store to audit")
+        from app.simulation.events import SIMULATED_EXPERIENCE
+
+        processed = sum(
+            1
+            for event in self._events.recent(limit=5000)
+            if event.event_type == SIMULATED_EXPERIENCE
+        )
+        if replayed and not processed:
+            return AuditResult(
+                "personality_growth",
+                False,
+                "experiences are marked replayed but produced no events",
+            )
+        if processed and not replayed:
+            return AuditResult(
+                "personality_growth",
+                False,
+                "simulated experiences exist that no extraction produced",
+            )
+        return AuditResult("personality_growth", True, f"{processed} lived events")
 
     def _audit_knowledge_chronology(self, anchors: LifeAnchors) -> AuditResult:
         """34.9: nothing she could not have known yet.
@@ -589,7 +884,9 @@ class GenesisRunner:
         checked against the moment she is supposed to have learned it.
         """
         if self._knowledge_repo is None:
-            return AuditResult("knowledge_chronology", True, "no knowledge to check")
+            return AuditResult(
+                "knowledge_chronology", False, "no knowledge repository to audit"
+            )
         for item in self._knowledge_repo.all_knowledge(limit=500):
             if item.available_from > anchors.present_datetime:
                 return AuditResult(
@@ -600,10 +897,29 @@ class GenesisRunner:
         return AuditResult("knowledge_chronology", True)
 
     def _audit_npc_continuity(self, run_id: str) -> AuditResult:
-        entities = [
+        """People exist, recur, and the ones still around became NPCs.
+
+        A ledger with people in it and no sightings means the continuity
+        retrieval never fed anything back into generation — everybody was
+        introduced once and forgotten, which is not a social history.
+        """
+        people = [
             entity for entity in self._entities.all_for(run_id) if entity["type"] == "NPC"
         ]
-        return AuditResult("npc_continuity", True, f"{len(entities)} people")
+        if not people:
+            return AuditResult(
+                "npc_continuity", False, "nobody was ever in her life"
+            )
+        seen_again = [person for person in people if person["last_seen_at"] is not None]
+        if not seen_again:
+            return AuditResult(
+                "npc_continuity",
+                False,
+                f"{len(people)} people, none of whom recurs",
+            )
+        return AuditResult(
+            "npc_continuity", True, f"{len(seen_again)}/{len(people)} recur"
+        )
 
     def _audit_no_real_user(self) -> AuditResult:
         """Spec 2.10 and 34.20: no real Discord history before first boot.
@@ -612,8 +928,10 @@ class GenesisRunner:
         conversation a continuation of one that never happened.
         """
         if self._events is None:
-            return AuditResult("no_real_user_before_first_boot", True)
-        for event in self._events.recent(limit=2000):
+            return AuditResult(
+                "no_real_user_before_first_boot", False, "no event store to audit"
+            )
+        for event in self._events.recent(limit=5000):
             if event.origin == "real_discord" and event.actor_type == "user":
                 return AuditResult(
                     "no_real_user_before_first_boot",
@@ -662,6 +980,55 @@ class GenesisRunner:
         if not getattr(outcome, "ok", True):
             return None
         return outcome.value
+
+    def _all_scaffolded(self, run_id: str, spans: Sequence[LifeYearSpan]) -> bool:
+        """The postcondition behind `annual_scaffolds_done` (hardening 2)."""
+        written = {
+            row["year_number"]
+            for row in self._records.years(run_id)
+            if row["scaffold_text"]
+        }
+        return all(span.year_number in written for span in spans)
+
+    def _previous_year_text(self, run_id: str, year_number: int) -> str:
+        """Last year, read back from the record (hardening 5).
+
+        A resume that begins mid-Stage-A would otherwise give year eight a
+        previous year of nothing, and restart her life in the middle of it.
+        """
+        if year_number <= 1:
+            return "-"
+        row = self._records.year(run_id, year_number - 1)
+        if row is None:
+            return "-"
+        return row["final_summary"] or row["scaffold_text"] or "-"
+
+    def _previous_month_text(self, run_id: str, year: Any, month_number: int) -> str:
+        """Last month, read back — including December of the year before."""
+        if month_number > 1:
+            row = self._records.month(year["year_id"], month_number - 1)
+            if row is not None and row["narrative"]:
+                return row["narrative"]
+            return "-"
+        earlier = self._records.year(run_id, year["year_number"] - 1)
+        if earlier is None:
+            return "-"
+        months = self._records.months(earlier["year_id"])
+        return months[-1]["narrative"] if months else "-"
+
+    def _pending_count(self, run_id: str, year_number: int) -> int:
+        if self._experiences is None:
+            return 0
+        return len(self._experiences.pending(run_id, year_number=year_number))
+
+    def _replayed_count(self, run_id: str, year_number: int) -> int:
+        if self._experiences is None:
+            return 0
+        return sum(
+            1
+            for row in self._experiences.for_year(run_id, year_number)
+            if row["replay_status"] == "replayed"
+        )
 
     def _note_all(
         self,

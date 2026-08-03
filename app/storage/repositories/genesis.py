@@ -389,6 +389,122 @@ class LifeEntityRepository:
         )
 
 
+class GenesisExperienceRepository:
+    """Extracted experiences, with how far replay got (34.11, 34.19).
+
+    The granularity that matters. Extraction and replay used to be one
+    in-memory pass, so a crash during replay left the year checkpoint unwritten
+    and resuming replayed every experience in it — she lived the same fortnight
+    twice. Now each candidate is a row, replay status lives on the row, and a
+    resume takes the ones still `pending`.
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def stage(
+        self,
+        *,
+        genesis_run_id: str,
+        month_id: str,
+        year_number: int,
+        sequence: int,
+        candidate: Any,
+    ) -> str:
+        """Record a candidate. Idempotent on (month, sequence).
+
+        A month re-extracted after a crash produces the same rows rather than
+        a second set, which is what makes re-extraction safe to retry.
+        """
+        existing = self._db.query_one(
+            "SELECT experience_id FROM genesis_experiences WHERE month_id = ? "
+            "AND sequence = ?",
+            (month_id, sequence),
+        )
+        if existing is not None:
+            return existing["experience_id"]
+        experience_id = ids.new_id("exp")
+        self._db.execute(
+            """
+            INSERT INTO genesis_experiences
+                (experience_id, genesis_run_id, month_id, year_number, sequence,
+                 occurred_at, actors, context, action, outcome,
+                 social_significance, importance, compressed, confidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                experience_id, genesis_run_id, month_id, year_number, sequence,
+                to_iso(candidate.occurred_at), ",".join(candidate.actors),
+                candidate.context, candidate.action, candidate.outcome,
+                candidate.social_significance, candidate.importance,
+                1 if candidate.compressed else 0, candidate.confidence,
+            ),
+        )
+        return experience_id
+
+    def mark_replayed(self, experience_id: str, *, event_id: str, now: datetime) -> None:
+        self._db.execute(
+            "UPDATE genesis_experiences SET replay_status = 'replayed', "
+            "event_id = ?, replayed_at = ? WHERE experience_id = ?",
+            (event_id, to_iso(now), experience_id),
+        )
+
+    def pending(
+        self, genesis_run_id: str, *, year_number: int | None = None, limit: int = 5000
+    ) -> list[sqlite3.Row]:
+        """What still has to be lived. The only thing a resume replays."""
+        if year_number is None:
+            return self._db.query_all(
+                "SELECT * FROM genesis_experiences WHERE genesis_run_id = ? "
+                "AND replay_status = 'pending' ORDER BY occurred_at, sequence LIMIT ?",
+                (genesis_run_id, limit),
+            )
+        return self._db.query_all(
+            "SELECT * FROM genesis_experiences WHERE genesis_run_id = ? "
+            "AND year_number = ? AND replay_status = 'pending' "
+            "ORDER BY occurred_at, sequence LIMIT ?",
+            (genesis_run_id, year_number, limit),
+        )
+
+    def for_year(self, genesis_run_id: str, year_number: int) -> list[sqlite3.Row]:
+        return self._db.query_all(
+            "SELECT * FROM genesis_experiences WHERE genesis_run_id = ? "
+            "AND year_number = ? ORDER BY occurred_at, sequence",
+            (genesis_run_id, year_number),
+        )
+
+    def for_month(self, month_id: str) -> list[sqlite3.Row]:
+        return self._db.query_all(
+            "SELECT * FROM genesis_experiences WHERE month_id = ? ORDER BY sequence",
+            (month_id,),
+        )
+
+    def count(
+        self, *, genesis_run_id: str | None = None, replay_status: str | None = None
+    ) -> int:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if genesis_run_id is not None:
+            clauses.append("genesis_run_id = ?")
+            params.append(genesis_run_id)
+        if replay_status is not None:
+            clauses.append("replay_status = ?")
+            params.append(replay_status)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return int(
+            self._db.scalar(f"SELECT COUNT(*) FROM genesis_experiences{where}", tuple(params))
+            or 0
+        )
+
+    def replayed_event_ids(self, genesis_run_id: str) -> list[str]:
+        rows = self._db.query_all(
+            "SELECT event_id FROM genesis_experiences WHERE genesis_run_id = ? "
+            "AND replay_status = 'replayed' AND event_id IS NOT NULL",
+            (genesis_run_id,),
+        )
+        return [row["event_id"] for row in rows]
+
+
 class GenerationAuditRepository:
     """Every critic verdict, including — especially — the failures."""
 
@@ -461,6 +577,7 @@ class GenerationAuditRepository:
 
 __all__ = [
     "GenerationAuditRepository",
+    "GenesisExperienceRepository",
     "GenesisRunRepository",
     "LifeEntityRepository",
     "LifeRecordRepository",

@@ -1935,6 +1935,51 @@ _0028_GENESIS_V2 = Migration(
 )
 
 
+_0029_GENESIS_EXPERIENCES = Migration(
+    version=29,
+    name="genesis_experiences",
+    statements=(
+        # Rebuild spec 34.11, 34.19 — Phase 12 hardening.
+        #
+        # Extraction and replay used to be one in-memory pass: a crash between
+        # them lost the extraction, and a crash *during* replay left no record
+        # of how far it had got. The year checkpoint was the only granularity,
+        # so resuming a year that died on experience 40 of 60 replayed all 60
+        # again and she lived a fortnight twice.
+        #
+        # So every candidate is a row with a stable id, and replay status lives
+        # on it. Resume replays what is still `pending` and nothing else.
+        """
+        CREATE TABLE genesis_experiences (
+            experience_id  TEXT PRIMARY KEY,
+            genesis_run_id TEXT NOT NULL REFERENCES genesis_runs (genesis_run_id),
+            month_id       TEXT NOT NULL,
+            year_number    INTEGER NOT NULL,
+            sequence       INTEGER NOT NULL,
+            occurred_at    TEXT NOT NULL,
+            actors         TEXT NOT NULL DEFAULT '',
+            context        TEXT NOT NULL DEFAULT '',
+            action         TEXT NOT NULL DEFAULT '',
+            outcome        TEXT NOT NULL DEFAULT '',
+            social_significance REAL NOT NULL DEFAULT 0.3,
+            importance     TEXT NOT NULL DEFAULT 'routine',
+            compressed     INTEGER NOT NULL DEFAULT 0,
+            confidence     REAL NOT NULL DEFAULT 0.5,
+            replay_status  TEXT NOT NULL DEFAULT 'pending',
+            event_id       TEXT,
+            replayed_at    TEXT
+        )
+        """,
+        # The idempotency key. A month re-extracted after a crash produces the
+        # same rows rather than a second set of them.
+        "CREATE UNIQUE INDEX idx_genesis_experience_once ON genesis_experiences "
+        "(month_id, sequence)",
+        "CREATE INDEX idx_genesis_experience_replay ON genesis_experiences "
+        "(genesis_run_id, replay_status, occurred_at)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -1964,6 +2009,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0026_DIARY,
     _0027_SEARCH_AND_PROVENANCE,
     _0028_GENESIS_V2,
+    _0029_GENESIS_EXPERIENCES,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

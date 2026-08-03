@@ -58,17 +58,41 @@ def birthday_in(birth: datetime, year: int) -> datetime:
 
 @dataclass(frozen=True, slots=True)
 class LifeYearSpan:
-    """One year of her life, as dates rather than as a label."""
+    """One year of her life, as dates rather than as a label.
+
+    The last one is usually *partial*: the present is rarely a birthday, so the
+    final span runs from her last birthday to now. Without it Genesis would
+    stop at the last completed year and leave a gap of up to twelve months
+    between the end of her past and her first real conversation — she would
+    boot with a hole where the last eleven months should be.
+    """
 
     year_number: int
     start: datetime
     end: datetime
     age_start: int
     age_end: int
+    #: False when the year was cut short by the present rather than by a
+    #: birthday. A partial year is not a failed year, and Stage C summarises
+    #: it as the part of a year it is.
+    complete: bool = True
 
     @property
     def months(self) -> int:
-        return 12
+        """How many month slots this span actually contains.
+
+        A partial year has fewer, and the last of those is itself partial —
+        generating twelve for a span that covers five would invent seven
+        months of a life that has not happened.
+        """
+        if self.complete:
+            return 12
+        count = 0
+        cursor = self.start
+        while cursor < self.end:
+            cursor = _add_months(self.start, count + 1)
+            count += 1
+        return count
 
 
 def year_spans(birth: datetime, present: datetime) -> tuple[LifeYearSpan, ...]:
@@ -97,21 +121,41 @@ def year_spans(birth: datetime, present: datetime) -> tuple[LifeYearSpan, ...]:
                 age_end=index + 1,
             )
         )
+
+    # The part-year since her last birthday. The present is almost never a
+    # birthday, so leaving this out would end her past up to twelve months
+    # before her first real conversation.
+    last_birthday = birthday_in(birth, birth.year + total)
+    if present > last_birthday:
+        spans.append(
+            LifeYearSpan(
+                year_number=total + 1,
+                start=last_birthday,
+                end=present,
+                age_start=total,
+                age_end=total,
+                complete=False,
+            )
+        )
     return tuple(spans)
 
 
 def month_spans(span: LifeYearSpan, birth: datetime) -> Iterator[tuple[int, datetime, datetime, int]]:
-    """The twelve months of one life year, with the age in each.
+    """The months of one life year, with the age in each.
 
-    Yields ``(month_number, start, end, age_start)``. The age is recomputed per
-    month rather than assumed constant, because a birthday falls inside the
-    first month of every life year and the month either side of it is not the
-    same age.
+    Yields ``(month_number, start, end, age_start)``. Twelve for a complete
+    year; fewer for the partial one at the end, whose last month is clipped at
+    the present. Generating a full twelve for a span that covers five would
+    invent seven months of a life that has not happened yet.
     """
-    for index in range(12):
+    for index in range(span.months):
         start = _add_months(span.start, index)
+        if start >= span.end:
+            return  # the present arrived; there is no further month to live
         end = _add_months(span.start, index + 1)
         if end > span.end:
+            # The month the present falls inside. Generated, because it has
+            # partly happened — clipped, because the rest of it has not.
             end = span.end
         yield index + 1, start, end, age_at(birth, start)
 
@@ -180,6 +224,12 @@ class LifeAnchors(BaseModel):
 
     def age_on(self, moment: datetime) -> int:
         return age_at(self.birth_datetime, moment)
+
+    @property
+    def covers_to_present(self) -> bool:
+        """Whether the spans reach the present with no gap (hardening 1)."""
+        spans = self.years
+        return bool(spans) and spans[-1].end >= self.present_datetime
 
     def describe(self) -> str:
         """The block every generation prompt gets. Facts, not narrative."""

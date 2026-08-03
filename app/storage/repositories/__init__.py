@@ -31,6 +31,7 @@ _EXPORTS: dict[str, str] = {
     "DecisionRepository": "agency",
     "DiaryRepository": "diary",
     "GenerationAuditRepository": "genesis",
+    "GenesisExperienceRepository": "genesis",
     "GenesisRunRepository": "genesis",
     "LifeEntityRepository": "genesis",
     "LifeRecordRepository": "genesis",
@@ -90,6 +91,7 @@ __all__ = [
     "DecisionRepository",
     "DiaryRepository",
     "GenerationAuditRepository",
+    "GenesisExperienceRepository",
     "GenesisRunRepository",
     "LifeEntityRepository",
     "LifeRecordRepository",
@@ -192,6 +194,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.storage.repositories.diary import DiaryRepository, LifeDayRepository
     from app.storage.repositories.genesis import (
         GenerationAuditRepository,
+        GenesisExperienceRepository,
         GenesisRunRepository,
         LifeEntityRepository,
         LifeRecordRepository,

@@ -156,11 +156,13 @@ def _runner(application, storyteller=None, *, critics=None):
         records=application.life_records,
         entities=application.life_entities,
         audits=application.generation_audits,
+        experiences=application.genesis_experiences,
         critics=critics,
         structured=storyteller,
         prompts=application.prompts if storyteller is not None else None,
         processor=application.processor,
         memory=application.memories,
+        memory_engine=application.memory,
         society=application.society,
         knowledge_repo=application.knowledge_repo,
         event_store=application.event_store,
@@ -185,8 +187,10 @@ def test_a_birthday_that_has_not_arrived_does_not_count() -> None:
 def test_a_leap_day_birthday_does_not_crash() -> None:
     leap = datetime(2008, 2, 29, tzinfo=timezone.utc)
     assert age_at(leap, datetime(2019, 3, 1, tzinfo=timezone.utc)) == 11
+    # Five complete years plus the part-year since the last birthday.
     spans = year_spans(leap, datetime(2013, 6, 1, tzinfo=timezone.utc))
-    assert len(spans) == 5
+    assert len(spans) == 6
+    assert spans[-1].complete is False
 
 
 def test_years_run_birthday_to_birthday(anchors) -> None:
@@ -195,10 +199,13 @@ def test_years_run_birthday_to_birthday(anchors) -> None:
     four-year-old."""
     spans = anchors.years
 
-    assert len(spans) == anchors.developmental_age == 18
+    assert anchors.developmental_age == 18
+    # Eighteen complete years and the part-year since her eighteenth birthday.
+    assert len(spans) == 19
     assert spans[0].start == BIRTH
     assert spans[0].age_start == 0
     assert all(span.start.month == BIRTH.month for span in spans)
+    assert all(span.complete for span in spans[:-1])
 
 
 def test_a_life_year_is_all_one_age(anchors) -> None:
@@ -355,9 +362,9 @@ async def test_a_failed_audit_is_a_row(application, anchors) -> None:
     assert application.generation_audits.failures()
 
 
-async def test_a_critic_that_could_not_run_is_not_a_pass(application) -> None:
-    """A silent pass is exactly what happens if an unavailable critic returns
-    True, so it returns a recorded medium issue instead."""
+async def test_an_unavailable_optional_critic_does_not_block(application) -> None:
+    """`psychology` is not on the required list: its absence is recorded as
+    not-approved, and the year may still proceed."""
     board = CriticBoard(
         audits=application.generation_audits,
         structured=None,
@@ -366,14 +373,60 @@ async def test_a_critic_that_could_not_run_is_not_a_pass(application) -> None:
         enabled=("psychology",),
     )
 
-    ok, blocking = await board.review(
+    review = await board.review(
         ReviewTarget(target_type="month", target_id="m1", text="なにか")
     )
 
-    assert ok is True  # medium does not block
-    assert blocking == ()
+    assert review.ok is True
     row = application.generation_audits.recent()[0]
-    assert row["passed"] == 0  # but it is on the record as not having approved
+    assert row["passed"] == 0  # on the record as not having approved
+
+
+async def test_an_unavailable_required_critic_blocks(application) -> None:
+    """Hardening 4. "I could not check" is not "I checked and it is fine",
+    and letting the year proceed on that basis is the silent pass wearing a
+    different hat."""
+    from app.genesis.critics import REQUIRED
+
+    assert "continuity" in REQUIRED
+    board = CriticBoard(
+        audits=application.generation_audits,
+        structured=None,
+        prompts=None,
+        clock=application.clock,
+        enabled=("continuity",),
+    )
+
+    review = await board.review(
+        ReviewTarget(target_type="month", target_id="m1", text="なにか")
+    )
+
+    assert review.ok is False
+    assert review.unavailable == ("continuity",)
+    assert review.blocking == ()
+    # And it is retryable: an unreachable model is worth trying again.
+    assert review.retryable
+
+
+async def test_unreadable_critic_output_is_not_approval(application) -> None:
+    class Garbled:
+        async def generate(self, *args, **kwargs):
+            return type("Outcome", (), {"ok": False, "value": None})()
+
+    board = CriticBoard(
+        audits=application.generation_audits,
+        structured=Garbled(),
+        prompts=application.prompts,
+        clock=application.clock,
+        enabled=("continuity",),
+    )
+
+    review = await board.review(
+        ReviewTarget(target_type="month", target_id="m1", text="なにか")
+    )
+
+    assert review.ok is False
+    assert review.unavailable == ("continuity",)
 
 
 def test_there_are_eight_critics() -> None:
@@ -619,13 +672,20 @@ def test_the_checkpoint_names_are_the_specs() -> None:
 # --- 34.20: the nine audits --------------------------------------------------
 
 
-def test_there_are_nine_first_boot_audits() -> None:
-    assert len(FIRST_BOOT_AUDITS) == 9
+def test_the_first_boot_audits_cover_the_spec_and_the_gap() -> None:
+    # Nine from 34.20, plus `coverage` — her past has to reach the present,
+    # and a run that stopped at the last completed birthday leaves months
+    # missing that none of the other nine would notice.
+    assert len(FIRST_BOOT_AUDITS) == 10
+    assert "coverage" in FIRST_BOOT_AUDITS
 
 
 async def test_the_audits_run_and_pass_on_a_clean_run(application, anchors) -> None:
+    """A *complete* run: coverage is one of the audits, so a one-year run is
+    supposed to fail it."""
     runner = _runner(application, Storyteller())
-    progress = await runner.run(anchors, max_years=1)
+    progress = await runner.run(anchors)
+    assert progress.complete, progress.incomplete
 
     results = await runner.first_boot_audits(progress.run_id, anchors)
 
@@ -720,3 +780,491 @@ async def test_the_years_view_shows_the_ages(application, anchors) -> None:
     assert rows
     assert rows[0]["age_start"] == 0
     assert rows[0]["months"] == 12
+
+
+# =============================================================================
+# Hardening (Phase 12 patch): the paths a happy run never touches.
+#
+# Every test below fails against d8b0600. They are the reason the phase went
+# back from STRUCTURALLY_COMPLETE.
+# =============================================================================
+
+
+class Faulty(Storyteller):
+    """A model that stops answering one kind of question after N calls."""
+
+    def __init__(self, *, stop_after: dict[str, int] | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.stop_after = stop_after or {}
+        self.seen: dict[str, int] = {}
+
+    async def generate(self, schema, messages, *, purpose: str, **kwargs):
+        self.seen[purpose] = self.seen.get(purpose, 0) + 1
+        limit = self.stop_after.get(purpose)
+        if limit is not None and self.seen[purpose] > limit:
+            return type("Outcome", (), {"ok": False, "value": None})()
+        return await super().generate(schema, messages, purpose=purpose, **kwargs)
+
+
+# --- 1: her past reaches the present ----------------------------------------
+
+
+def test_the_final_partial_year_exists(anchors) -> None:
+    """No gap may exist between the end of Genesis and FIRST_BOOT."""
+    last = anchors.years[-1]
+
+    assert last.complete is False
+    assert last.end == PRESENT
+    assert anchors.covers_to_present
+
+
+def test_a_present_on_a_birthday_has_no_partial_year() -> None:
+    """The one case where the last year really is complete."""
+    exact = LifeAnchors(
+        birth_datetime=BIRTH, present_datetime=datetime(2026, 3, 14, tzinfo=timezone.utc)
+    )
+
+    assert exact.years[-1].complete is True
+    assert exact.covers_to_present
+
+
+def test_a_partial_year_generates_only_the_months_that_happened(anchors) -> None:
+    """Generating twelve for a span covering ten would invent two months of a
+    life that has not happened."""
+    last = anchors.years[-1]
+    months = list(month_spans(last, BIRTH))
+
+    assert last.months == 10
+    assert len(months) == 10
+    # And the last of them stops at the present rather than a month boundary.
+    assert months[-1][2] == PRESENT
+    assert months[-1][2] < months[-1][1] + timedelta(days=31)
+
+
+async def test_a_run_that_stops_early_fails_the_coverage_audit(
+    application, anchors
+) -> None:
+    runner = _runner(application, Storyteller())
+    progress = await runner.run(anchors, max_years=3)
+
+    results = await runner.first_boot_audits(progress.run_id, anchors)
+
+    coverage = next(r for r in results if r.name == "coverage")
+    assert not coverage.passed
+    assert "missing" in coverage.detail
+
+
+async def test_the_partial_month_is_written(application, anchors) -> None:
+    runner = _runner(application, Storyteller())
+    progress = await runner.run(anchors)
+
+    years = application.life_records.years(progress.run_id)
+    final = application.life_records.months(years[-1]["year_id"])
+    assert len(final) == anchors.years[-1].months
+    assert final[-1]["month_end"].startswith(PRESENT.date().isoformat())
+
+
+# --- 2: checkpoints are postconditions --------------------------------------
+
+
+async def test_a_missing_scaffold_is_not_checkpointed(application, anchors) -> None:
+    """Missing model output is a retryable block, not completion."""
+    runner = _runner(application, Faulty(stop_after={"genesis_annual_scaffold": 2}))
+
+    progress = await runner.run(anchors, max_years=5)
+
+    assert not application.genesis_runs.reached(progress.run_id, "annual_scaffolds_done")
+    assert progress.incomplete
+    assert progress.retryable
+    assert not progress.complete
+
+
+async def test_missing_months_are_not_checkpointed(application, anchors) -> None:
+    runner = _runner(application, Faulty(stop_after={"genesis_month": 5}))
+
+    progress = await runner.run(anchors, max_years=1)
+
+    assert not application.genesis_runs.reached(progress.run_id, "year_months_done", 1)
+    assert any("months" in item for item in progress.incomplete)
+
+
+async def test_a_failed_synthesis_is_not_a_synthesised_year(
+    application, anchors
+) -> None:
+    runner = _runner(application, Faulty(stop_after={"genesis_annual_synthesis": 0}))
+
+    progress = await runner.run(anchors, max_years=1)
+
+    year = application.life_records.years(progress.run_id)[0]
+    assert year["final_summary"] == ""
+    assert year["status"] != "synthesised"
+    assert any("synthesis" in item for item in progress.incomplete)
+
+
+async def test_every_checkpoint_name_is_actually_written(
+    application, anchors
+) -> None:
+    """Hardening 8: a named checkpoint that is never written promises recovery
+    state that does not exist."""
+    runner = _runner(application, Storyteller())
+    progress = await runner.run(anchors, max_years=2)
+
+    written = {row["name"] for row in application.genesis_runs.checkpoints(progress.run_id)}
+    per_year = {
+        "year_months_done",
+        "year_critics_done",
+        "year_extraction_done",
+        "year_replay_done",
+        "year_memory_done",
+    }
+    assert per_year <= written, per_year - written
+    assert "annual_scaffolds_done" in written
+
+    await runner.first_boot_audits(progress.run_id, anchors)
+    # `final_audits_done` is the one that needs a complete run; it is not
+    # written here, and that is the postcondition doing its job.
+    assert set(CHECKPOINTS) - {"final_audits_done"} <= written | {"annual_scaffolds_done"}
+
+
+# --- 3: a blocked year stops the run ----------------------------------------
+
+
+class Blocking:
+    """Fails the critic for one specific year's months."""
+
+    def __init__(self, storyteller: Storyteller, *, fail_year_text: str) -> None:
+        self.inner = storyteller
+        self.fail_year_text = fail_year_text
+
+    async def generate(self, schema, messages, *, purpose: str, **kwargs):
+        if schema is CriticVerdict:
+            return type(
+                "Outcome",
+                (),
+                {
+                    "ok": True,
+                    "value": CriticVerdict(
+                        passed=False,
+                        issues=(
+                            CriticIssue(
+                                severity="fatal", target_id="m", code="CONTINUITY_BREAK"
+                            ),
+                        ),
+                    ),
+                },
+            )()
+        return await self.inner.generate(schema, messages, purpose=purpose, **kwargs)
+
+
+async def test_a_blocked_year_stops_every_later_year(application, anchors) -> None:
+    """Hardening 3. Continuing into year eight while year seven is known to be
+    wrong builds everything after it on a foundation being repaired."""
+    model = Blocking(Storyteller(), fail_year_text="")
+    board = CriticBoard(
+        audits=application.generation_audits,
+        structured=model,
+        prompts=application.prompts,
+        clock=application.clock,
+        enabled=("continuity",),
+    )
+    runner = _runner(application, model, critics=board)
+
+    progress = await runner.run(anchors, max_years=4)
+
+    assert progress.stopped_at == 1
+    assert not progress.complete
+    # Year 2 was never even reviewed, let alone replayed.
+    assert not application.genesis_runs.reached(progress.run_id, "year_critics_done", 2)
+    assert not application.genesis_runs.reached(progress.run_id, "year_replay_done", 2)
+    assert progress.experiences_replayed == 0
+
+
+async def test_an_unavailable_required_critic_stops_the_run(
+    application, anchors
+) -> None:
+    """Hardening 4, at run level: unverified is not verified."""
+
+    class NoCritic(Storyteller):
+        async def generate(self, schema, messages, *, purpose: str, **kwargs):
+            if schema is CriticVerdict:
+                raise RuntimeError("the model is gone")
+            return await super().generate(schema, messages, purpose=purpose, **kwargs)
+
+    model = NoCritic()
+    board = CriticBoard(
+        audits=application.generation_audits,
+        structured=model,
+        prompts=application.prompts,
+        clock=application.clock,
+        enabled=("continuity",),
+    )
+    runner = _runner(application, model, critics=board)
+
+    progress = await runner.run(anchors, max_years=3)
+
+    assert progress.stopped_at == 1
+    assert progress.unavailable_critics
+    assert progress.retryable, "an unreachable model is worth retrying"
+
+
+# --- 5: resume reconstructs context -----------------------------------------
+
+
+async def test_a_resume_mid_stage_a_reads_the_previous_year(
+    application, anchors
+) -> None:
+    """Hardening 5. Otherwise year four is handed a previous year of nothing
+    and her life restarts in the middle."""
+    partial = Faulty(stop_after={"genesis_annual_scaffold": 3})
+    runner = _runner(application, partial)
+    progress = await runner.run(anchors, max_years=5)
+    assert not application.genesis_runs.reached(progress.run_id, "annual_scaffolds_done")
+
+    resumed = Storyteller()
+    seen: list[str] = []
+
+    original = resumed.generate
+
+    async def watch(schema, messages, *, purpose: str, **kwargs):
+        if purpose == "genesis_annual_scaffold":
+            seen.append(str(messages[0].content))
+        return await original(schema, messages, purpose=purpose, **kwargs)
+
+    resumed.generate = watch  # type: ignore[method-assign]
+    await _runner(application, resumed).run(
+        anchors, resume=progress.run_id, max_years=5
+    )
+
+    assert seen, "the resume generated no scaffolds"
+    # Year 4's prompt carries year 3, not a dash.
+    assert any("静かな一年だった" in prompt or "読んでばかり" in prompt for prompt in seen)
+
+
+async def test_a_resume_mid_year_reads_the_previous_month(
+    application, anchors
+) -> None:
+    partial = Faulty(stop_after={"genesis_month": 4})
+    progress = await _runner(application, partial).run(anchors, max_years=1)
+    year = application.life_records.years(progress.run_id)[0]
+    assert 0 < len(application.life_records.months(year["year_id"])) < 12
+
+    resumed = Storyteller()
+    seen: list[str] = []
+    original = resumed.generate
+
+    async def watch(schema, messages, *, purpose: str, **kwargs):
+        if purpose == "genesis_month":
+            seen.append(str(messages[0].content))
+        return await original(schema, messages, purpose=purpose, **kwargs)
+
+    resumed.generate = watch  # type: ignore[method-assign]
+    await _runner(application, resumed).run(anchors, resume=progress.run_id, max_years=1)
+
+    assert seen
+    # Every regenerated month was handed a real previous month.
+    assert all("本を読んでいた" in prompt for prompt in seen), seen[0][:400]
+
+
+# --- 6: replay is crash-idempotent per experience ---------------------------
+
+
+async def test_a_crash_mid_replay_replays_nothing_twice(
+    application, anchors
+) -> None:
+    """The test the OWNER asked for by name.
+
+    A crash on experience 4 of 12 must leave the first three marked and the
+    resume start at the fourth. Marking the year at the end would replay all
+    twelve, and she would live the same fortnight twice.
+    """
+    storyteller = Storyteller(experiences=1)
+    runner = _runner(application, storyteller)
+    real_process = application.processor.process
+    processed: list[str] = []
+    budget = {"left": 4}
+
+    async def crash_after_four(event, **kwargs):
+        if event.event_type == SIMULATED_EXPERIENCE:
+            if budget["left"] <= 0:
+                raise RuntimeError("the process died")
+            budget["left"] -= 1
+            processed.append(event.event_id)
+        return await real_process(event, **kwargs)
+
+    application.processor.process = crash_after_four  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await runner.run(anchors, max_years=1)
+
+    run_id = application.genesis_runs.latest()["genesis_run_id"]
+    replayed_first = application.genesis_experiences.count(
+        genesis_run_id=run_id, replay_status="replayed"
+    )
+    assert replayed_first == 4
+    assert not application.genesis_runs.reached(run_id, "year_replay_done", 1)
+
+    # Resume with a working processor.
+    application.processor.process = real_process  # type: ignore[method-assign]
+    progress = await _runner(application, Storyteller(experiences=1)).run(
+        anchors, resume=run_id, max_years=1
+    )
+
+    assert progress.experiences_replayed == 12 - replayed_first
+    assert application.genesis_experiences.count(
+        genesis_run_id=run_id, replay_status="pending"
+    ) == 0
+    # Nothing lived twice: one event per experience, no duplicates.
+    event_ids = application.genesis_experiences.replayed_event_ids(run_id)
+    assert len(event_ids) == len(set(event_ids)) == 12
+
+
+async def test_extraction_is_persisted_before_replay(application, anchors) -> None:
+    """A crash between extraction and replay used to lose the extraction."""
+    storyteller = Storyteller(experiences=2)
+    runner = _runner(application, storyteller)
+    real_process = application.processor.process
+
+    async def refuse(event, **kwargs):
+        if event.event_type == SIMULATED_EXPERIENCE:
+            raise RuntimeError("died before replaying anything")
+        return await real_process(event, **kwargs)
+
+    application.processor.process = refuse  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await runner.run(anchors, max_years=1)
+    application.processor.process = real_process  # type: ignore[method-assign]
+
+    run_id = application.genesis_runs.latest()["genesis_run_id"]
+    assert application.genesis_runs.reached(run_id, "year_extraction_done", 1)
+    assert application.genesis_experiences.count(genesis_run_id=run_id) == 24
+    assert application.genesis_experiences.count(
+        genesis_run_id=run_id, replay_status="pending"
+    ) == 24
+
+
+async def test_re_extraction_produces_the_same_rows(application, anchors) -> None:
+    runner = _runner(application, Storyteller(experiences=2))
+    progress = await runner.run(anchors, max_years=1)
+    first = application.genesis_experiences.count(genesis_run_id=progress.run_id)
+
+    await _runner(application, Storyteller(experiences=2)).run(
+        anchors, resume=progress.run_id, max_years=1
+    )
+
+    assert application.genesis_experiences.count(genesis_run_id=progress.run_id) == first
+
+
+# --- 7: no audit passes because it could not look ---------------------------
+
+
+async def test_an_audit_without_its_dependency_fails(application, anchors) -> None:
+    """Hardening 7. "I could not check whether her memory is intact" and "her
+    memory is intact" are not the same sentence."""
+    from app.genesis.runner import GenesisRunner
+
+    blind = GenesisRunner(
+        runs=application.genesis_runs,
+        records=application.life_records,
+        entities=application.life_entities,
+        audits=application.generation_audits,
+        experiences=None,
+        memory=None,
+        knowledge_repo=None,
+        event_store=None,
+        clock=application.clock,
+    )
+    run_id = application.genesis_runs.start(
+        birth=BIRTH, present=PRESENT, years=19, now=application.clock.now()
+    )
+
+    results = await blind.first_boot_audits(run_id, anchors)
+
+    failed = {result.name for result in results if not result.passed}
+    for name in (
+        "experience_replay",
+        "memory_health",
+        "personality_growth",
+        "knowledge_chronology",
+        "no_real_user_before_first_boot",
+    ):
+        assert name in failed, f"{name} passed with no dependency to check"
+    assert not application.genesis_runs.reached(run_id, "final_audits_done")
+
+
+async def test_replayed_experiences_must_have_real_events(
+    application, anchors
+) -> None:
+    """A row marked replayed with no event behind it is a lie the audit catches.
+
+    Fabricated rather than produced by deleting events: the event store refuses
+    deletion, which is the immutability invariant doing its job. So this stages
+    experiences under a fresh run, marks them replayed with invented event ids,
+    and asks the audit whether it believes them.
+    """
+    run_id = application.genesis_runs.start(
+        birth=BIRTH, present=PRESENT, years=19, now=application.clock.now()
+    )
+    for sequence in range(3):
+        experience_id = application.genesis_experiences.stage(
+            genesis_run_id=run_id,
+            month_id=f"lmo_fake_{sequence}",
+            year_number=1,
+            sequence=sequence,
+            candidate=ExperienceCandidate(
+                occurred_at=datetime(2008, 6, 1, tzinfo=timezone.utc), action="でっちあげ"
+            ),
+        )
+        application.genesis_experiences.mark_replayed(
+            experience_id, event_id="evt_invented", now=application.clock.now()
+        )
+
+    results = await _runner(application, Storyteller()).first_boot_audits(
+        run_id, anchors
+    )
+
+    audit = next(r for r in results if r.name == "experience_replay")
+    assert not audit.passed
+    assert "marked replayed" in audit.detail
+
+
+async def test_an_empty_ledger_fails_continuity(application, anchors) -> None:
+    from app.genesis.runner import GenesisRunner
+
+    run_id = application.genesis_runs.start(
+        birth=BIRTH, present=PRESENT, years=19, now=application.clock.now()
+    )
+    runner = _runner(application, Storyteller())
+
+    results = await runner.first_boot_audits(run_id, anchors)
+
+    assert not next(r for r in results if r.name == "continuity").passed
+    assert not next(r for r in results if r.name == "npc_continuity").passed
+
+
+async def test_personality_growth_fails_when_replay_produced_nothing(
+    application, anchors
+) -> None:
+    """Experiences marked lived that produced no events mean the replay never
+    reached the psychological pipeline — the shape a `return True` audit hid."""
+    run_id = application.genesis_runs.start(
+        birth=BIRTH, present=PRESENT, years=19, now=application.clock.now()
+    )
+    experience_id = application.genesis_experiences.stage(
+        genesis_run_id=run_id,
+        month_id="lmo_fake",
+        year_number=1,
+        sequence=0,
+        candidate=ExperienceCandidate(
+            occurred_at=datetime(2008, 6, 1, tzinfo=timezone.utc), action="でっちあげ"
+        ),
+    )
+    application.genesis_experiences.mark_replayed(
+        experience_id, event_id="evt_invented", now=application.clock.now()
+    )
+
+    results = await _runner(application, Storyteller()).first_boot_audits(
+        run_id, anchors
+    )
+
+    audit = next(r for r in results if r.name == "personality_growth")
+    assert not audit.passed
+    assert "no events" in audit.detail

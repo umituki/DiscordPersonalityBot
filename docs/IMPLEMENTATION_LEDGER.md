@@ -695,6 +695,14 @@ today's clock is how a 2012 Genesis reads about 2025.
 | GEN-34.12 | Replay runs forwards through the ordinary processor | `GenesisRunner._replay` | — | `test_experiences_are_replayed_forwards` | `test_experiences_are_replayed_forwards` | `SIMULATED_EXPERIENCE` events | E2E_VERIFIED |
 | GEN-34.18/19 | Checkpoints, and a resume that relives nothing | `GenesisRunRepository.checkpoint`, migration 0028 | `test_the_checkpoint_names_are_the_specs`, `test_a_checkpoint_is_written_once` | `test_the_scaffold_is_not_regenerated_on_resume` | `test_a_resume_does_not_relive_a_year` | `genesis_checkpoints` | E2E_VERIFIED |
 | GEN-34.20 | Nine audits gate FIRST_BOOT_COMPLETE | `GenesisRunner.first_boot_audits` | `test_there_are_nine_first_boot_audits` | `test_the_audits_run_and_pass_on_a_clean_run` | `test_a_real_user_message_fails_the_audit`, `test_a_body_in_the_record_fails_the_identity_audit`, `test_future_knowledge_fails_the_chronology_audit` | `genesis_checkpoints` | E2E_VERIFIED |
+| GEN-H1 | Genesis covers birth → present with no gap, including the partial final year and month | `app/genesis/anchors.py` (`year_spans`, `month_spans`, `LifeYearSpan.complete`) | `test_the_final_partial_year_exists`, `test_a_present_on_a_birthday_has_no_partial_year`, `test_a_partial_year_generates_only_the_months_that_happened` | `test_the_partial_month_is_written` | `test_a_run_that_stops_early_fails_the_coverage_audit` | `!yui genesis years` | E2E_VERIFIED |
+| GEN-H2 | A checkpoint is a postcondition, never a place in the code | `GenesisRunner` (`_all_scaffolded`, month/synthesis/extraction gates) | `test_a_missing_scaffold_is_not_checkpointed`, `test_a_failed_synthesis_is_not_a_synthesised_year` | `test_missing_months_are_not_checkpointed` | `test_every_checkpoint_name_is_actually_written` | `genesis_checkpoints` | E2E_VERIFIED |
+| GEN-H3 | A blocked year stops the whole run, not just itself | `GenesisRunner.run` / `_year` returning proceed | — | `test_an_unavailable_required_critic_stops_the_run` | `test_a_blocked_year_stops_every_later_year` | `!yui genesis audits` | E2E_VERIFIED |
+| GEN-H4 | PASS / FAIL / UNAVAILABLE, and an unavailable required critic blocks | `app/genesis/critics.py` (`Review`, `REQUIRED`, `Outcome`) | `test_an_unavailable_optional_critic_does_not_block`, `test_unreadable_critic_output_is_not_approval` | `test_an_unavailable_required_critic_blocks` | `test_an_unavailable_required_critic_stops_the_run` | `generation_audits` | E2E_VERIFIED |
+| GEN-H5 | Resume rebuilds previous-year and previous-month context from rows | `GenesisRunner._previous_year_text`, `_previous_month_text` | — | `test_a_resume_mid_year_reads_the_previous_month` | `test_a_resume_mid_stage_a_reads_the_previous_year` | `life_years` / `life_months` | E2E_VERIFIED |
+| GEN-H6 | Replay is crash-idempotent per experience | migration 0029, `GenesisExperienceRepository`, `_replay` | `test_re_extraction_produces_the_same_rows` | `test_extraction_is_persisted_before_replay` | `test_a_crash_mid_replay_replays_nothing_twice` | `genesis_experiences.replay_status` | E2E_VERIFIED |
+| GEN-H7 | No audit passes because it could not look | `GenesisRunner.first_boot_audits` and the ten audits | `test_an_empty_ledger_fails_continuity` | `test_replayed_experiences_must_have_real_events`, `test_personality_growth_fails_when_replay_produced_nothing` | `test_an_audit_without_its_dependency_fails` | `!yui genesis audits` | E2E_VERIFIED |
+| GEN-H8 | Every named checkpoint corresponds to recoverable state | `GenesisRunner._year` (`year_memory_done`) | — | — | `test_every_checkpoint_name_is_actually_written` | `genesis_checkpoints` | E2E_VERIFIED |
 | GEN-GATE | A real nineteen-year run with a real model | — | — | — | — | — | DEFERRED_TO_FINAL_REAL_MACHINE_GATE |
 
 ### Phase 12 gate (spec 4.7)
@@ -716,12 +724,56 @@ today's clock is how a 2012 Genesis reads about 2025.
    the last one showing the failures, which is what GEN-CRITIC-001 needs.
 7. **Restart.** Checkpoints per stage and per year, uniquely indexed. A resume
    regenerates no scaffold and replays no experience twice.
-8. **Unit tests.** 1346 pass in total; 39 are new in `test_genesis_v2.py`.
+8. **Unit tests.** 1368 pass in total; 61 in `test_genesis_v2.py` — 39 from
+   the first cut and 22 from the hardening patch, every one of the latter
+   failing against the pre-patch commit.
 9. **Integration / E2E.** One year end to end with a scripted storyteller,
    plus each of the nine audits proven to *fail* when given a body, a real
    USER message, or knowledge from after the present.
 10. **Deferred.** `GEN-GATE` — a real nineteen-year run with a real model.
     `DEFERRED_TO_FINAL_REAL_MACHINE_GATE`.
+
+### Phase 12 hardening patch
+
+The first cut passed its happy-path tests and had eight holes on the
+resume/partial/failure paths. All eight are now closed, each with failure-path
+tests that fail against the pre-patch commit:
+
+1. **The last year was missing.** `year_spans` stopped at the last completed
+   birthday, so a present that is not a birthday left up to twelve months
+   between the end of her past and her first conversation. There is now a
+   partial final span, its final month is clipped at the present, and a
+   `coverage` audit (a tenth, beyond 34.20's nine) fails if the record does not
+   reach it.
+2. **Checkpoints were places in the code.** `annual_scaffolds_done` was written
+   after the loop whether or not every year had a scaffold. Each one is now a
+   postcondition — all years scaffolded, all months written, a non-empty
+   synthesis, nothing left pending — and missing model output leaves the run
+   incomplete and retryable instead of marked done.
+3. **A blocked year only stopped itself.** `_year` returned and the loop went on
+   to year eight, building on a year known to be wrong. A block now stops the
+   run and records where.
+4. **An unavailable critic was treated as approval.** Critics now report
+   PASS / FAIL / UNAVAILABLE; the four required ones block when unavailable,
+   and unreadable output counts as unavailable rather than as a pass. The block
+   is marked *retryable*, because "we could not check" is worth trying again
+   and "this is wrong" is not.
+5. **Resume reset continuity to `None`.** Previous year and previous month came
+   from local variables, so a resume mid-Stage-A handed year four an empty past.
+   Both are now read back from the records.
+6. **Replay was all-or-nothing per year.** Extraction lived in memory and the
+   year checkpoint was the only granularity, so a crash on experience 41 of 60
+   replayed all 60 — she lived the same fortnight twice. Candidates are now rows
+   with stable ids and per-experience replay status; migration 0029.
+7. **Three audits returned unconditional success.** `personality_growth` was
+   `return True`; `memory_health` and `npc_continuity` passed on empty inputs.
+   All ten now fail when their dependency is absent, and
+   `test_an_audit_without_its_dependency_fails` runs the whole set against a
+   runner with nothing wired.
+8. **`year_memory_done` was named and never written.** It now records a real
+   postcondition — every experience of the year encoded — and replay reaches
+   the Memory Engine, which it previously did not. That was found by the
+   `memory_health` audit failing honestly rather than by a test.
 
 **Phase 11's discipline is what makes 34.9 checkable.** The knowledge
 chronology audit reads `available_from` — the provenance column Phase 11 made

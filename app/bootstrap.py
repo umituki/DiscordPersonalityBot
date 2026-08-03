@@ -157,6 +157,7 @@ from app.storage.repositories import (
     ExposureRepository,
     FailureRepository,
     GenerationAuditRepository,
+    GenesisExperienceRepository,
     GenesisRunRepository,
     GoalRepository,
     GroupRepository,
@@ -252,6 +253,7 @@ class Application:
     investigation: InvestigationService
     genesis_runner: GenesisRunner
     genesis_runs: GenesisRunRepository
+    genesis_experiences: GenesisExperienceRepository
     life_records: LifeRecordRepository
     life_entities: LifeEntityRepository
     generation_audits: GenerationAuditRepository
@@ -824,11 +826,13 @@ class Application:
         life_record_repo = LifeRecordRepository(db)
         life_entity_repo = LifeEntityRepository(db)
         generation_audit_repo = GenerationAuditRepository(db)
+        genesis_experience_repo = GenesisExperienceRepository(db)
         genesis_runner = GenesisRunner(
             runs=genesis_run_repo,
             records=life_record_repo,
             entities=life_entity_repo,
             audits=generation_audit_repo,
+            experiences=genesis_experience_repo,
             critics=CriticBoard(
                 audits=generation_audit_repo,
                 structured=structured,
@@ -839,6 +843,7 @@ class Application:
             prompts=prompts,
             processor=processor,
             memory=memory_repo,
+            memory_engine=memory_engine,
             society=society_service,
             knowledge_repo=knowledge_repo,
             event_store=event_store,
@@ -1205,6 +1210,7 @@ class Application:
             investigation=investigation,
             genesis_runner=genesis_runner,
             genesis_runs=genesis_run_repo,
+            genesis_experiences=genesis_experience_repo,
             life_records=life_record_repo,
             life_entities=life_entity_repo,
             generation_audits=generation_audit_repo,
