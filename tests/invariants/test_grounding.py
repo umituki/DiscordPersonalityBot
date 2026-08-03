@@ -45,7 +45,9 @@ def guard(policy: GroundingPolicy) -> ClaimGroundingGuard:
 
 
 def _activity(name: str) -> Evidence:
-    return Evidence(kind="activity", reference="act_1", summary=name, occurred_at=NOW)
+    return Evidence(
+        kind="activity", reference="act_1", summary=name, occurred_at=NOW, subject="yui"
+    )
 
 
 # --- 15.2: what counts as a claim -------------------------------------------
@@ -119,6 +121,43 @@ def test_the_wrong_kind_of_evidence_does_not_support_it(
 def test_a_tool_claim_needs_a_tool_call(guard: ClaimGroundingGuard) -> None:
     """Spec 26: only the Tool Manager can make a tool claim sayable."""
     assert not guard.review("調べてみたら、そうだった。", GroundingContext()).accepted
+
+
+def test_what_the_user_said_does_not_evidence_what_she_did(
+    guard: ClaimGroundingGuard,
+) -> None:
+    """15.3, found while writing the Phase 3 scenarios.
+
+    The USER says 「小説読むの好き」. That message is a real objective event, and
+    it shares the word 小説 with 「昨日わたしも小説を読んだよ」 — which was enough
+    to support it, because the resolver only asked whether the evidence was of
+    an accepted kind and about the same thing. Sharing a topic with something
+    the USER said is not having done it.
+    """
+    context = GroundingContextBuilder(events=_UserSaidEvents()).build(now=NOW)
+
+    assert context.recent_objective_events  # the message is genuinely there
+    assert not guard.review("昨日わたしも小説を読んだよ。", context).accepted
+
+
+def test_her_own_action_event_still_evidences_her_claim(
+    guard: ClaimGroundingGuard,
+) -> None:
+    """The narrowing must not close the legitimate path with the illegitimate
+    one: an event recording something *she* did still counts."""
+    context = GroundingContextBuilder(events=_YuiDidEvents()).build(now=NOW)
+
+    assert guard.review("昨日わたしも小説を読んだよ。", context).accepted
+
+
+class _UserSaidEvents:
+    def recent(self, *, limit: int = 40):
+        return [_FakeEvent("USER_MESSAGE_RECEIVED", "social", "user", "小説読むの好き")]
+
+
+class _YuiDidEvents:
+    def recent(self, *, limit: int = 40):
+        return [_FakeEvent("ACTIVITY_COMPLETED", "action", "yui", "小説を読んだ")]
 
 
 def test_a_memory_claim_is_grounded_by_a_recalled_memory(

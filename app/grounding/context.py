@@ -106,7 +106,12 @@ class GroundingContextBuilder:
             if text in (None, ""):
                 continue
             found.append(
-                Evidence(kind="world_state", reference=f"world.{key}", summary=str(text))
+                Evidence(
+                    kind="world_state",
+                    reference=f"world.{key}",
+                    summary=str(text),
+                    subject="world",
+                )
             )
         return tuple(found)
 
@@ -122,6 +127,7 @@ class GroundingContextBuilder:
                 reference=activity.activity_id,
                 summary=activity.name,
                 occurred_at=activity.started_at,
+                subject="yui",
             ),
         )
 
@@ -136,6 +142,7 @@ class GroundingContextBuilder:
                 reference=activity.activity_id,
                 summary=f"{activity.name}{'' if activity.outcome is None else ' ' + activity.outcome}",
                 occurred_at=activity.ended_at,
+                subject="yui",
             )
             # ``has_happened`` is the spec 18.2 distinction: a plan is not a
             # completed event, and only a completed event grounds 「した」.
@@ -162,6 +169,10 @@ class GroundingContextBuilder:
                     reference=event.event_id,
                     summary=summary,
                     occurred_at=event.occurred_at,
+                    # Whose doing this records. A USER message is a fact about
+                    # the USER; treating it as a fact about YUI is how 「小説
+                    # 読むの好き」 came to support 「昨日わたしも小説を読んだよ」.
+                    subject=_subject_of(event),
                 )
             )
         return tuple(found)
@@ -176,6 +187,7 @@ class GroundingContextBuilder:
                 reference=belief.belief_id,
                 summary=belief.statement,
                 occurred_at=belief.updated_at,
+                subject="user",
             )
             for belief in held
         )
@@ -201,7 +213,12 @@ class GroundingContextBuilder:
             return ()
         call_ids = _safe(lambda: self._tools.successful_call_ids(run_id=run_id)) or ()
         return tuple(
-            Evidence(kind="tool_call", reference=str(call_id), summary=str(call_id))
+            Evidence(
+                kind="tool_call",
+                reference=str(call_id),
+                summary=str(call_id),
+                subject="yui",
+            )
             for call_id in call_ids
         )
 
@@ -224,6 +241,21 @@ class GroundingContextBuilder:
         )
 
 
+#: Which actor an event's doing belongs to.
+_ACTOR_SUBJECTS: dict[str, str] = {
+    "yui": "yui",
+    "user": "user",
+    "npc": "other",
+    "admin": "user",
+    "world": "world",
+    "system": "world",
+}
+
+
+def _subject_of(event: Any) -> str:
+    return _ACTOR_SUBJECTS.get(str(getattr(event, "actor_type", "")), "unknown")
+
+
 def _from_recalled(recalled: Sequence[Any]) -> tuple[Evidence, ...]:
     """The memories the retriever already returned for this turn.
 
@@ -242,6 +274,7 @@ def _from_recalled(recalled: Sequence[Any]) -> tuple[Evidence, ...]:
                 reference=getattr(memory, "memory_id", ""),
                 summary=str(summary),
                 occurred_at=getattr(memory, "occurred_at", None),
+                subject="yui",
             )
         )
     return tuple(found)

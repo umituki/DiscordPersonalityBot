@@ -37,7 +37,13 @@ NOW = datetime(2026, 8, 2, 12, 0, tzinfo=timezone.utc)
 CLAIMED = "今日は本を読んだよ。"
 SUPPORTING = GroundingContext(
     completed_activities_today=(
-        Evidence(kind="activity", reference="act_1", summary="本を読む", occurred_at=NOW),
+        Evidence(
+            kind="activity",
+            reference="act_1",
+            summary="本を読む",
+            occurred_at=NOW,
+            subject="yui",
+        ),
     )
 )
 

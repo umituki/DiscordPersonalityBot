@@ -6,7 +6,13 @@ import logging
 import re
 from dataclasses import dataclass
 
-from app.grounding.models import Claim, Evidence, GroundedClaim, GroundingContext
+from app.grounding.models import (
+    SELF_CLAIM_KINDS,
+    Claim,
+    Evidence,
+    GroundedClaim,
+    GroundingContext,
+)
 from app.grounding.policy import GroundingPolicy
 
 logger = logging.getLogger(__name__)
@@ -117,9 +123,17 @@ class ClaimGroundingGuard:
 
     @staticmethod
     def _resolve(claim: Claim, context: GroundingContext) -> tuple[Evidence, ...]:
-        """Spec 15.3. The evidence must be of an accepted kind *and* about the
-        thing being claimed — a completed walk does not make a book real."""
+        """Spec 15.3. Evidence must be of an accepted kind, about the thing
+        being claimed, and — for a claim about YUI's own doing — about *her*.
+
+        The last of those was learned the hard way: with only the first two,
+        the USER saying 「小説読むの好き」 was enough to support 「昨日わたしも小説
+        を読んだよ」, because the two sentences share the word. Sharing a topic
+        with something the USER said is not having done it.
+        """
         candidates = context.of_kinds(claim.accepted_evidence)
+        if claim.kind in SELF_CLAIM_KINDS:
+            candidates = tuple(item for item in candidates if item.is_yuis_own)
         return tuple(item for item in candidates if item.matches(claim.text))
 
 

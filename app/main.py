@@ -21,6 +21,7 @@ from app.admin.rebuild import RebuildRefused
 from app.admin.repair import CONFIRMATION, RepairRefused
 from app.admin.shadow import rebuild_genesis, replay_real_history
 from app.bootstrap import Application, StartupError
+from app.conversation.surface import BANDS
 from app.memory.recall_mode import RecallMode
 from app.config import AppConfig, ConfigError, load_config
 from app.interfaces.discord.gateway import DiscordGateway
@@ -88,6 +89,17 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         choices=[mode.value for mode in RecallMode],
         help="force a recall mode instead of inferring one from the query",
+    )
+    conversation_plan = subparsers.add_parser(
+        "conversation-plan",
+        help="what would be decided for this message, before any sentence (Phase 3)",
+    )
+    conversation_plan.add_argument("message", help="the USER message to read")
+    conversation_plan.add_argument(
+        "--band",
+        default="acquaintance",
+        choices=list(BANDS),
+        help="pretend the relationship is at this band",
     )
     repair = subparsers.add_parser(
         "repair", help="rebuild a broken Genesis in a shadow database (23.4)"
@@ -526,6 +538,54 @@ def _memory_find(
         application.db.close()
 
 
+def _conversation_plan(
+    config_file: Path | None, message: str, band: str, root: Path | None = None
+) -> int:
+    """Phase 3 §46. What the turn would decide, without deciding anything.
+
+    This runs the *same* ``plan_turn`` the reply path runs — a preview that took
+    a different path would be a preview of a different system. It stops before
+    the realizer, writes nothing and sends nothing.
+    """
+    config = load_config(config_file, root_dir=root)
+    config.ensure_directories()
+    configure_logging(level=config.logging.level, log_file=config.log_path)
+    application = Application.build(config, auto_migrate=False, configure_logs=False)
+    try:
+        social, surface, hints, references = asyncio.run(
+            application.conversation_engine.plan_turn(
+                user_text=message, relationship_band=band  # type: ignore[arg-type]
+            )
+        )
+        sys.stdout.write(
+            "social:\n"
+            f"  primary_move: {social.primary_move}\n"
+            f"  secondary_move: {social.secondary_move}\n"
+            f"  question: {social.question}\n"
+            f"  tone: {social.tone}\n"
+            f"  response_energy: {social.response_energy}\n"
+            f"  topic_direction: {social.topic_direction}\n"
+            f"  user_state_hint: {social.user_state_hint}\n"
+            f"  self_disclosure: {social.self_disclosure}\n"
+            f"  source: {social.source}\n"
+            "\nsurface:\n"
+            f"  length: {surface.length}\n"
+            f"  register: {surface.register}\n"
+            f"  directness: {surface.directness}\n"
+            f"  question_budget: {surface.question_budget}\n"
+            f"  initiative: {surface.initiative}\n"
+            f"  relationship_band: {surface.relationship_band}\n"
+            "\nreferences:\n"
+            f"  {len(references)}\n"
+            "\nstyle hints:\n"
+            f"  {hints.render() or '(none)'}\n"
+            "\nNo state mutation.\n"
+        )
+        return 0
+    finally:
+        application.db.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -551,6 +611,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.command == "memory-find":
             return _memory_find(args.config, args.query, args.mode, args.root)
+        if args.command == "conversation-plan":
+            return _conversation_plan(args.config, args.message, args.band, args.root)
         if args.command == "repair":
             return _repair(
                 args.config,

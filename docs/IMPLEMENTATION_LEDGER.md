@@ -174,6 +174,75 @@ the safe direction, and both are what the real-Ollama gate would measure.
 
 ---
 
+## Phase 3 — Human Conversation / Japanese
+
+| Spec ID | Requirement | Code | Unit Test | Integration Test | E2E Runtime Proof | Debug Path | Status |
+|---|---|---|---|---|---|---|---|
+| CONV-10 | One SocialInterpretation call per turn, in meaning categories | `app/conversation/social_interpretation.py`, `config/prompts/social_interpretation/v1.md` | `test_the_interpretation_has_no_numeric_fields`, `test_an_invented_move_is_refused` | `test_an_unavailable_model_produces_the_minimal_reading` | `test_the_whole_realization_path_fires` | `python -m app.main conversation-plan` | E2E_VERIFIED |
+| CONV-001 | A short USER message is read with the previous turn, not alone | `app/conversation/social_interpretation.py` (prompt), `ConversationEngine.plan_turn` | `test_the_schema_stays_small` | `test_scenario_c_no_errand_is_not_an_errand_to_find` | `test_the_whole_realization_path_fires` | `conversation-plan` | E2E_VERIFIED |
+| CONV-002 | A short question after her own claim may be a challenge | `app/conversation/common_ground.py` (`detect_correction`) | `test_a_flat_denial_is_stronger_than_a_question` | `test_a_short_question_with_nothing_outstanding_is_just_a_question` | `test_scenario_f_a_correction_survives_the_surface_layer` | `common_ground_claims` | E2E_VERIFIED |
+| CONV-3.6 | The USER's feelings are hinted at, never declared | `app/conversation/social_interpretation.py` (`UserStateHint`) | `test_there_is_no_field_that_declares_how_the_user_feels`, `test_every_user_state_value_is_hedged` | `test_the_hint_reaches_the_prompt_as_a_hint` | `test_scenario_e_something_heavy_is_not_over_counselled` | `conversation-plan` | E2E_VERIFIED |
+| CONV-3.7 | Common Ground outranks the interpreter on correction | `app/conversation/social_interpretation.py` (`with_correction`) | `test_a_retraction_overrides_whatever_the_model_read` | `test_no_correction_leaves_the_reading_alone` | `test_scenario_f_a_correction_survives_the_surface_layer` | `common_ground_claims.resolved_reason` | E2E_VERIFIED |
+| SURF-14 | SurfacePlan is Python-only and never writes Japanese | `app/conversation/surface.py` | `test_python_does_not_assemble_japanese`, `test_the_planner_never_calls_a_model` | `test_a_short_message_gets_a_short_reply_plan` | `test_scenario_b_a_one_word_message_is_not_answered_with_a_speech` | `conversation-plan` | E2E_VERIFIED |
+| SURF-3.19 | Question need becomes a budget of 0 or 1, never a rate | `app/conversation/surface.py` (`question_budget`) | `test_the_question_budget_is_a_count` | `test_a_tired_user_is_not_interrogated` | `test_scenario_e_something_heavy_is_not_over_counselled` | `conversation-plan` | E2E_VERIFIED |
+| SURF-3.16 | Relationship is a band with hysteresis | `app/conversation/surface.py` (`relationship_band`), `app/conversation/service.py` | `test_a_band_does_not_flicker_across_its_edge` | `test_a_stranger_is_addressed_politely_and_a_friend_is_not` | `test_the_same_message_is_planned_differently_by_distance` | `conversation-plan --band` | E2E_VERIFIED |
+| SURF-3.22 | An experience may only be disclosed if something says it happened | `app/conversation/surface.py`, `app/grounding/claims.py` (`SELF_CLAIM_KINDS`) | `test_an_ungrounded_experience_is_capped_at_an_opinion` | `test_what_the_user_said_does_not_evidence_what_she_did` | `test_scenario_d_a_fabricated_experience_is_still_stopped` | `failures.reason_code` | E2E_VERIFIED |
+| STYLE-3.18 | Repetition produces a hint, never a rejection | `app/conversation/repetition.py` | `test_an_overused_opening_is_reported`, `test_the_monitor_rejects_nothing` | `test_using_the_same_backchannel_twice_is_not_reported` | `test_the_whole_realization_path_fires` | realizer prompt | E2E_VERIFIED |
+| REF-13.2 | A DialogueReferenceProvider is defined **and actually called** | `app/conversation/references.py`, `config/references/fixture_ja.yaml` | `test_the_corpus_declares_its_terms`, `test_at_most_five_examples_are_offered` | `test_the_query_carries_the_decided_shape` | `test_the_reference_corpus_reaches_the_realizer_prompt` | realizer prompt | E2E_VERIFIED |
+| REF-13.3 | Corpus text can never become memory or common ground | `app/conversation/references.py` (`DialogueReference` has no memory shape) | `test_a_reference_has_none_of_the_shape_of_a_memory` | `test_corpus_text_never_becomes_a_conversation_turn` | `test_corpus_text_never_becomes_a_conversation_turn` | `episodic_memories` | E2E_VERIFIED |
+| REF-3.28 | A missing or broken corpus is not an outage | `app/conversation/engine.py` (`_retrieve_references`), `app/bootstrap.py` | `test_a_corpus_without_provenance_is_refused` | `test_no_corpus_is_not_an_outage` | `test_a_broken_corpus_is_not_an_outage` | manifest `dialogue_reference_source` | E2E_VERIFIED |
+| REAL-13.4 | The realizer receives every input and emits only `{"text": ...}` | `config/prompts/conversation_reply/v7.md`, `app/conversation/models.py` (`ReplyDraft`) | `test_engine_builds_identity_and_history_into_the_prompt` | `test_scenario_g_an_uncertain_memory_is_hedged_without_internal_words` | `test_the_whole_realization_path_fires` | `llm_calls` (`purpose='conversation_reply'`) | E2E_VERIFIED |
+| NAT-3.36 | Naturalness is measured, never enforced at runtime | `app/evaluation/naturalness.py` | `test_the_reply_path_does_not_import_the_evaluator`, `test_the_evaluator_returns_rates_rather_than_a_verdict` | `test_a_reply_that_always_ends_in_a_question_is_visible` | — | `app/evaluation/naturalness.py` | WIRED (measured offline; no runtime trigger by design) |
+| OBS-3.47 | The stages Phase 3 added are separately timed | `app/observability/trace.py`, migration 0021 | `test_every_stage_of_the_spec_is_markable` | `test_a_whole_turn_is_traced` | `test_the_trace_shows_the_stages_phase_three_added` | `python -m app.main latency` | E2E_VERIFIED |
+| GATE-3 | Real-Ollama regression for Phases 1+2+3 | — | — | — | — | — | NOT_STARTED (needs a real Ollama host) |
+
+### Phase 3 gate (spec 4.7)
+
+1. **Spec IDs implemented.** CONV-10, CONV-001, CONV-002, CONV-3.6, CONV-3.7,
+   SURF-14, SURF-3.19, SURF-3.16, SURF-3.22, STYLE-3.18, REF-13.2, REF-13.3,
+   REF-3.28, REAL-13.4, OBS-3.47. NAT-3.36 is `WIRED` on purpose — it is an
+   offline evaluator and having a runtime trigger would make it a guard.
+2. **Runtime trigger.** An accepted USER Discord message, through
+   `ConversationService.handle_inbound`; `python -m app.main conversation-plan`
+   for the preview.
+3. **Events produced.** `USER_MESSAGE_RECEIVED`, then `YUI_MESSAGE_SENT` on a
+   confirmed delivery or `YUI_REPLY_SUPPRESSED`.
+4. **Rows written.** `conversation_traces` now carries
+   `social_interpretation_*`, `reference_retrieval_*` and `realization_*`;
+   `llm_calls` carries one `social_interpretation` and one
+   `conversation_reply` per ordinary turn.
+5. **State change.** None new. Phase 3 changes what is said, not what is
+   committed — the relationship band is read, never written.
+6. **Debug.** `python -m app.main conversation-plan "今日は疲れた"` prints the
+   social reading, the surface plan and the reference count, and mutates
+   nothing.
+7. **Restart.** Nothing new to survive: the plan is per-turn. The relationship
+   band resets to the committed familiarity on restart, which is correct —
+   hysteresis is about not flickering within a conversation, not about
+   remembering a hesitation across a reboot.
+8. **Unit tests.** 1063 pass in total; 76 are new in this phase.
+9. **Integration / E2E.** `test_the_whole_realization_path_fires`,
+   `test_the_reference_corpus_reaches_the_realizer_prompt`,
+   `test_the_trace_shows_the_stages_phase_three_added`, scenarios A-G in
+   `tests/invariants/test_conversation_realization_e2e.py`, and the
+   three-distance test of §40.
+10. **Not done.** The combined real-Ollama gate for Phases 1+2+3 — the fixed
+    question set, the known hallucination cases, the question-rate and
+    repetition runs, and the latency check against `median <= 15s / p95 <= 30s`
+    — has not been run, because this container has no Ollama host. Phase 4
+    should not start until it has.
+
+Two limits worth stating. `SocialInterpretation` costs one model call per turn
+that the previous design also spent on the dialogue decision, so the call count
+per ordinary reply is unchanged at two (plus memory rerank when there are
+candidates); but the prompt is longer, and only hardware will say what that
+costs. And the reference corpus shipped here is a ten-example developer fixture,
+not a linguistic resource — it exercises the path and calibrates almost nothing.
+Adding a real corpus is gated on checking its licence, which is why the
+provenance fields are mandatory.
+
+---
+
 ## Phases 3-15
 
 Rows are added when the phase starts. Adding them early with optimistic
@@ -181,7 +250,6 @@ statuses is exactly the failure this ledger exists to prevent.
 
 | Phase | Subject | Status |
 |---|---|---|
-| 3 | Human conversation / Japanese | NOT_STARTED |
 | 4 | Response intent / intentional silence | NOT_STARTED |
 | 5 | Admin / debug router | NOT_STARTED |
 | 6 | Autonomous Runtime | NOT_STARTED |
@@ -205,6 +273,7 @@ The contracts are the source of truth; this is a snapshot for reading.
 | Capability | Status |
 |---|---|
 | normal_reply | WIRED |
+| natural_conversation_realization | E2E_VERIFIED |
 | intentional_silence | NOT_STARTED |
 | activity | NOT_STARTED |
 | sleep | NOT_STARTED |
@@ -218,7 +287,10 @@ The contracts are the source of truth; this is a snapshot for reading.
 | web_search | CODE_ONLY |
 | genesis | CODE_ONLY |
 
-Nothing is `E2E_VERIFIED` yet. `web_search` and `genesis` are `CODE_ONLY`
+`natural_conversation_realization` is the first `E2E_VERIFIED` capability: a
+real inbound message drives interpretation, planning, reference lookup,
+realization, the hard gates and delivery, and the test asserts the rows.
+`web_search` and `genesis` are `CODE_ONLY`
 because their engines exist and nothing in the running system drives them the
 way this spec requires — which is the honest reading of §0, not a downgrade of
 work already done.

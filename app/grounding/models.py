@@ -83,6 +83,16 @@ ACCEPTED_EVIDENCE: dict[ClaimKind, tuple[EvidenceKind, ...]] = {
 }
 
 
+#: Whose doing the evidence records. A ``USER_MESSAGE_RECEIVED`` event is a
+#: fact about the USER; it is not a fact about YUI, however much of its wording
+#: a claim about YUI happens to share.
+EvidenceSubject = Literal["yui", "user", "other", "world", "unknown"]
+
+#: Claims about YUI's own doing and perceiving, which only YUI's own actions can
+#: evidence. The USER saying 「小説読むの好き」 does not mean she read one.
+SELF_CLAIM_KINDS: frozenset[str] = frozenset({"yui_completed_action", "yui_perception"})
+
+
 @dataclass(frozen=True, slots=True)
 class Evidence:
     """One thing that is actually known, and where it came from."""
@@ -91,6 +101,17 @@ class Evidence:
     reference: str
     summary: str
     occurred_at: datetime | None = None
+    subject: EvidenceSubject = "unknown"
+
+    @property
+    def is_yuis_own(self) -> bool:
+        """Whether this records something *she* did or the world did to her.
+
+        Unattributed evidence does not count. Requiring the attribution rather
+        than assuming it is the same choice made everywhere else in grounding:
+        a missing fact makes the gate stricter, never looser.
+        """
+        return self.subject in ("yui", "world")
 
     def matches(self, text: str) -> bool:
         """Whether this evidence is about what the claim is about.

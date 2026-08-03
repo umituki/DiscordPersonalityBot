@@ -40,6 +40,8 @@ STATUSES: tuple[str, ...] = ("NOT_STARTED", "CODE_ONLY", "WIRED", "E2E_VERIFIED"
 #: is a capability nobody has thought about yet, which is itself the finding.
 REQUIRED_CAPABILITIES: tuple[str, ...] = (
     "normal_reply",
+    # Rebuild spec Phase 3 §45.
+    "natural_conversation_realization",
     "intentional_silence",
     "activity",
     "sleep",

@@ -321,15 +321,32 @@ def test_an_unknown_status_is_an_error(tmp_path) -> None:
         load_contracts(tmp_path)
 
 
-def test_nothing_claims_to_be_finished_yet() -> None:
+#: Capabilities that have been driven end to end, named one at a time as the
+#: phase that verified them lands. Rebuild spec 4.4: instantiation is not
+#: completion, so this list may only grow deliberately.
+VERIFIED_CAPABILITIES: frozenset[str] = frozenset({
+    # Phase 3: a real inbound message drives interpretation, planning,
+    # reference lookup, realization, the hard gates and delivery, and
+    # tests/invariants/test_conversation_realization_e2e.py asserts the rows.
+    "natural_conversation_realization",
+})
+
+
+def test_only_the_named_capabilities_claim_to_be_finished() -> None:
     """Rebuild spec 4.4: instantiation is not completion.
 
-    This asserts the *honest* current state. When a capability genuinely
-    reaches E2E_VERIFIED this test is updated with it — deliberately, as part
-    of that phase, rather than drifting upward on its own.
+    This asserts the *honest* current state. A capability reaching
+    E2E_VERIFIED has to be added here by the phase that verified it, so the
+    count cannot drift upward on its own.
     """
-    counts = summary(load_contracts(CAPABILITY_DIR))
-    assert counts["E2E_VERIFIED"] == 0
+    contracts = load_contracts(CAPABILITY_DIR)
+    verified = {
+        name for name, contract in contracts.items() if contract.status == "E2E_VERIFIED"
+    }
+    assert verified == VERIFIED_CAPABILITIES
+
+    counts = summary(contracts)
+    assert counts["E2E_VERIFIED"] == len(VERIFIED_CAPABILITIES)
 
 
 # --- REB-4.2: the ledger -----------------------------------------------------
