@@ -191,7 +191,7 @@ async def test_repair_is_told_the_memory_situation(application, clock) -> None:
             "SemanticClaimReview": (
                 '{"claims": [{"proposition": "YUIは去年の夏のことを覚えている", '
                 '"trigger": "よく覚えているよ", "subject": "yui", '
-                '"category": "yui_memory_claim", "modality": "assertion", '
+                '"category": "yui_specific_memory_recall", "modality": "assertion", '
                 '"temporal_scope": "distant_past", "supporting_ids": [], '
                 '"contradicting_ids": []}]}'
             ),
@@ -220,7 +220,7 @@ async def test_a_memory_claim_with_nothing_recalled_is_not_supported(
             "SemanticClaimReview": (
                 '{"claims": [{"proposition": "YUIは去年の夏のことを覚えている", '
                 '"trigger": "よく覚えているよ", "subject": "yui", '
-                '"category": "yui_memory_claim", "modality": "assertion", '
+                '"category": "yui_specific_memory_recall", "modality": "assertion", '
                 '"temporal_scope": "distant_past", "supporting_ids": [], '
                 '"contradicting_ids": []}]}'
             ),

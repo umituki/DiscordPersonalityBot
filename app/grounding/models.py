@@ -36,7 +36,10 @@ ClaimKind = Literal[
     # Folding them into one kind is what forced a second reviewer to exist.
     "yui_specific_memory_recall",
     "yui_general_memory_capability",
-    #: Legacy alias for specific recall, kept so older rows still parse.
+    #: Pre-migration alias for specific recall. **Read-only.** It survives in
+    #: this Literal so that Common Ground rows written before the split still
+    #: parse, and nowhere else: the reviewer schema cannot produce it, and the
+    #: resolver refuses it. See LEGACY_CLAIM_KINDS.
     "yui_memory_claim",
     "user_past_fact",
     "npc_fact",
@@ -57,6 +60,24 @@ CLAIM_KINDS: tuple[ClaimKind, ...] = (
     "tool_use",
     "external_knowledge_claim",
     "current_world_fact",
+)
+
+#: Categories a *new* claim may be classified as.
+#:
+#: The distinction is the point. `yui_memory_claim` predates the split into
+#: "she is recalling this particular thing" and "this is how her memory works",
+#: and it accepted the union of both categories' evidence. A reviewer that
+#: chose it therefore got a looser rule than either of the categories that
+#: replaced it — 「去年の夏のこと覚えている」 could be settled by an objective
+#: event, which proves the summer happened and nothing about whether she can
+#: bring it to mind.
+#:
+#: Keeping the alias readable while making it unreachable is the whole design:
+#: old rows still deserialize, new drafts cannot get near it.
+LEGACY_CLAIM_KINDS: frozenset[str] = frozenset({"yui_memory_claim"})
+
+RUNTIME_CLAIM_KINDS: tuple[ClaimKind, ...] = tuple(
+    kind for kind in CLAIM_KINDS if kind not in LEGACY_CLAIM_KINDS
 )
 
 #: What can stand behind a claim. Every one of these is a row somebody else
@@ -111,12 +132,12 @@ ACCEPTED_EVIDENCE: dict[ClaimKind, tuple[EvidenceKind, ...]] = {
     # A statement about how her memory behaves is settled by the Memory
     # subsystem's own immutable facts, and by nothing she happens to recall.
     "yui_general_memory_capability": ("memory_authority",),
-    "yui_memory_claim": (
-        "subjective_memory",
-        "objective_event",
-        "diary_entry",
-        "memory_authority",
-    ),
+    # The retired alias. Narrowed to match the category it was an alias *for*,
+    # so that even if something reached it the rule would be no looser than
+    # `yui_specific_memory_recall`. It accepted `objective_event` and
+    # `diary_entry`, which is the path this round closed: nothing that merely
+    # proves an event occurred may settle a claim about remembering it.
+    "yui_memory_claim": ("subjective_memory",),
     "user_past_fact": ("objective_event", "verified_user_fact", "subjective_memory"),
     "npc_fact": ("npc_interaction", "objective_event"),
     "tool_use": ("tool_call",),
@@ -386,6 +407,8 @@ __all__ = [
     "ACCEPTED_EVIDENCE",
     "GROUNDING_SECTIONS",
     "CLAIM_KINDS",
+    "LEGACY_CLAIM_KINDS",
+    "RUNTIME_CLAIM_KINDS",
     "Claim",
     "ClaimKind",
     "Evidence",

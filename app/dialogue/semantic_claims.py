@@ -37,8 +37,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.grounding.models import (
     ACCEPTED_EVIDENCE,
+    RUNTIME_CLAIM_KINDS,
     Claim,
-    ClaimKind,
     Evidence,
     GroundedClaim,
     GroundingContext,
@@ -58,17 +58,17 @@ PROMPT_ID = "semantic_claim_review"
 PURPOSE = "semantic_claim_review"
 
 #: Audit finding 2 (round 2). Categories that assert she is *currently*
-#: remembering something. For these, a stored memory row is not enough: the row
+#: remembering something. For these a stored memory row is not enough: the row
 #: has to be one this turn's retrieval actually returned.
 #:
-#: The restriction applies to the ``subjective_memory`` rows only, because they
-#: are the ones that stand for "she brought this to mind". A
-#: ``memory_authority`` fact is a property of the Memory subsystem rather than
-#: of this turn, so it settles a capability statement without being recalled.
-#: For ``yui_specific_memory_recall`` the distinction is moot — a subjective
-#: memory is the only kind it accepts at all.
+#: Only ``yui_specific_memory_recall`` is here, and that is now exact rather
+#: than approximate — it accepts ``subjective_memory`` and nothing else, so
+#: "cited evidence" and "cited a memory" are the same statement. The retired
+#: ``yui_memory_claim`` used to be in this set too, with a kind guard bolted on
+#: because it accepted four kinds; it is unreachable now, which removes the
+#: need for the guard and the hole the guard left.
 RECALL_REQUIRED_CATEGORIES: frozenset[str] = frozenset(
-    {"yui_specific_memory_recall", "yui_memory_claim"}
+    {"yui_specific_memory_recall"}
 )
 
 #: Whose life a claim is about. Kept separate from the claim kind because the
@@ -76,6 +76,36 @@ RECALL_REQUIRED_CATEGORIES: frozenset[str] = frozenset(
 #: and losing that distinction is exactly how USER evidence ends up under a
 #: YUI claim.
 ClaimSubject = Literal["yui", "user", "npc", "world", "unknown"]
+
+#: The categories a new draft's claims may be classified as.
+#:
+#: Spelled out rather than derived from ``RUNTIME_CLAIM_KINDS``, because a
+#: ``Literal`` has to be a literal for the schema the model is shown to
+#: constrain anything. The two are checked against each other at import time
+#: below, so they cannot drift.
+#:
+#: `yui_memory_claim` is deliberately absent. A memory statement is either
+#: 「この出来事を思い出せている」 (`yui_specific_memory_recall`, settled only by
+#: a memory recalled on this turn) or 「記憶とはこういうものだ」
+#: (`yui_general_memory_capability`, settled only by the Memory subsystem's own
+#: facts). The alias was neither, and accepted the union of both — so choosing
+#: it bought a looser rule than either real category allows.
+RuntimeClaimKind = Literal[
+    "yui_completed_action",
+    "yui_experience_habit",
+    "yui_perception",
+    "yui_specific_memory_recall",
+    "yui_general_memory_capability",
+    "user_past_fact",
+    "npc_fact",
+    "tool_use",
+    "external_knowledge_claim",
+    "current_world_fact",
+]
+
+assert set(RuntimeClaimKind.__args__) == set(RUNTIME_CLAIM_KINDS), (  # type: ignore[attr-defined]
+    "the reviewer schema and the runtime claim kinds have drifted apart"
+)
 
 #: How strongly the proposition is committed to (audit finding 5).
 #:
@@ -162,7 +192,10 @@ class SemanticClaimCandidate(BaseModel):
     #: The fragment of the draft this came from, for the trace and the repair.
     trigger: str = Field(default="", max_length=200)
     subject: ClaimSubject = "unknown"
-    category: ClaimKind = "yui_completed_action"
+    #: Restricted to the runtime kinds, so the retired alias cannot be chosen.
+    #: A reviewer that returns it fails schema validation, which reads
+    #: downstream as "the reviewer is unavailable" — the fail-closed direction.
+    category: RuntimeClaimKind = "yui_completed_action"
     modality: Modality = "assertion"
     temporal_scope: TemporalScope = "timeless"
     #: Evidence the reviewer believes supports this. Identifiers only.
@@ -279,6 +312,32 @@ class EvidenceResolver:
                 candidate=candidate, refusals=("grounding_context_unavailable",)
             )
 
+        # The retired alias never resolves. The schema already prevents the
+        # reviewer choosing it, and this is the second layer: whatever route a
+        # legacy category arrives by — a widened Literal, a row deserialized
+        # into a candidate, `model_construct` — it does not get evidence. Old
+        # rows are read, not re-grounded.
+        if candidate.category not in RUNTIME_CLAIM_KINDS:
+            return ResolvedClaim(
+                candidate=candidate,
+                refusals=(f"legacy_category:{candidate.category}",),
+            )
+
+        # A claim that commits to something being true has to say whose life it
+        # is about. `unknown` is not a neutral answer here: it is the one value
+        # that agrees with every category, so leaving it open would let a
+        # reviewer that could not decide between 「USERが読んだ」 and
+        # 「YUIが読んだ」 have the category pick for it — and the category is
+        # the half the model was least careful about. Non-committing claims may
+        # leave it open, because they are not asserting anything about anyone.
+        if candidate.modality in COMMITTING_MODALITIES and (
+            not candidate.subject or candidate.subject == "unknown"
+        ):
+            return ResolvedClaim(
+                candidate=candidate,
+                refusals=(f"subject_required:{candidate.category}",),
+            )
+
         # Audit finding 1 (round 2). The claim has to agree with itself before
         # any evidence is looked at. A `user_past_fact` declared to be about
         # YUI is a self-contradictory classification, and picking whichever
@@ -329,7 +388,6 @@ class EvidenceResolver:
             # something she is remembering.
             if (
                 candidate.category in RECALL_REQUIRED_CATEGORIES
-                and found.kind == "subjective_memory"
                 and found not in context.recalled_subjective_memories
             ):
                 refusals.append(f"not_recalled_this_turn:{evidence_id}")
@@ -510,7 +568,9 @@ __all__ = [
     "Modality",
     "PROMPT_ID",
     "PURPOSE",
+    "RECALL_REQUIRED_CATEGORIES",
     "ResolvedClaim",
+    "RuntimeClaimKind",
     "SemanticClaimCandidate",
     "SemanticClaimReview",
     "SemanticClaimReviewer",

@@ -42,6 +42,7 @@ from app.grounding.context import GroundingContextBuilder
 from app.grounding.models import Evidence, GroundingContext
 from app.grounding.ownership import (
     SUPPORTING_SUBJECTS,
+    claims_about,
     may_support,
     refusal_reason,
 )
@@ -59,11 +60,31 @@ def _evidence(subject: str, *, kind: str, reference: str = "e1", relation: str =
     )
 
 
-def _resolve(category: str, evidence: Evidence, *, section: str):
+#: The claim vocabulary's word for each evidence-subject. `_declared_subject`
+#: is the inverse of `ownership.normalize_subject`, so a helper can name the
+#: subject a category is necessarily about without hard-coding eleven cases.
+_CLAIM_WORD = {"other": "npc"}
+
+
+def _declared_subject(category: str) -> str:
+    return _CLAIM_WORD.get(claims_about(category), claims_about(category))
+
+
+def _resolve(
+    category: str, evidence: Evidence, *, section: str, subject: str | None = None
+):
+    """Resolve one citation, with the subject the category is about.
+
+    The subject defaults rather than being omitted because a committing claim
+    now has to declare one — these tests are about which *evidence* may stand
+    behind a category, so they state the subject and let the evidence be the
+    variable.
+    """
     context = GroundingContext(**{section: (evidence,)})
     candidate = SemanticClaimCandidate(
         proposition="なにかをした",
         trigger="したよ",
+        subject=subject if subject is not None else _declared_subject(category),
         category=category,
         supporting_ids=(evidence.evidence_id,),
     )
@@ -688,14 +709,19 @@ class TestCategorySubjectConsistency:
         assert resolved.supported
 
     def test_an_uncommitted_subject_leaves_the_category_in_charge(self) -> None:
-        """A reviewer that declared no subject has contradicted nothing."""
+        """A reviewer that declared no subject has contradicted nothing.
+
+        True only where nothing is being asserted. A *committing* claim owes a
+        subject — see `TestSubjectRequiredForCommittingClaims`.
+        """
         evidence = Evidence(
             kind="activity", reference="a1", summary="本を読んだ", subject="yui"
         )
         candidate = SemanticClaimCandidate(
-            proposition="YUIは本を読んだ",
-            trigger="読んだよ",
+            proposition="YUIなら本を読むかもしれない",
+            trigger="わたしなら読むかも",
             category="yui_completed_action",
+            modality="hypothetical",
             supporting_ids=(evidence.evidence_id,),
         )
 
@@ -704,6 +730,7 @@ class TestCategorySubjectConsistency:
         )
 
         assert resolved.supported
+        assert not resolved.blocking
 
     def test_an_unknown_category_supports_nothing(self) -> None:
         evidence = Evidence(
@@ -997,3 +1024,310 @@ class TestCorrectionInvalidId:
 
         assert not resolved.resolved
         assert "unknown_claim" in resolved.refused
+
+
+# =============================================================================
+# Round 3: the retired memory alias is read-only
+# =============================================================================
+
+
+class TestLegacyMemoryCategoryIsolation:
+    """`yui_memory_claim` may be deserialized. It may not be grounded.
+
+    It predates the split into "she is recalling this particular thing" and
+    "this is how memory works", and it accepted the union of both categories'
+    evidence — including `objective_event` and `diary_entry`. So a reviewer that
+    chose the alias got a *looser* rule than either category that replaced it,
+    and 「去年の夏のこと覚えている」 could be settled by a row proving only that
+    last summer happened.
+    """
+
+    def test_the_reviewer_schema_cannot_produce_it(self) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            SemanticClaimCandidate(
+                proposition="YUIは去年の夏のことを覚えている",
+                trigger="覚えているよ",
+                subject="yui",
+                category="yui_memory_claim",
+            )
+
+    def test_the_resolver_refuses_it_even_if_the_schema_is_bypassed(self) -> None:
+        """The second layer. A widened Literal, a row deserialized into a
+        candidate, `model_construct` — none of them gets evidence."""
+        memory = Evidence(
+            kind="subjective_memory",
+            reference="m1",
+            summary="去年の夏の花火",
+            subject="yui",
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは去年の夏のことを覚えている",
+            trigger="覚えているよ",
+            subject="yui",
+            category="yui_specific_memory_recall",
+            supporting_ids=(memory.evidence_id,),
+        ).model_copy(update={"category": "yui_memory_claim"})
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(recalled_subjective_memories=(memory,))
+        )
+
+        assert not resolved.supported
+        assert resolved.blocking
+        assert resolved.refusals == ("legacy_category:yui_memory_claim",)
+
+    def test_an_objective_event_cannot_reach_it_either(self) -> None:
+        """The specific path the audit named: a YUI-owned objective event under
+        the legacy memory category. Refused before the evidence is looked at,
+        and refused again by the accepted kinds if it ever were."""
+        from app.grounding.models import ACCEPTED_EVIDENCE
+
+        event = Evidence(
+            kind="objective_event",
+            reference="e1",
+            summary="去年の夏に花火を見た",
+            subject="yui",
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは去年の夏のことを覚えている",
+            trigger="覚えているよ",
+            subject="yui",
+            category="yui_specific_memory_recall",
+            supporting_ids=(event.evidence_id,),
+        ).model_copy(update={"category": "yui_memory_claim"})
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(recent_objective_events=(event,))
+        )
+
+        assert not resolved.supported
+        assert resolved.blocking
+        assert "objective_event" not in ACCEPTED_EVIDENCE["yui_memory_claim"]
+        assert "diary_entry" not in ACCEPTED_EVIDENCE["yui_memory_claim"]
+
+    def test_the_two_runtime_memory_categories_are_the_only_ones(self) -> None:
+        from app.dialogue.semantic_claims import RuntimeClaimKind
+        from app.grounding.models import (
+            CLAIM_KINDS,
+            LEGACY_CLAIM_KINDS,
+            RUNTIME_CLAIM_KINDS,
+        )
+
+        runtime = set(RuntimeClaimKind.__args__)
+        assert runtime == set(RUNTIME_CLAIM_KINDS), "schema and table drifted"
+        assert set(CLAIM_KINDS) - runtime == LEGACY_CLAIM_KINDS
+        memory = {kind for kind in runtime if "memory" in kind}
+        assert memory == {
+            "yui_specific_memory_recall",
+            "yui_general_memory_capability",
+        }
+
+    def test_specific_recall_takes_this_turns_memories_and_nothing_else(
+        self,
+    ) -> None:
+        from app.grounding.models import ACCEPTED_EVIDENCE
+
+        assert ACCEPTED_EVIDENCE["yui_specific_memory_recall"] == (
+            "subjective_memory",
+        )
+
+        recalled = Evidence(
+            kind="subjective_memory", reference="m1", summary="花火", subject="yui"
+        )
+        stored = Evidence(
+            kind="subjective_memory", reference="m2", summary="海", subject="yui"
+        )
+
+        def resolve(evidence, context):
+            return EvidenceResolver().resolve(
+                SemanticClaimCandidate(
+                    proposition="YUIは覚えている",
+                    trigger="覚えているよ",
+                    subject="yui",
+                    category="yui_specific_memory_recall",
+                    supporting_ids=(evidence.evidence_id,),
+                ),
+                context,
+            )
+
+        assert resolve(
+            recalled, GroundingContext(recalled_subjective_memories=(recalled,))
+        ).supported
+        # Present in the context as a known semantic row, absent from this
+        # turn's recall. Storage is not remembering.
+        refused = resolve(stored, GroundingContext(known_semantic_memories=(stored,)))
+        assert not refused.supported
+        assert refused.blocking
+
+    def test_general_capability_takes_authority_facts_and_nothing_else(self) -> None:
+        from app.grounding.memory_semantics import AUTHORITATIVE_MEMORY_FACTS
+        from app.grounding.models import ACCEPTED_EVIDENCE
+
+        assert ACCEPTED_EVIDENCE["yui_general_memory_capability"] == (
+            "memory_authority",
+        )
+
+        fact = AUTHORITATIVE_MEMORY_FACTS[0]
+        memory = Evidence(
+            kind="subjective_memory", reference="m1", summary="花火", subject="yui"
+        )
+
+        def resolve(evidence, context):
+            return EvidenceResolver().resolve(
+                SemanticClaimCandidate(
+                    proposition="YUIにも忘れることがある",
+                    trigger="忘れることもあるよ",
+                    subject="yui",
+                    category="yui_general_memory_capability",
+                    supporting_ids=(evidence.evidence_id,),
+                ),
+                context,
+            )
+
+        assert resolve(
+            fact, GroundingContext(memory_authority_facts=(fact,))
+        ).supported
+        assert not resolve(
+            memory, GroundingContext(recalled_subjective_memories=(memory,))
+        ).supported
+
+    def test_a_pre_migration_row_still_reads(self) -> None:
+        """The compatibility that is actually needed: an old Common Ground row
+        deserializes, renders for the correction resolver, and keeps its kind.
+
+        Reading is the whole requirement. Nothing about serving a stored row
+        needs a *new* draft to be classifiable as the old category.
+        """
+        from app.grounding.models import Claim
+
+        claim = Claim(kind="yui_memory_claim", text="去年の夏のこと", trigger="覚えてる")
+        assert claim.kind == "yui_memory_claim"
+        assert claim.accepted_evidence == ("subjective_memory",)
+
+        rendered = render_claims([_LegacyRow()])
+        assert "yui_memory_claim" in rendered
+        assert "cg_legacy" in rendered
+
+
+class _LegacyRow:
+    """A Common Ground row written before the memory categories split."""
+
+    claim_id = "cg_legacy"
+    kind = "yui_memory_claim"
+    statement = "去年の夏のことを覚えている"
+    status = "live"
+    subject = "yui"
+    semantic_json = ""
+
+
+# =============================================================================
+# Round 3: a committing claim has to say whose life it is about
+# =============================================================================
+
+
+class TestSubjectRequiredForCommittingClaims:
+    """`unknown` is not a neutral subject — it is the one that fits every
+    category, so leaving it open lets the category decide alone."""
+
+    @staticmethod
+    def _yui_activity():
+        return Evidence(
+            kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+        )
+
+    def _resolve(self, subject, *, modality="assertion", category="yui_completed_action"):
+        evidence = self._yui_activity()
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは本を読んだ",
+            trigger="読んだよ",
+            subject="yui",
+            category=category,
+            modality=modality,
+            supporting_ids=(evidence.evidence_id,),
+        ).model_copy(update={"subject": subject})
+        return EvidenceResolver().resolve(
+            candidate, GroundingContext(completed_activities_today=(evidence,))
+        )
+
+    @pytest.mark.parametrize("modality", sorted(COMMITTING_MODALITIES))
+    def test_unknown_blocks_every_committing_modality(self, modality) -> None:
+        resolved = self._resolve("unknown", modality=modality)
+
+        assert not resolved.supported
+        assert resolved.blocking
+        assert resolved.refusals == ("subject_required:yui_completed_action",)
+
+    @pytest.mark.parametrize("modality", sorted(COMMITTING_MODALITIES))
+    def test_an_empty_subject_blocks_too(self, modality) -> None:
+        """The schema's default and a model that omitted the field arrive as
+        different values; both are the same non-answer."""
+        resolved = self._resolve("", modality=modality)
+
+        assert not resolved.supported
+        assert resolved.blocking
+        assert resolved.refusals == ("subject_required:yui_completed_action",)
+
+    def test_a_declared_subject_resolves_normally(self) -> None:
+        resolved = self._resolve("yui")
+
+        assert resolved.supported
+        assert not resolved.blocking
+
+    @pytest.mark.parametrize("modality", ["hypothetical", "intention", "question"])
+    def test_a_non_committing_claim_may_leave_it_open(self, modality) -> None:
+        """Nothing is being asserted about anyone, so there is no owner to get
+        wrong. Blocking these would be the guard refusing to let her speculate."""
+        resolved = self._resolve("unknown", modality=modality)
+
+        assert not resolved.blocking
+
+    def test_unknown_does_not_route_around_ownership(self) -> None:
+        """The inversion the audit found, attempted through the open subject.
+
+        USER-owned evidence under a claim about her life. Declaring `yui` is
+        caught by the matrix; declaring nothing must not be a way past it.
+        """
+        evidence = Evidence(
+            kind="objective_event",
+            reference="e1",
+            summary="詩を詠んだ",
+            subject="user",
+        )
+        context = GroundingContext(recent_objective_events=(evidence,))
+
+        for subject in ("unknown", "", "yui"):
+            candidate = SemanticClaimCandidate(
+                proposition="YUIも詩を詠んだ",
+                trigger="わたしも詠んだよ",
+                subject="yui",
+                category="yui_completed_action",
+                supporting_ids=(evidence.evidence_id,),
+            ).model_copy(update={"subject": subject})
+
+            resolved = EvidenceResolver().resolve(candidate, context)
+
+            assert not resolved.supported, f"subject={subject!r} got through"
+            assert resolved.blocking
+
+    def test_the_mirror_inversion_is_closed_too(self) -> None:
+        """And YUI-owned evidence under a claim about the USER."""
+        evidence = Evidence(
+            kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+        )
+        context = GroundingContext(completed_activities_today=(evidence,))
+
+        for subject in ("unknown", "", "user"):
+            candidate = SemanticClaimCandidate(
+                proposition="USERは本を読んだ",
+                trigger="読んだんだよね",
+                subject="user",
+                category="user_past_fact",
+                supporting_ids=(evidence.evidence_id,),
+            ).model_copy(update={"subject": subject})
+
+            resolved = EvidenceResolver().resolve(candidate, context)
+
+            assert not resolved.supported, f"subject={subject!r} got through"
+            assert resolved.blocking

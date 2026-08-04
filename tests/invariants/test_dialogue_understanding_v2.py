@@ -109,7 +109,8 @@ def test_every_claim_about_her_own_life_is_ownership_filtered() -> None:
 
 
 @pytest.mark.parametrize(
-    "category", ["yui_completed_action", "yui_experience_habit", "yui_memory_claim"]
+    "category",
+    ["yui_completed_action", "yui_experience_habit", "yui_perception"],
 )
 def test_a_user_event_cannot_support_a_claim_about_her(category) -> None:
     """Requirement 4, at the resolver rather than at the token overlap.
