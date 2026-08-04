@@ -926,3 +926,113 @@ def test_the_subject_is_never_read_off_the_statement(application, clock) -> None
     assert evidence.subject == "world", (
         "the subject was inferred from the sentence rather than read from the row"
     )
+
+
+# =============================================================================
+# Round 4: (statement, origin, subject) is the identity, in the database too
+# =============================================================================
+
+
+def _semantic_rows(application, statement: str):
+    return application.db.query_all(
+        "SELECT semantic_id, subject, support_count FROM semantic_memories "
+        "WHERE statement = ? ORDER BY subject",
+        (statement,),
+    )
+
+
+def test_one_proposition_can_be_known_about_two_subjects(application) -> None:
+    """Through the real engine, against real SQLite.
+
+    Migration 34 made the repository key semantic memory on
+    (statement, origin, subject) while the unique index still said
+    (statement, origin), so the second of these raised IntegrityError. Two
+    subjects are two facts: what is true of her and what is true of the world
+    are different claims even when the sentence is identical, and the ownership
+    matrix depends on being able to tell them apart.
+    """
+    statement = "読書は落ち着く"
+
+    hers = application.memory.note_semantic(
+        statement, origin="virtual_life", subject="yui"
+    )
+    worlds = application.memory.note_semantic(
+        statement, origin="virtual_life", subject="world"
+    )
+
+    assert hers.semantic_id != worlds.semantic_id
+    assert hers.subject == "yui"
+    assert worlds.subject == "world"
+
+    rows = _semantic_rows(application, statement)
+    assert len(rows) == 2, [dict(row) for row in rows]
+    assert [row["subject"] for row in rows] == ["world", "yui"]
+
+
+def test_the_same_subject_again_updates_rather_than_multiplies(
+    application,
+) -> None:
+    """The narrowing does not turn the upsert into an append.
+
+    Same statement, same origin, same subject is the same fact — it gains
+    support, it does not become a third row — and the row it does not touch
+    stays exactly as it was.
+    """
+    statement = "読書は落ち着く"
+    hers = application.memory.note_semantic(
+        statement, origin="virtual_life", subject="yui"
+    )
+    worlds = application.memory.note_semantic(
+        statement, origin="virtual_life", subject="world"
+    )
+
+    again = application.memory.note_semantic(
+        statement, origin="virtual_life", subject="yui"
+    )
+
+    assert again.semantic_id == hers.semantic_id, "a duplicate row was created"
+    assert again.subject == "yui"
+    assert again.support_count > hers.support_count, "the upsert did not accumulate"
+
+    rows = _semantic_rows(application, statement)
+    assert len(rows) == 2, [dict(row) for row in rows]
+
+    from app.storage.repositories.memory import MemoryRepository
+
+    untouched = MemoryRepository(application.db).semantic_by_statement(
+        statement, "virtual_life", "world"
+    )
+    assert untouched is not None
+    assert untouched.semantic_id == worlds.semantic_id
+    assert untouched.support_count == worlds.support_count, (
+        "writing the YUI row changed the WORLD row"
+    )
+
+
+def test_the_two_rows_ground_different_claims(application, clock) -> None:
+    """The point of keeping them apart, at the resolver.
+
+    Same sentence, two rows, and the ownership matrix gives them opposite
+    answers — which is only possible because the database can hold both.
+    """
+    statement = "読書は落ち着く"
+    application.memory.note_semantic(statement, origin="virtual_life", subject="yui")
+    application.memory.note_semantic(statement, origin="virtual_life", subject="world")
+
+    context = application.conversation._grounding.build(now=clock.now())  # noqa: SLF001
+    found = {
+        item.subject: item
+        for item in context.known_semantic_memories
+        if item.summary == statement
+    }
+    assert set(found) == {"yui", "world"}, sorted(found)
+
+    assert _resolve(
+        "yui_experience_habit", found["yui"], context, subject="yui"
+    ).supported
+    assert not _resolve(
+        "yui_experience_habit", found["world"], context, subject="yui"
+    ).supported
+    assert _resolve(
+        "external_knowledge_claim", found["world"], context, subject="world"
+    ).supported

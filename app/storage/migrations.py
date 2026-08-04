@@ -2181,6 +2181,29 @@ _0034_SEMANTIC_MEMORY_SUBJECT = Migration(
 )
 
 
+_0035_SEMANTIC_MEMORY_IDENTITY = Migration(
+    version=35,
+    name="semantic_memory_identity",
+    statements=(
+        # Migration 34 added the `subject` column and the repository began
+        # treating (statement, origin, subject) as a semantic memory's identity.
+        # The unique index did not follow: it was still (statement, origin) from
+        # migration 4, so storing the same proposition about her and about the
+        # world raised IntegrityError instead of producing two rows.
+        #
+        # Repository semantics and the constraint that enforces them have to be
+        # the same statement. This makes the index say what the code means.
+        #
+        # Migration 34 is not edited to do this. Applied migrations are recorded
+        # with a checksum precisely so schema drift is detectable, and rewriting
+        # one turns every database that already ran it into a drift error.
+        "DROP INDEX idx_semantic_statement",
+        "CREATE UNIQUE INDEX idx_semantic_statement "
+        "ON semantic_memories (statement, origin, subject)",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -2216,6 +2239,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0032_SPONTANEOUS_MEMORY_CUES,
     _0033_DIALOGUE_AUDIT,
     _0034_SEMANTIC_MEMORY_SUBJECT,
+    _0035_SEMANTIC_MEMORY_IDENTITY,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)
