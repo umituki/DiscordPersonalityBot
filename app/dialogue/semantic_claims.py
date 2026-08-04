@@ -272,15 +272,31 @@ class ResolvedClaim:
         return self.needs_evidence and not self.supported
 
     def as_claim(self) -> Claim:
-        """The legacy claim shape, so existing verdict plumbing still works."""
+        """The legacy claim shape, so existing verdict plumbing still works.
+
+        ``severity`` carries `blocking` across the boundary. `GroundingVerdict`
+        holds a send for an unsupported claim only when it is ``hard``, which
+        is the same question `needs_evidence` answers — so mapping one to the
+        other makes `GroundingVerdict.blocking` reproduce `ResolvedClaim`'s
+        answer exactly instead of approximating it in both directions: a
+        contradicted assertion used to slip through, and an unsupported
+        hypothetical used to hold a reply it had no business holding.
+        """
         return Claim(
             kind=self.candidate.category,
             text=self.candidate.proposition or self.candidate.trigger,
             trigger=self.candidate.trigger or self.candidate.proposition,
+            severity="hard" if self.needs_evidence else "soft",
         )
 
     def as_grounded(self) -> GroundedClaim:
-        return GroundedClaim(claim=self.as_claim(), evidence=self.evidence)
+        """The resolver's answer, not the ingredients for another one."""
+        return GroundedClaim(
+            claim=self.as_claim(),
+            evidence=self.evidence,
+            verdict=self.verdict,
+            contradictions=self.contradictions,
+        )
 
     def describe(self) -> str:
         head = f"{self.candidate.category}「{self.candidate.trigger}」"
@@ -289,17 +305,68 @@ class ResolvedClaim:
         return f"{head}: {'; '.join(self.refusals) or '裏づけがない'}"
 
 
+@dataclass(frozen=True, slots=True)
+class Admission:
+    """Whether one cited identifier may speak to one claim category."""
+
+    evidence: Evidence | None = None
+    #: The named reason, ready to append to a claim's refusals. Empty when the
+    #: evidence was admitted.
+    refusal: str = ""
+
+
+def admit(category: str, evidence_id: str, context: GroundingContext) -> Admission:
+    """The one test for whether a citation has any authority over a category.
+
+    Round 3, finding 2. There were two paths through these checks: supporting
+    identifiers went through all four, and contradicting identifiers went
+    through ownership alone — so a YUI-owned ``tool_call`` could refute
+    「本を読んだ」, a claim it is not admissible evidence *for*. Authority to
+    overturn a claim cannot be broader than authority to establish it, and the
+    reliable way to say that is to run one function rather than two copies.
+
+    Four ways to fail, kept apart because they mean different things to
+    whoever reads the trace:
+
+        unknown_evidence        the identifier does not exist. Invented.
+        wrong_kind              it exists, but cannot answer this category.
+        wrong_subject           right kind, somebody else's life.
+        wrong_relation          right subject, wrong standing to the event.
+        not_recalled_this_turn  a memory row nobody retrieved this turn.
+    """
+    found = context.by_id(evidence_id)
+    if found is None:
+        # The one that matters most: a fluent model will cite something
+        # plausible-looking rather than admit it has nothing.
+        return Admission(refusal=f"unknown_evidence:{evidence_id}")
+    if found.kind not in ACCEPTED_EVIDENCE.get(category, ()):  # type: ignore[arg-type]
+        return Admission(refusal=f"wrong_kind:{evidence_id}")
+    # Audit finding 1: the full matrix, in both directions. Her record cannot
+    # settle the USER's past any more than theirs can settle hers, and a world
+    # event is not something she did.
+    if not may_support(category, subject=found.subject, relation=found.relation):
+        reason = refusal_reason(
+            category, subject=found.subject, relation=found.relation
+        )
+        return Admission(refusal=f"{reason}:{evidence_id}")
+    # Audit finding 2 (round 2). A recollection needs a row that was recalled
+    # *on this turn*. A stored memory nobody retrieved is not something she is
+    # remembering.
+    if (
+        category in RECALL_REQUIRED_CATEGORIES
+        and found not in context.recalled_subjective_memories
+    ):
+        return Admission(refusal=f"not_recalled_this_turn:{evidence_id}")
+    return Admission(evidence=found)
+
+
 class EvidenceResolver:
     """Python's half of the contract: which citations actually stand.
 
-    Four separate reasons a citation can fail, and they are kept apart because
-    they mean different things to whoever reads the trace:
-
-        unknown_evidence   the identifier does not exist. Invented.
-        wrong_kind         it exists, but cannot answer this kind of claim.
-        wrong_subject      it exists and is of an accepted kind, but it is
-                           about somebody else.
-        no_citation        the reviewer cited nothing at all.
+    The per-citation test lives in :func:`admit`, which both the supporting and
+    the contradicting identifiers go through. What is left here is the shape of
+    the claim itself — its category, its subject, and what a contradiction does
+    to the verdict.
     """
 
     name = "evidence_resolver"
@@ -354,56 +421,33 @@ class EvidenceResolver:
         if not candidate.supporting_ids:
             return ResolvedClaim(candidate=candidate, refusals=("no_citation",))
 
-        accepted_kinds = ACCEPTED_EVIDENCE.get(candidate.category, ())
         kept: list[Evidence] = []
         refusals: list[str] = []
         for evidence_id in candidate.supporting_ids:
-            found = context.by_id(evidence_id)
-            if found is None:
-                # The identifier was invented. This is the one that matters
-                # most: a fluent model will cite something plausible-looking
-                # rather than admit it has nothing.
-                refusals.append(f"unknown_evidence:{evidence_id}")
+            admission = admit(candidate.category, evidence_id, context)
+            if admission.evidence is None:
+                refusals.append(admission.refusal)
                 continue
-            if found.kind not in accepted_kinds:
-                refusals.append(f"wrong_kind:{evidence_id}")
-                continue
-            # Audit finding 1: the full matrix, in both directions. Her record
-            # cannot settle the USER's past any more than theirs can settle
-            # hers, and a world event is not something she did.
-            if not may_support(
-                candidate.category,
-                subject=found.subject,
-                relation=found.relation,
-            ):
-                reason = refusal_reason(
-                    candidate.category,
-                    subject=found.subject,
-                    relation=found.relation,
-                )
-                refusals.append(f"{reason}:{evidence_id}")
-                continue
-            # Audit finding 2 (round 2). A recollection needs a row that was
-            # recalled *on this turn*. A stored memory nobody retrieved is not
-            # something she is remembering.
-            if (
-                candidate.category in RECALL_REQUIRED_CATEGORIES
-                and found not in context.recalled_subjective_memories
-            ):
-                refusals.append(f"not_recalled_this_turn:{evidence_id}")
-                continue
-            kept.append(found)
+            kept.append(admission.evidence)
 
         # Audit finding 3 (round 2). A contradiction is a verdict, not a note.
         # Having found something that supports a claim says nothing about the
         # thing that contradicts it, and reporting `supported` while an
         # authoritative record says otherwise is the worst of both.
+        #
+        # Round 3, finding 2: through the *same* admissibility test. Overriding
+        # a claim is at least as consequential as supporting one, so a record
+        # that could not have supported the claim cannot refute it either — a
+        # tool call is not an opinion about whether she read a book. Sharing
+        # `admit` rather than repeating three of its four checks is what keeps
+        # the two directions from drifting again.
         contradictions = tuple(
-            item
-            for item in context.resolve_ids(candidate.contradicting_ids)
-            if may_support(
-                candidate.category, subject=item.subject, relation=item.relation
+            admission.evidence
+            for admission in (
+                admit(candidate.category, evidence_id, context)
+                for evidence_id in candidate.contradicting_ids
             )
+            if admission.evidence is not None
         )
         if contradictions:
             refusals.append(
@@ -566,6 +610,7 @@ __all__ = [
     "ClaimSubject",
     "EvidenceResolver",
     "Modality",
+    "Admission",
     "PROMPT_ID",
     "PURPOSE",
     "RECALL_REQUIRED_CATEGORIES",
@@ -576,5 +621,6 @@ __all__ = [
     "SemanticClaimReviewer",
     "SemanticReviewOutcome",
     "TemporalScope",
+    "admit",
     "render_evidence",
 ]

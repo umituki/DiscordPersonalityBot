@@ -124,6 +124,9 @@ class KnowledgeService:
             semantic = self._memory.note_semantic(
                 item.statement,
                 origin=origin,  # type: ignore[arg-type]
+                # A knowledge item is a fact she took in from outside — it is
+                # about the world, not about her, whichever channel carried it.
+                subject="world",
                 topics=(item.topic,) if item.topic else (),
             )
             semantic_id = semantic.semantic_id

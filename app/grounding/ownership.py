@@ -84,8 +84,17 @@ OWNERSHIP: dict[ClaimKind, OwnershipRule] = {
     "yui_completed_action": OwnershipRule(
         claims_about="yui", subjects=frozenset({"yui"}), relations={"yui": ACTOR_ONLY}
     ),
+    # A habit is not one act, so the record that establishes it need not be one
+    # she performed. `topic` is admitted here and nowhere else on her side:
+    # 「読書すると落ち着く傾向がある」 is a semantic memory *about* her,
+    # generalised from her episodes, and requiring `actor` of it would demand
+    # that a generalisation be an occasion. `yui_completed_action` stays
+    # actor-only, which is where the strictness earns its keep — one specific
+    # act does need a record of her performing it.
     "yui_experience_habit": OwnershipRule(
-        claims_about="yui", subjects=frozenset({"yui"}), relations={"yui": ACTOR_ONLY}
+        claims_about="yui",
+        subjects=frozenset({"yui"}),
+        relations={"yui": ACTOR_OR_TOPIC},
     ),
     # Audit finding 2 (round 2): a recollection is settled by *recalling*, and
     # the accepted evidence kinds enforce the other half of that rule.

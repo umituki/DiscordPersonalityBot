@@ -43,7 +43,12 @@ from app.memory.encoding import (
     substance_of,
     user_directed_ratio,
 )
-from app.memory.models import Episode, EpisodicMemory, SemanticMemory
+from app.memory.models import (
+    Episode,
+    EpisodicMemory,
+    SemanticMemory,
+    SemanticSubject,
+)
 from app.memory.policy import MemoryPolicy
 from app.memory.recall_mode import RecallMode, classify
 from app.memory.recall_models import RetrievalReport
@@ -558,12 +563,19 @@ class MemoryEngine:
         statement: str,
         *,
         origin: EventOrigin,
+        subject: SemanticSubject,
         topics: Sequence[str] = (),
         source_memory_ids: Sequence[str] = (),
     ) -> SemanticMemory:
-        """Record a general fact, growing confidence with repeated support."""
+        """Record a general fact, growing confidence with repeated support.
+
+        ``subject`` has no default. Whoever forms the knowledge knows what it is
+        about — consolidation is generalising *her* episodes, acquisition is
+        taking in a fact about the world — and requiring it here is what keeps
+        that answer from being reconstructed later by reading the sentence.
+        """
         policy = self._policy.semantic
-        existing = self._repository.semantic_by_statement(statement, origin)
+        existing = self._repository.semantic_by_statement(statement, origin, subject)
         support = 1 if existing is None else existing.support_count + 1
         confidence = min(
             policy.max_confidence,
@@ -572,6 +584,7 @@ class MemoryEngine:
         return self._repository.upsert_semantic(
             statement=statement,
             origin=origin,
+            subject=subject,
             topics=topics,
             confidence=confidence,
             stability="CHANGEABLE",

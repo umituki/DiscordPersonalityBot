@@ -396,13 +396,16 @@ def test_semantic_memory_gains_confidence_with_support(
     engine = build_engine(memories, memory_policy, prompt_registry, clock, [])
     statement = "ユーザーは朝が弱い"
 
-    first = engine.note_semantic(statement, origin="real_discord", topics=["生活"])
-    engine.note_semantic(statement, origin="real_discord")
-    third = engine.note_semantic(statement, origin="real_discord")
+    first = engine.note_semantic(
+        statement, origin="real_discord", subject="user", topics=["生活"]
+    )
+    engine.note_semantic(statement, origin="real_discord", subject="user")
+    third = engine.note_semantic(statement, origin="real_discord", subject="user")
 
     assert first.support_count == 1
     assert third.support_count == 3
     assert third.confidence > first.confidence
+    assert third.subject == "user", "the recorded subject did not survive the upsert"
     assert memories.semantic_count() == 1
     assert [fact.statement for fact in engine.promoted_semantic()] == [statement]
 
@@ -410,5 +413,7 @@ def test_semantic_memory_gains_confidence_with_support(
 def test_semantic_confidence_is_capped(memories, memory_policy, prompt_registry, clock) -> None:
     engine = build_engine(memories, memory_policy, prompt_registry, clock, [])
     for _ in range(30):
-        fact = engine.note_semantic("繰り返された話", origin="real_discord")
+        fact = engine.note_semantic(
+            "繰り返された話", origin="real_discord", subject="world"
+        )
     assert fact.confidence <= memory_policy.semantic.max_confidence

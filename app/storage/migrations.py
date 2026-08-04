@@ -2154,6 +2154,33 @@ _0033_DIALOGUE_AUDIT = Migration(
 )
 
 
+_0034_SEMANTIC_MEMORY_SUBJECT = Migration(
+    version=34,
+    name="semantic_memory_subject",
+    statements=(
+        # Round 3, finding 3. A semantic memory is knowledge *about* something,
+        # and the row did not record about what. The grounding builder
+        # therefore emitted `subject="unknown"`, which the ownership matrix
+        # rejects for every category — so the whole semantic-memory evidence
+        # path was dead in production, and the only ways to revive it were to
+        # pin every row to one subject (wrong for half of them) or to guess
+        # from the statement text (forbidden: that is Python reading Japanese
+        # prose to decide who a fact is about).
+        #
+        # So the writer records it. 「読書すると落ち着く」 is consolidated from
+        # her own episodes and is about her; 「富士山は日本にある」 is acquired
+        # from outside and is about the world. Both call sites know which they
+        # are producing without inspecting a single character of the statement.
+        #
+        # Existing rows default to `unknown` deliberately. Backfilling would
+        # mean inventing provenance for rows written before anything recorded
+        # it, and `unknown` fails closed: those rows support nothing until
+        # something authoritative says what they are about.
+        "ALTER TABLE semantic_memories ADD COLUMN subject TEXT NOT NULL DEFAULT 'unknown'",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -2188,6 +2215,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0031_SHADOW_DECISIONS,
     _0032_SPONTANEOUS_MEMORY_CUES,
     _0033_DIALOGUE_AUDIT,
+    _0034_SEMANTIC_MEMORY_SUBJECT,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

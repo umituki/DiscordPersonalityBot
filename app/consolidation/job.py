@@ -426,6 +426,10 @@ class ConsolidationJob:
             self._memory.note_semantic(
                 f"{topic} はわたしにとって繰り返し起きていることだ",
                 origin="virtual_life",
+                # Generalised from her own episodes, so it is knowledge about
+                # her. Recorded here because this is where that is known —
+                # the sentence itself is not what makes it hers.
+                subject="yui",
                 topics=(topic,),
                 source_memory_ids=memory_ids[:10],
             )

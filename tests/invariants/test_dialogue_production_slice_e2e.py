@@ -711,3 +711,218 @@ def test_the_builder_reads_the_interaction_repository_not_the_roster(
     builder = application.conversation._grounding  # noqa: SLF001
     assert isinstance(builder._npc_interactions_repo, NPCInteractionRepository)  # noqa: SLF001
     assert isinstance(builder._npcs, NPCRepository)  # noqa: SLF001
+
+
+# =============================================================================
+# Round 3, finding 1: the contradiction reaches the send decision
+# =============================================================================
+
+
+async def test_a_contradicted_claim_does_not_reach_the_user(
+    application, clock
+) -> None:
+    """Valid support *and* a valid authoritative contradiction, end to end.
+
+    The claim used to be resolved as `contradicted` and then arrive at the
+    engine as a `GroundedClaim` holding only the surviving positive evidence —
+    which the boundary read as "supported" and sent. The verdict now travels
+    with the claim, so the send decision is the resolver's decision.
+    """
+    started, _ = application.world.start_activity(
+        name="図書館で本を読む", kind="leisure"
+    )
+    support, _ = application.world.finish_activity(started.activity_id)
+    stayed, _ = application.world.start_activity(
+        name="一日中家にいた", kind="rest"
+    )
+    against, _ = application.world.finish_activity(stayed.activity_id)
+
+    context = application.conversation._grounding.build(now=clock.now())  # noqa: SLF001
+    support_id = f"activity:{support.activity_id}"
+    against_id = f"activity:{against.activity_id}"
+    assert context.by_id(support_id) is not None, "the support is not in context"
+    assert context.by_id(against_id) is not None, "the contradiction is not in context"
+
+    use_offline_model(
+        application,
+        overrides={
+            "ReplyDraft": '{"text": "今日は図書館で本を読んだよ。"}',
+            "SemanticClaimReview": json.dumps(
+                {
+                    "claims": [
+                        {
+                            "proposition": "YUIは今日図書館で本を読んだ",
+                            "trigger": "図書館で本を読んだ",
+                            "subject": "yui",
+                            "category": "yui_completed_action",
+                            "modality": "assertion",
+                            "temporal_scope": "today",
+                            "supporting_ids": [support_id],
+                            "contradicting_ids": [against_id],
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        },
+    )
+
+    engine = application.conversation_engine
+    verdict, review = await engine._check_grounding(  # noqa: SLF001
+        "今日は図書館で本を読んだよ。", context
+    )
+
+    resolved = review.claims[0]
+    assert resolved.evidence, "the support was not admitted; the fixture proves nothing"
+    assert resolved.verdict == "contradicted"
+    assert not verdict.accepted, "a contradicted claim was cleared for sending"
+    assert verdict.blocking
+
+    result = await _turn(application, clock, "今日は何してた？")
+    assert result.suppressed
+    assert result.outbound is None
+
+
+# =============================================================================
+# Round 3, finding 3: semantic memory carries who it is about
+# =============================================================================
+
+
+def _semantic_evidence(application, clock, statement: str):
+    context = application.conversation._grounding.build(now=clock.now())  # noqa: SLF001
+    for item in context.known_semantic_memories:
+        if item.summary == statement:
+            return item, context
+    raise AssertionError(
+        f"{statement!r} is not in the grounding context: "
+        f"{[e.summary for e in context.known_semantic_memories]}"
+    )
+
+
+def _resolve(category: str, evidence, context, *, subject: str):
+    from app.dialogue.semantic_claims import EvidenceResolver, SemanticClaimCandidate
+
+    return EvidenceResolver().resolve(
+        SemanticClaimCandidate(
+            proposition="なにかが言える",
+            trigger="そうなんだ",
+            subject=subject,
+            category=category,
+            supporting_ids=(evidence.evidence_id,),
+        ),
+        context,
+    )
+
+
+def test_a_semantic_memory_about_her_supports_a_habit_claim(
+    application, clock
+) -> None:
+    """Formed from her own episodes, so it is hers — and a habit is exactly
+    what a generalisation about her establishes."""
+    application.memory.note_semantic(
+        "読書すると落ち着く傾向がある",
+        origin="virtual_life",
+        subject="yui",
+        topics=("読書",),
+    )
+
+    evidence, context = _semantic_evidence(
+        application, clock, "読書すると落ち着く傾向がある"
+    )
+
+    assert evidence.subject == "yui"
+    assert evidence.relation == "topic", (
+        "a semantic memory is not an occasion she acted on"
+    )
+    assert _resolve("yui_experience_habit", evidence, context, subject="yui").supported
+
+
+def test_world_knowledge_supports_an_external_knowledge_claim(
+    application, clock
+) -> None:
+    application.memory.note_semantic(
+        "富士山は日本にある", origin="system", subject="world", topics=("地理",)
+    )
+
+    evidence, context = _semantic_evidence(application, clock, "富士山は日本にある")
+
+    assert evidence.subject == "world"
+    assert _resolve(
+        "external_knowledge_claim", evidence, context, subject="world"
+    ).supported
+
+
+def test_world_knowledge_does_not_settle_her_own_experience(
+    application, clock
+) -> None:
+    """The separation the subject column exists for. Knowing where a mountain
+    is says nothing about what she has lived."""
+    application.memory.note_semantic(
+        "富士山は日本にある", origin="system", subject="world", topics=("地理",)
+    )
+
+    evidence, context = _semantic_evidence(application, clock, "富士山は日本にある")
+    resolved = _resolve("yui_experience_habit", evidence, context, subject="yui")
+
+    assert not resolved.supported
+    assert resolved.blocking
+    assert any("wrong_subject" in reason for reason in resolved.refusals), (
+        resolved.refusals
+    )
+
+
+def test_her_own_semantic_memory_does_not_settle_the_users_past(
+    application, clock
+) -> None:
+    application.memory.note_semantic(
+        "読書すると落ち着く傾向がある",
+        origin="virtual_life",
+        subject="yui",
+        topics=("読書",),
+    )
+
+    evidence, context = _semantic_evidence(
+        application, clock, "読書すると落ち着く傾向がある"
+    )
+    resolved = _resolve("user_past_fact", evidence, context, subject="user")
+
+    assert not resolved.supported
+    assert resolved.blocking
+
+
+def test_a_row_with_no_recorded_subject_grounds_nothing(application, clock) -> None:
+    """Migration 34 defaults existing rows to `unknown` rather than guessing.
+
+    Backfilling would mean inventing provenance for rows written before
+    anything recorded it; `unknown` fails closed, which is the honest answer
+    and the safe one.
+    """
+    application.memory.note_semantic(
+        "なにかについての知識", origin="system", subject="unknown"
+    )
+
+    evidence, context = _semantic_evidence(application, clock, "なにかについての知識")
+
+    assert evidence.subject == "unknown"
+    for category, subject in (
+        ("yui_experience_habit", "yui"),
+        ("external_knowledge_claim", "world"),
+    ):
+        resolved = _resolve(category, evidence, context, subject=subject)
+        assert not resolved.supported, category
+        assert resolved.blocking, category
+
+
+def test_the_subject_is_never_read_off_the_statement(application, clock) -> None:
+    """Two rows whose text points one way and whose recorded subject points the
+    other. The recorded value decides, because Python reading Japanese prose to
+    decide who a fact is about is the structure this replaced."""
+    application.memory.note_semantic(
+        "わたしは本を読むのが好きだ", origin="system", subject="world"
+    )
+
+    evidence, _ = _semantic_evidence(application, clock, "わたしは本を読むのが好きだ")
+
+    assert evidence.subject == "world", (
+        "the subject was inferred from the sentence rather than read from the row"
+    )

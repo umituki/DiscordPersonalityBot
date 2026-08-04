@@ -1331,3 +1331,263 @@ class TestSubjectRequiredForCommittingClaims:
 
             assert not resolved.supported, f"subject={subject!r} got through"
             assert resolved.blocking
+
+
+# =============================================================================
+# Round 3, finding 1: the verdict survives the adapter
+# =============================================================================
+
+
+def _supported_and_contradicted():
+    """One claim with valid support and a valid authoritative contradiction."""
+    support = Evidence(
+        kind="activity", reference="a1", summary="図書館へ行った", subject="yui"
+    )
+    against = Evidence(
+        kind="objective_event",
+        reference="e1",
+        summary="今日は一日家にいた",
+        subject="yui",
+    )
+    context = GroundingContext(
+        completed_activities_today=(support,), recent_objective_events=(against,)
+    )
+    candidate = SemanticClaimCandidate(
+        proposition="YUIは今日図書館へ行った",
+        trigger="図書館に行ったよ",
+        subject="yui",
+        category="yui_completed_action",
+        supporting_ids=(support.evidence_id,),
+        contradicting_ids=(against.evidence_id,),
+    )
+    return EvidenceResolver().resolve(candidate, context)
+
+
+class TestVerdictReachesTheVerdict:
+    """`GroundedClaim` used to recompute the answer from the evidence tuple.
+
+    The resolver weighed positive evidence against an authoritative
+    contradiction and concluded `contradicted`; the adapter then looked at the
+    surviving positive evidence alone and reported `supported`. The claim went
+    out because the last object to touch it re-decided a question it was not
+    the authority for.
+    """
+
+    def test_the_resolver_says_contradicted(self) -> None:
+        resolved = _supported_and_contradicted()
+
+        assert resolved.evidence, "the support was not admitted; wrong fixture"
+        assert resolved.contradictions
+        assert resolved.verdict == "contradicted"
+        assert not resolved.supported
+        assert resolved.blocking
+
+    def test_the_grounded_claim_does_not_reverse_it(self) -> None:
+        grounded = _supported_and_contradicted().as_grounded()
+
+        assert grounded.evidence, "positive evidence is present, as in the bug"
+        assert grounded.verdict == "contradicted"
+        assert grounded.contradicted
+        assert not grounded.supported, (
+            "the adapter recomputed `supported` from the evidence tuple"
+        )
+
+    def test_the_verdict_holds_the_send(self) -> None:
+        from app.grounding.claims import GroundingVerdict
+
+        verdict = GroundingVerdict(claims=(_supported_and_contradicted().as_grounded(),))
+
+        assert not verdict.accepted
+        assert verdict.blocking
+        assert "矛盾" in verdict.describe(), verdict.describe()
+
+    def test_a_supported_claim_still_passes(self) -> None:
+        """The gate has to let the true case through."""
+        from app.grounding.claims import GroundingVerdict
+
+        support = Evidence(
+            kind="activity", reference="a1", summary="図書館へ行った", subject="yui"
+        )
+        resolved = EvidenceResolver().resolve(
+            SemanticClaimCandidate(
+                proposition="YUIは今日図書館へ行った",
+                trigger="図書館に行ったよ",
+                subject="yui",
+                category="yui_completed_action",
+                supporting_ids=(support.evidence_id,),
+            ),
+            GroundingContext(completed_activities_today=(support,)),
+        )
+
+        assert resolved.verdict == "supported"
+        assert GroundingVerdict(claims=(resolved.as_grounded(),)).accepted
+
+    def test_blocking_crosses_the_boundary_in_both_directions(self) -> None:
+        """Not only "contradicted must block" but "a hypothetical must not".
+
+        `ResolvedClaim.blocking` is `needs_evidence and not supported`;
+        `GroundingVerdict.blocking` is `not supported and severity == hard`.
+        The two are the same question, so the claim carries the answer across
+        as its severity instead of the boundary approximating it.
+        """
+        from app.grounding.claims import GroundingVerdict
+
+        speculation = EvidenceResolver().resolve(
+            SemanticClaimCandidate(
+                proposition="YUIなら図書館が好きかもしれない",
+                trigger="わたしなら好きかも",
+                subject="yui",
+                category="yui_completed_action",
+                modality="hypothetical",
+            ),
+            GroundingContext(),
+        )
+
+        assert not speculation.supported
+        assert not speculation.blocking
+        assert speculation.as_claim().severity == "soft"
+        assert GroundingVerdict(claims=(speculation.as_grounded(),)).accepted
+
+        asserted = EvidenceResolver().resolve(
+            SemanticClaimCandidate(
+                proposition="YUIは今日図書館へ行った",
+                trigger="図書館に行ったよ",
+                subject="yui",
+                category="yui_completed_action",
+                modality="assertion",
+            ),
+            GroundingContext(),
+        )
+
+        assert asserted.blocking
+        assert asserted.as_claim().severity == "hard"
+        assert not GroundingVerdict(claims=(asserted.as_grounded(),)).accepted
+
+    def test_the_legacy_path_keeps_its_own_reading(self) -> None:
+        """A `GroundedClaim` nobody resolved has no verdict to preserve, so the
+        evidence-derived reading still applies — that path has no better
+        answer, and inventing one would be the same mistake pointed the other
+        way."""
+        from app.grounding.models import Claim, GroundedClaim
+
+        claim = Claim(kind="yui_completed_action", text="読んだ", trigger="読んだよ")
+        evidence = Evidence(
+            kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+        )
+
+        assert GroundedClaim(claim=claim, evidence=(evidence,)).supported
+        assert not GroundedClaim(claim=claim).supported
+
+
+# =============================================================================
+# Round 3, finding 2: a contradiction needs the same standing as support
+# =============================================================================
+
+
+class TestContradictionAdmissibility:
+    """Authority to overturn a claim cannot exceed authority to establish it.
+
+    Contradicting identifiers were checked for ownership only, so a YUI-owned
+    `tool_call` — a kind that cannot support 「本を読んだ」 at all — could
+    refute it.
+    """
+
+    SUPPORT = Evidence(
+        kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+    )
+
+    def _resolve(self, contradiction, *, extra_section=None):
+        sections = {"completed_activities_today": (self.SUPPORT,)}
+        if extra_section:
+            sections.update(extra_section)
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは今日本を読んだ",
+            trigger="読んだよ",
+            subject="yui",
+            category="yui_completed_action",
+            supporting_ids=(self.SUPPORT.evidence_id,),
+            contradicting_ids=(contradiction,),
+        )
+        return EvidenceResolver().resolve(candidate, GroundingContext(**sections))
+
+    def test_a_valid_contradiction_still_wins(self) -> None:
+        against = Evidence(
+            kind="objective_event",
+            reference="e1",
+            summary="一日中寝ていた",
+            subject="yui",
+        )
+        resolved = self._resolve(
+            against.evidence_id,
+            extra_section={"recent_objective_events": (against,)},
+        )
+
+        assert resolved.verdict == "contradicted"
+        assert resolved.blocking
+
+    def test_a_wrong_kind_contradiction_has_no_authority(self) -> None:
+        """The audit's example. `tool_call` is not admissible evidence *for* a
+        completed action, so it is not an opinion *against* one either."""
+        against = Evidence(
+            kind="tool_call", reference="t1", summary="検索した", subject="yui"
+        )
+        resolved = self._resolve(
+            against.evidence_id, extra_section={"successful_tool_calls": (against,)}
+        )
+
+        assert resolved.contradictions == ()
+        assert resolved.verdict == "supported"
+        assert not resolved.blocking
+
+    def test_an_invented_contradiction_has_no_authority(self) -> None:
+        resolved = self._resolve("objective_event:does_not_exist")
+
+        assert resolved.contradictions == ()
+        assert resolved.supported
+
+    def test_a_wrong_subject_contradiction_has_no_authority(self) -> None:
+        """The USER's day is not a rebuttal of hers."""
+        against = Evidence(
+            kind="objective_event",
+            reference="e1",
+            summary="一日中寝ていた",
+            subject="user",
+        )
+        resolved = self._resolve(
+            against.evidence_id,
+            extra_section={"recent_objective_events": (against,)},
+        )
+
+        assert resolved.contradictions == ()
+        assert resolved.supported
+
+    def test_a_wrong_relation_contradiction_has_no_authority(self) -> None:
+        """It rained; that is not a rebuttal of what she did."""
+        against = Evidence(
+            kind="objective_event",
+            reference="e1",
+            summary="雨が降った",
+            subject="world",
+            relation="experiencer",
+        )
+        resolved = self._resolve(
+            against.evidence_id,
+            extra_section={"recent_objective_events": (against,)},
+        )
+
+        assert resolved.contradictions == ()
+        assert resolved.supported
+
+    def test_both_directions_run_the_same_function(self) -> None:
+        """Structural: one admissibility test, not two that can drift."""
+        import inspect
+
+        from app.dialogue.semantic_claims import EvidenceResolver as Resolver
+
+        source = inspect.getsource(Resolver.resolve)
+        assert source.count("admit(") == 2, (
+            "supporting and contradicting citations must both go through `admit`"
+        )
+        assert "may_support(" not in source, (
+            "the ownership check was re-implemented outside `admit`"
+        )

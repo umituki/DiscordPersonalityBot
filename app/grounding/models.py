@@ -257,16 +257,45 @@ class Claim:
 
 @dataclass(frozen=True, slots=True)
 class GroundedClaim:
-    """A claim, and what was found for it."""
+    """A claim, and what was found for it.
+
+    Round 3, finding 1. This used to derive `supported` from "is the evidence
+    tuple non-empty", which is a *re-decision*: the semantic resolver had
+    already weighed positive evidence against authoritative contradictions and
+    concluded `contradicted`, and this adapter then looked at the surviving
+    positive evidence alone and flipped the answer back to supported. A claim
+    the record disagrees with reached the USER because the last object to touch
+    it recomputed a verdict it was not the authority for.
+
+    So the verdict travels. When a semantic resolver ran, its conclusion is
+    carried here verbatim and nothing downstream recalculates it; when nothing
+    authoritative ran — the legacy extractor path — `verdict` is empty and the
+    old evidence-derived reading applies, because there was no better answer to
+    preserve.
+    """
 
     claim: Claim
     evidence: tuple[Evidence, ...] = ()
+    #: ``supported`` / ``unsupported`` / ``contradicted`` from the resolver, or
+    #: ``""`` when no semantic authority spoke for this claim.
+    verdict: str = ""
+    #: The authoritative records that disagree, carried so repair can say so.
+    contradictions: tuple[Evidence, ...] = ()
+
+    @property
+    def contradicted(self) -> bool:
+        return self.verdict == "contradicted" or bool(self.contradictions)
 
     @property
     def supported(self) -> bool:
+        if self.verdict:
+            return self.verdict == "supported"
         return bool(self.evidence)
 
     def describe(self) -> str:
+        if self.contradicted:
+            records = "、".join(item.summary for item in self.contradictions)
+            return f"{self.claim.kind}: 「{self.claim.trigger}」は記録と矛盾する（{records}）"
         if self.supported:
             return f"{self.claim.kind}: 裏づけあり"
         return f"{self.claim.kind}: 「{self.claim.trigger}」の裏づけがない"

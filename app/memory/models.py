@@ -87,6 +87,19 @@ class EpisodicMemory(_Frozen):
         return self.origin == "real_discord"
 
 
+#: What a piece of general knowledge is *about*, recorded by whoever formed it.
+#:
+#: Distinct from ``origin``, which says where it came from. The two answer
+#: different questions and neither implies the other: a fact acquired through
+#: real Discord conversation can be about the world, and a fact consolidated in
+#: virtual life is about her. Deriving one from the other is how a subject gets
+#: assigned by accident.
+#:
+#: ``unknown`` is the honest answer for a row written before anything recorded
+#: this, and it grounds nothing — which is the safe direction.
+SemanticSubject = Literal["yui", "user", "other", "world", "unknown"]
+
+
 class SemanticMemory(_Frozen):
     """A general fact YUI believes she knows (spec 10.2)."""
 
@@ -94,6 +107,9 @@ class SemanticMemory(_Frozen):
     statement: str
     topics: tuple[str, ...] = ()
     origin: EventOrigin
+    #: Whose life or which world this knowledge is about. Set by the subsystem
+    #: that formed the memory, never inferred from the statement text.
+    subject: SemanticSubject = "unknown"
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     stability: Stability = "CHANGEABLE"
     support_count: int = Field(default=1, ge=0)

@@ -532,6 +532,7 @@ class MemoryRepository:
         *,
         statement: str,
         origin: str,
+        subject: str,
         topics: Sequence[str],
         confidence: float,
         stability: str,
@@ -540,22 +541,23 @@ class MemoryRepository:
     ) -> SemanticMemory:
         with self._db.transaction() as connection:
             row = connection.execute(
-                "SELECT * FROM semantic_memories WHERE statement = ? AND origin = ?",
-                (statement, origin),
+                "SELECT * FROM semantic_memories "
+                "WHERE statement = ? AND origin = ? AND subject = ?",
+                (statement, origin, subject),
             ).fetchone()
             if row is None:
                 semantic_id = ids.new_id(ids.SEMANTIC)
                 connection.execute(
                     """
                     INSERT INTO semantic_memories
-                        (semantic_id, statement, topics_json, origin, confidence, stability,
-                         support_count, contradiction_count, first_learned_at, updated_at,
-                         status, source_memory_ids_json)
-                    VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, 'active', ?)
+                        (semantic_id, statement, topics_json, origin, subject, confidence,
+                         stability, support_count, contradiction_count, first_learned_at,
+                         updated_at, status, source_memory_ids_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, 'active', ?)
                     """,
                     (
                         semantic_id, statement, json.dumps(list(topics), ensure_ascii=False),
-                        origin, confidence, stability, to_iso(now), to_iso(now),
+                        origin, subject, confidence, stability, to_iso(now), to_iso(now),
                         json.dumps(list(source_memory_ids)),
                     ),
                 )
@@ -581,10 +583,20 @@ class MemoryRepository:
         )
         return None if row is None else _to_semantic(row)
 
-    def semantic_by_statement(self, statement: str, origin: str) -> SemanticMemory | None:
+    def semantic_by_statement(
+        self, statement: str, origin: str, subject: str = "unknown"
+    ) -> SemanticMemory | None:
+        """The stored fact with this statement, origin *and* subject.
+
+        Subject is part of the identity because it is part of what the row
+        asserts. Without it, the same sentence recorded about her and about the
+        world would merge into whichever was written first, and the survivor
+        would carry the other one's ownership.
+        """
         row = self._db.query_one(
-            "SELECT * FROM semantic_memories WHERE statement = ? AND origin = ?",
-            (statement, origin),
+            "SELECT * FROM semantic_memories "
+            "WHERE statement = ? AND origin = ? AND subject = ?",
+            (statement, origin, subject),
         )
         return None if row is None else _to_semantic(row)
 
@@ -709,6 +721,7 @@ def _to_semantic(row: sqlite3.Row) -> SemanticMemory:
         statement=row["statement"],
         topics=tuple(json.loads(row["topics_json"])),
         origin=row["origin"],
+        subject=row["subject"],
         confidence=row["confidence"],
         stability=row["stability"],
         support_count=int(row["support_count"]),

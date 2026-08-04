@@ -241,6 +241,21 @@ class GroundingContextBuilder:
         )
 
     def _semantic_memories(self) -> tuple[Evidence, ...]:
+        """General knowledge, filed under whoever it is about.
+
+        Round 3, finding 3. The subject used to be left at its default, so
+        every semantic memory arrived as ``unknown`` and the ownership matrix
+        refused all of them — the whole source was inert in production while
+        looking wired. It is read from the row rather than decided here,
+        because this class has no way to know what a sentence is about and
+        guessing from the text is precisely the thing the matrix exists to
+        prevent. A row written before migration 34 says ``unknown`` and
+        continues to ground nothing, which is the honest answer.
+
+        The relation is ``topic``: a semantic memory records something that is
+        *true of* its subject, not something the subject did on an occasion.
+        「読書すると落ち着く」 is not an act she performed.
+        """
         if self._memories is None:
             return ()
         known = self._memories.active_semantic(limit=DEFAULT_SEMANTIC_LIMIT) or ()
@@ -250,6 +265,8 @@ class GroundingContextBuilder:
                 reference=item.semantic_id,
                 summary=item.statement,
                 occurred_at=item.updated_at,
+                subject=getattr(item, "subject", "unknown") or "unknown",
+                relation="topic",
             )
             for item in known
         )
