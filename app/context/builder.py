@@ -90,6 +90,9 @@ class PromptMeasurement:
     tokens: int
     #: How much of a budget this used, when one was supplied.
     fraction: float | None = None
+    #: The budget it was measured against. Zero means none was supplied, which
+    #: is why ``over_budget`` is False — not because the prompt was small.
+    budget_tokens: int = 0
 
     @property
     def over_budget(self) -> bool:
@@ -105,19 +108,40 @@ class PromptMeasurement:
 def measure_prompt(
     rendered: str, budget: "ContextBudget | None" = None
 ) -> PromptMeasurement:
-    """Measure a fully rendered model input.
+    """Measure a fully rendered model input against a budget.
 
     Deliberately takes the finished string rather than the parts: measuring the
-    parts is what produced a number that did not match reality.
+    parts is what produced a number that did not match what was sent.
+
+    Passing no budget yields ``fraction=None`` and ``over_budget=False``, which
+    is honest — nothing was compared — but callers on the reply path must pass
+    one. A measurement that cannot fail measures nothing (audit finding 8).
     """
     chars_per_token = (
         budget.chars_per_token if budget is not None else DEFAULT_CHARS_PER_TOKEN
     )
     tokens = estimate_tokens(rendered, chars_per_token)
     fraction = None
+    budget_tokens = 0
     if budget is not None and budget.max_tokens:
+        budget_tokens = budget.max_tokens
         fraction = tokens / budget.max_tokens
-    return PromptMeasurement(chars=len(rendered), tokens=tokens, fraction=fraction)
+    return PromptMeasurement(
+        chars=len(rendered),
+        tokens=tokens,
+        fraction=fraction,
+        budget_tokens=budget_tokens,
+    )
+
+
+def measure_messages(messages, budget: "ContextBudget | None" = None) -> PromptMeasurement:
+    """Measure the whole message list, which is what Ollama actually receives.
+
+    The system prompt is the large one, but a long USER turn counts too, and
+    the budget applies to their sum.
+    """
+    rendered = "\n".join(getattr(message, "content", str(message)) for message in messages)
+    return measure_prompt(rendered, budget)
 
 
 @dataclass(frozen=True, slots=True)

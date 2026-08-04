@@ -41,6 +41,12 @@ from app.grounding.models import SELF_CLAIM_KINDS, Evidence, GroundingContext
 pytestmark = pytest.mark.invariant
 
 
+class _Value:
+    def __init__(self, name: str, priority: float) -> None:
+        self.name = name
+        self.priority = priority
+
+
 def _yui(summary: str, kind: str = "activity", reference: str = "act_1") -> Evidence:
     return Evidence(kind=kind, reference=reference, summary=summary, subject="yui")
 
@@ -205,8 +211,12 @@ def test_citing_nothing_is_recorded_as_citing_nothing() -> None:
 
 
 def test_a_non_assertion_needs_no_evidence() -> None:
-    """A wish, a plan or a question asserts nothing, so nothing is owed."""
-    for modality in ("intention", "hypothetical", "question", "hedged"):
+    """A wish, a plan or a supposition asserts nothing, so nothing is owed.
+
+    Note what is *not* on this list: `hedged_assertion` and `uncertain_recall`
+    both commit to something being true, however softly (audit finding 5).
+    """
+    for modality in ("intention", "hypothetical", "question"):
         candidate = SemanticClaimCandidate(
             proposition="本を読みたい",
             trigger="読みたいな",
@@ -366,8 +376,10 @@ def test_values_stay_out_unless_the_turn_is_about_her() -> None:
     """
 
     class Values:
-        def top(self, limit=3):
-            return ["誠実さ"]
+        """The real `ValueRepository` API — `all()`, not a fixture-only `top()`."""
+
+        def all(self):
+            return [_Value("誠実さ", 0.8)]
 
     builder = SituationBuilder(values=Values())
 

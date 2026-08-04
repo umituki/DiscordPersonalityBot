@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+from app.dialogue.semantic_claims import EvidenceResolver, SemanticClaimCandidate
 from app.grounding.claims import ClaimExtractor, ClaimGroundingGuard
 from app.grounding.models import GroundingContext
 
@@ -59,6 +60,12 @@ class CommonGroundClaim:
     updated_at: datetime | None = None
     event_id: str | None = None
     resolved_reason: str = ""
+    #: Audit finding 3. The verified Semantic Claim this row came from, as
+    #: JSON. Present for anything recorded through the reviewed path; empty for
+    #: rows the legacy extractor produced.
+    semantic_json: str = ""
+    subject: str = ""
+    modality: str = ""
 
     @property
     def is_live(self) -> bool:
@@ -148,6 +155,9 @@ class CommonGroundTracker:
         self._repository = repository
         self._extractor = extractor
         self._guard = guard
+        #: Audit finding 3. Re-resolves a stored Semantic Claim against current
+        #: evidence, so a correction never re-parses the delivered sentence.
+        self._resolver = EvidenceResolver()
 
     # --- writing ---------------------------------------------------------
     def record_reply(
@@ -234,6 +244,13 @@ class CommonGroundTracker:
                     status="supported" if claim.supported else "provisional",
                     source="yui_inference",
                     confidence="high" if claim.supported else "low",
+                    evidence=tuple(item.evidence_id for item in claim.evidence),
+                    # Audit finding 3: the verified representation travels with
+                    # the row, so a later correction reasons about this claim
+                    # rather than re-deriving a different one from the prose.
+                    semantic=claim.candidate.model_dump(mode="json"),
+                    subject=claim.candidate.subject,
+                    modality=claim.candidate.modality,
                     now=now,
                 )
             )
@@ -257,6 +274,7 @@ class CommonGroundTracker:
         *,
         conversation_id: str,
         context: GroundingContext | None,
+        target_claim_id: str = "",
         now: datetime,
     ) -> "CorrectionOutcome":
         """Re-verify YUI's own previous claim when the USER pushes back.
@@ -280,7 +298,25 @@ class CommonGroundTracker:
                 return CorrectionOutcome(signal=signal, retracted=True)
             return CorrectionOutcome()
 
-        target = live[0]
+        # Audit finding 2. Which claim, resolved by identity upstream. Taking
+        # `live[0]` was right by accident with one outstanding claim and a coin
+        # toss with two — and getting it wrong retracts something she can
+        # support while keeping something she cannot.
+        target = None
+        if target_claim_id:
+            target = next(
+                (claim for claim in live if claim.claim_id == target_claim_id), None
+            )
+        if target is None:
+            if len(live) == 1:
+                target = live[0]
+            else:
+                # Several outstanding claims and no resolution. Retracting a
+                # guess is worse than retracting nothing.
+                logger.info(
+                    "correction target unresolved among %d live claims", len(live)
+                )
+                return CorrectionOutcome(signal=signal, retracted=False)
         supported = self._still_supported(target, context)
         if supported:
             # It stands. She may say so, and it stays in the common ground —
@@ -310,16 +346,52 @@ class CommonGroundTracker:
     def _still_supported(
         self, claim: CommonGroundClaim, context: GroundingContext | None
     ) -> bool:
+        """Does this claim still stand, checked against evidence *now*?
+
+        Audit finding 3. This used to re-run the regex guard over
+        ``claim.statement`` — reading the delivered sentence a second time with
+        a different parser than the one that approved it, and treating that
+        second reading as authoritative. Two readers, one sentence, no reason
+        for them to agree.
+
+        The stored Semantic Claim is re-resolved instead: the same proposition,
+        the same cited evidence identifiers, resolved against the context as it
+        stands now. Nothing re-reads the prose.
+        """
         if context is None:
             # Nothing to check against. CORR-002 leans to retraction, so an
             # unverifiable claim is not treated as verified.
             return False
+        candidate = _stored_claim(claim)
+        if candidate is not None:
+            resolved = self._resolver.resolve(candidate, context)
+            if not resolved.needs_evidence:
+                # It never asserted anything, so there is nothing to defend and
+                # nothing to take back.
+                return True
+            return resolved.supported
+        # A legacy row, recorded before the representation was stored. The old
+        # reader is the only thing that can speak for it.
         verdict = self._guard.review(claim.statement, context)
         if not verdict.claims:
-            # The sentence carries no factual assertion any more — nothing to
-            # retract, and nothing to defend either.
             return True
         return all(item.supported for item in verdict.claims)
+
+
+def _stored_claim(claim: CommonGroundClaim) -> SemanticClaimCandidate | None:
+    """The verified Semantic Claim this row was recorded from, if there is one.
+
+    Absent on rows the legacy extractor produced, which is why the caller keeps
+    a fallback rather than treating a missing blob as "unsupported".
+    """
+    raw = getattr(claim, "semantic_json", "") or ""
+    if not raw:
+        return None
+    try:
+        return SemanticClaimCandidate.model_validate_json(raw)
+    except Exception:  # noqa: BLE001 - a malformed blob is simply absent
+        logger.info("stored semantic claim for %s could not be read", claim.claim_id)
+        return None
 
 
 @dataclass(frozen=True, slots=True)

@@ -28,13 +28,23 @@ class CommonGroundRepository:
         confidence: str,
         now: datetime,
         evidence: tuple[str, ...] = (),
+        semantic: dict | None = None,
+        subject: str = "",
+        modality: str = "",
     ) -> CommonGroundClaim:
+        """Record one claim, with the semantic representation that was verified.
+
+        Audit finding 3: ``semantic`` is the reviewed claim object from *before*
+        the send. Storing it is what lets a later correction reason about the
+        same claim rather than re-deriving a different one from the sentence.
+        """
         claim_id = new_id("cgc")
         self._db.execute(
             "INSERT INTO common_ground_claims ("
             "claim_id, conversation_id, event_id, kind, statement, status, source, "
-            "confidence, evidence_json, asserted_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "confidence, evidence_json, semantic_json, subject, modality, "
+            "asserted_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 claim_id,
                 conversation_id,
@@ -45,6 +55,17 @@ class CommonGroundRepository:
                 source,
                 confidence,
                 json.dumps(list(evidence), ensure_ascii=False),
+                # Empty string, not "{}", when there is no verified claim: an
+                # empty JSON object parses into a default claim, and a default
+                # claim asserts something with no evidence. A legacy row must
+                # read as "no stored representation", not as "an empty one".
+                (
+                    json.dumps(semantic, ensure_ascii=False, sort_keys=True)
+                    if semantic
+                    else ""
+                ),
+                subject,
+                modality,
                 to_iso(now),
                 to_iso(now),
             ),
@@ -114,7 +135,18 @@ def _to_claim(row: sqlite3.Row) -> CommonGroundClaim:
         asserted_at=from_iso(row["asserted_at"]),
         updated_at=from_iso(row["updated_at"]),
         resolved_reason=row["resolved_reason"],
+        semantic_json=_column(row, "semantic_json"),
+        subject=_column(row, "subject"),
+        modality=_column(row, "modality"),
     )
+
+
+def _column(row: sqlite3.Row, name: str) -> str:
+    """Read a column that older rows may not have."""
+    try:
+        return row[name] or ""
+    except (IndexError, KeyError):
+        return ""
 
 
 __all__ = ["CommonGroundRepository"]

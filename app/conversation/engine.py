@@ -29,7 +29,13 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from app.clock import Clock, SystemClock, to_iso
-from app.context.builder import BuiltContext, ContextBuilder, Requirement, measure_prompt
+from app.context.builder import (
+    BuiltContext,
+    ContextBuilder,
+    ContextOverflowError,
+    Requirement,
+    measure_messages,
+)
 from app.conversation.expression import ExpressionContext
 from app.conversation.guard import OutputGuard
 from app.conversation.models import ConversationTurn, ReplyDraft
@@ -54,7 +60,6 @@ from app.conversation.social_interpretation import (
 from app.conversation.surface import RelationshipBand, SurfacePlan, SurfacePlanner
 from app.conversation.text import looks_like_question
 from app.grounding.claims import ClaimGroundingGuard, GroundingVerdict
-from app.grounding.memory_semantics import SemanticMemoryGroundingGuard
 from app.dialogue.semantic_claims import SemanticClaimReviewer, SemanticReviewOutcome
 from app.dialogue.turn import TurnState
 from app.grounding.models import Claim, GroundedClaim, GroundingContext
@@ -181,7 +186,6 @@ class ConversationEngine:
         policy: ConversationPolicy,
         quality: ConversationQualityGuard | None = None,
         grounding: ClaimGroundingGuard | None = None,
-        memory_grounding: SemanticMemoryGroundingGuard | None = None,
         semantic_claims: SemanticClaimReviewer | None = None,
         interpreter: SocialInterpreter | None = None,
         planner: SurfacePlanner | None = None,
@@ -226,7 +230,6 @@ class ConversationEngine:
         # Memory is reviewed as a semantic proposition category.  It is kept
         # separate from the surface-pattern extractor so paraphrases do not
         # require an ever-growing phrase list.
-        self._memory_grounding = memory_grounding
         #: Patch spec 10: a stage separate from the Output Guard. The Output
         #: Guard decides whether this may be said at all; this decides whether
         #: it is a reply a person would send.
@@ -432,9 +435,44 @@ class ConversationEngine:
         expression = ExpressionContext.from_snapshot(snapshot)
 
         template = self._prompts.get(PROMPT_ID)
-        context = self._build_context(
-            user_text, recent_turns, memories, social, surface, expression
-        )
+        # Audit finding 8. REQUIRED context that does not fit is a
+        # configuration failure by §27.2 — identity and the current message are
+        # never dropped. It is surfaced as a named suppression rather than an
+        # exception out of the reply path: the operator has to see it, and the
+        # USER must not see a crash.
+        try:
+            context = self._build_context(
+                user_text,
+                recent_turns,
+                memories,
+                social,
+                surface,
+                expression,
+                turn=turn,
+                style_hints=hints.render(),
+                references=render_references(references),
+            )
+        except ContextOverflowError as overflow:
+            logger.error("conversation context overflow: %s", overflow)
+            return ReplyGeneration(
+                outcome=dataclasses.replace(
+                    StructuredOutcome(accepted=False, value=None),
+                    failure=ValidationFailure(
+                        stage=Stage.SEMANTIC,
+                        reason_code="context_overflow",
+                        detail=str(overflow)[:400],
+                        validator="context_builder",
+                    ),
+                ),
+                context=BuiltContext(
+                    items=(), dropped=(), used_tokens=0,
+                    budget=self._policy.context.budget(),
+                ),
+                prompt_version=template.prompt_version,
+                social=social,
+                surface=surface,
+                intent=plan.intent,
+            )
 
         system_content = template.render(
             identity=context.get("identity").content,
@@ -453,32 +491,35 @@ class ConversationEngine:
                 if context.includes("relevant_memories")
                 else NO_MEMORIES
             ),
-            # Dialogue v2: the reading of the turn, and the working picture.
-            # Both explicitly non-authoritative in the prompt itself.
-            turn_understanding=turn.render_understanding(),
-            situation=turn.render_situation(),
-            # Rebuild spec 15.1: what she may speak of as having happened,
-            # grouped by who each fact is about.
-            grounding_facts=_render_grounding(grounding),
+            # Audit finding 8. Rendered from the *built* context, so a section
+            # the budget dropped is genuinely absent from the prompt rather
+            # than dropped on paper and sent anyway.
+            turn_understanding=_section_or(context, "turn_understanding", "(解釈なし)"),
+            situation=_section_or(context, "situation", "(状況を組み立てられなかった)"),
+            grounding_facts=_section_or(context, "grounding_facts", NO_GROUNDING),
             social_intent=social.render(),
             surface_plan=surface.render(),
-            style_hints=hints.render() or NO_STYLE_HINTS,
-            references=render_references(references) or NO_REFERENCES,
-            # Rebuild spec 11. Empty is the honest reading when this
-            # conversation has not asserted anything yet.
-            common_ground=common_ground or NO_COMMON_GROUND,
-            correction=correction or NO_CORRECTION,
+            style_hints=_section_or(context, "style_hints", NO_STYLE_HINTS),
+            references=_section_or(context, "references", NO_REFERENCES),
+            common_ground=_section_or(context, "common_ground", NO_COMMON_GROUND),
+            correction=_section_or(context, "correction", NO_CORRECTION),
             current_time=to_iso(self._clock.now()),
         )
 
-        # Requirement 12: measure what actually goes out, not what the builder
-        # assembled. The two were never the same number, because the template
-        # renders grounding, common ground, correction, references, style and
-        # the situation around the built items.
-        rendered_size = measure_prompt(system_content + user_text)
+        # Audit finding 8. Measured against the *configured* budget, on the
+        # complete message list that goes to Ollama. The previous version
+        # passed no budget, so `fraction` was always None and `over_budget`
+        # always False — a measurement that could not fail is not one.
+        messages = (
+            LLMMessage(role="system", content=system_content),
+            LLMMessage(role="user", content=user_text),
+        )
+        rendered_size = measure_messages(messages, self._policy.context.budget())
         if trace is not None:
             trace.prompt_chars = rendered_size.chars
             trace.prompt_tokens = rendered_size.tokens
+            trace.prompt_budget_tokens = rendered_size.budget_tokens
+            trace.prompt_over_budget = rendered_size.over_budget
         if rendered_size.over_budget:
             logger.warning(
                 "conversation prompt over budget event_id=%s %s",
@@ -489,10 +530,7 @@ class ConversationEngine:
         _mark(trace, "realization_started_at")
         outcome = await self._structured.generate(
             ReplyDraft,
-            (
-                LLMMessage(role="system", content=system_content),
-                LLMMessage(role="user", content=user_text),
-            ),
+            messages,
             purpose=PURPOSE,
             pipeline=self._structured_pipeline(),
             context=ValidationContext(
@@ -539,6 +577,7 @@ class ConversationEngine:
             event_id=event_id,
             tool_success_ids=tool_success_ids,
             turn=turn,
+            trace=trace,
         )
 
     # --- quality (patch spec 10) -------------------------------------------
@@ -554,6 +593,7 @@ class ConversationEngine:
         event_id: str | None,
         tool_success_ids: Sequence[str],
         turn: TurnState | None = None,
+        trace: "ConversationTrace | None" = None,
     ) -> ReplyGeneration:
         """Review the draft, and rewrite it at most once.
 
@@ -573,9 +613,11 @@ class ConversationEngine:
             user_text=user_text,
             recent_turns=recent_turns,
         )
+        _mark(trace, "semantic_grounding_started_at")
         grounded, review = await self._check_grounding(
             text, grounding, turn=turn, run_id=run_id, event_id=event_id
         )
+        _mark(trace, "semantic_grounding_ended_at")
         if quality.accepted and grounded.accepted:
             return dataclasses.replace(
                 generation,
@@ -585,6 +627,7 @@ class ConversationEngine:
             )
 
         _log_rejection(event_id, quality, grounded)
+        _mark(trace, "repair_started_at")
         repaired = await self._repair(
             rejected_text=text,
             verdict=quality,
@@ -601,6 +644,7 @@ class ConversationEngine:
             turn=turn,
             review=review,
         )
+        _mark(trace, "repair_ended_at")
 
         if repaired.accepted and repaired.value is not None:
             second_text = repaired.value.text.strip()
@@ -689,20 +733,11 @@ class ConversationEngine:
         # longer the primary authority on what a sentence asserts.
         if self._grounding is not None:
             claims += self._grounding.review(text, context).claims
-        if self._memory_grounding is not None:
-            semantic = await self._memory_grounding.review(
-                text,
-                context,
-                user_text=turn.user_text,
-                recent_conversation=turn.recent_conversation,
-                understanding=turn.understanding,
-                run_id=run_id,
-                event_id=event_id,
-            )
-            claims += semantic.claims
-        # The unified semantic reviewer covers the categories regex cannot
-        # reach — 「静かに過ごしていました」 in answer to 「今日は何してた？」 is a
-        # completed-action claim and matches no pattern at all.
+        # Audit finding 4: one semantic authority. Memory claims used to have
+        # their own reviewer, their own schema and their own prompt, so the
+        # same sentence could be judged twice by two readers that disagreed.
+        # `yui_specific_memory_recall` and `yui_general_memory_capability` are
+        # now categories in the one schema, grounded by the same resolver.
         if self._semantic_claims is not None:
             review = await self._semantic_claims.review(
                 text,
@@ -842,7 +877,20 @@ class ConversationEngine:
         social: SocialInterpretation | None = None,
         surface: SurfacePlan | None = None,
         expression: ExpressionContext | None = None,
+        turn: TurnState | None = None,
+        style_hints: str = "",
+        references: str = "",
     ) -> BuiltContext:
+        """Everything the realizer prompt will contain, under one budget.
+
+        Audit finding 8. Grounding, common ground, correction, the situation,
+        the turn reading, style hints and references used to be rendered into
+        the template *after* the builder had done its accounting, so the drop
+        policy governed roughly half the prompt and the reported size was never
+        the size that was sent. They are all candidates now, with the
+        requirement level each actually has.
+        """
+        turn = turn or TurnState(user_text=user_text)
         builder = ContextBuilder()
         builder.add(
             "identity",
@@ -895,6 +943,59 @@ class ConversationEngine:
                 priority=80,
                 source="dialogue_act_engine",
             )
+        # What she may state as fact is REQUIRED: dropping it under pressure
+        # would not shorten the reply, it would remove the only thing stopping
+        # the reply from being invented.
+        builder.add(
+            "grounding_facts",
+            _render_grounding(turn.grounding),
+            requirement=Requirement.REQUIRED,
+            priority=85,
+            source="grounding_context",
+        )
+        # A retraction that gets dropped is a retraction she argues against.
+        builder.add(
+            "correction",
+            turn.correction,
+            requirement=Requirement.REQUIRED,
+            priority=84,
+            source="common_ground",
+        )
+        builder.add(
+            "common_ground",
+            turn.common_ground,
+            requirement=Requirement.IMPORTANT,
+            priority=60,
+            source="common_ground",
+        )
+        builder.add(
+            "turn_understanding",
+            turn.render_understanding(),
+            requirement=Requirement.IMPORTANT,
+            priority=65,
+            source="discourse_interpreter",
+        )
+        builder.add(
+            "situation",
+            turn.render_situation(),
+            requirement=Requirement.OPTIONAL,
+            priority=45,
+            source="situation_context",
+        )
+        builder.add(
+            "style_hints",
+            style_hints,
+            requirement=Requirement.OPTIONAL,
+            priority=20,
+            source="repetition_monitor",
+        )
+        builder.add(
+            "references",
+            references,
+            requirement=Requirement.OPTIONAL,
+            priority=10,
+            source="dialogue_references",
+        )
         return builder.build(self._policy.context.budget())
 
     def render_history(self, turns: Sequence[ConversationTurn]) -> str:
@@ -946,6 +1047,18 @@ def _has_lived_evidence(grounding: GroundingContext | None) -> bool:
     return bool(grounding.of_kinds(_LIVED_EVIDENCE))
 
 
+def _section_or(context: BuiltContext, key: str, fallback: str) -> str:
+    """One built section, or the honest placeholder when it is not there.
+
+    Reading through the built context is what makes the budget real: a section
+    the drop policy removed must not reappear in the rendered template.
+    """
+    item = context.get(key)
+    if item is None or not item.content.strip():
+        return fallback
+    return item.content
+
+
 def _render_unusable(
     grounded: GroundingVerdict, semantic: SemanticReviewOutcome | None
 ) -> str:
@@ -977,8 +1090,16 @@ def _render_unusable(
 
 
 def _render_recalled(grounding: GroundingContext | None, limit: int = 5) -> str:
-    """What she actually recalled this turn. Often nothing, which is a fact."""
-    if grounding is None or not grounding.recalled_subjective_memories:
+    """What she actually recalled this turn. Often nothing, which is a fact.
+
+    Unless the source could not be read, in which case it is not a fact at all
+    and the repair prompt has to know the difference (audit finding 9).
+    """
+    if grounding is None:
+        return "(記憶の情報源を読めなかった。思い出せないという意味ではない)"
+    if grounding.status("recalled_subjective_memories") == "unavailable":
+        return "(記憶の情報源を読めなかった。思い出せないという意味ではない)"
+    if not grounding.recalled_subjective_memories:
         return "(このターンで思い出せた具体的な記憶はない)"
     return "\n".join(
         f"- {item.describe()}"
@@ -1002,6 +1123,7 @@ def _render_grounding(grounding: GroundingContext | None, limit: int = 10) -> st
     """
     if grounding is None:
         return NO_GROUNDING
+    degraded = grounding.unavailable_sections
     hers: list[str] = []
     theirs: list[str] = []
     for item in grounding.of_kinds(
@@ -1018,5 +1140,13 @@ def _render_grounding(grounding: GroundingContext | None, limit: int = 10) -> st
         blocks.append(
             "### 相手・他者のこと（YUI自身の経験として語ってはいけない）\n"
             + "\n".join(f"- {line}" for line in theirs[:limit])
+        )
+    if degraded:
+        # Audit finding 9. Silence about an unreadable source reads as "there
+        # is nothing", which is the one thing it does not mean.
+        blocks.append(
+            "### 読めなかった情報源\n- "
+            + "、".join(degraded)
+            + " は確認できなかった。無かったことにして話さない。"
         )
     return "\n\n".join(blocks) or NO_GROUNDING

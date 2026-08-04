@@ -15,6 +15,7 @@ was so.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Sequence
@@ -76,24 +77,64 @@ class GroundingContextBuilder:
         recalled: Sequence[Any] = (),
         run_id: str | None = None,
     ) -> GroundingContext:
+        """Assemble the context, recording how each source actually went.
+
+        Audit finding 9: a section is ``available``, ``empty`` or
+        ``unavailable``, and the three are different facts. An exception used
+        to become an empty tuple, so 「今日の完了Activityは0件」 and 「Activity
+        repositoryが読めなかった」 arrived downstream as the same thing — and
+        only the first is something she may talk about.
+        """
         moment = now or self._clock.now()
-        return GroundingContext(
-            current_world=self._world_state(),
-            current_activity=self._current_activity(),
-            completed_activities_today=self._completed_today(moment),
-            recent_objective_events=self._objective_events(),
+        availability: dict[str, str] = {}
+
+        def section(name: str, read):
+            evidence, failed = _read_section(read)
+            availability[name] = (
+                "unavailable" if failed else ("available" if evidence else "empty")
+            )
+            return evidence
+
+        context = GroundingContext(
+            current_world=section("current_world", self._world_state),
+            current_activity=section("current_activity", self._current_activity),
+            completed_activities_today=section(
+                "completed_activities_today", lambda: self._completed_today(moment)
+            ),
+            recent_objective_events=section(
+                "recent_objective_events", self._objective_events
+            ),
             recalled_subjective_memories=_from_recalled(recalled),
-            verified_user_facts=self._user_facts(),
-            known_semantic_memories=self._semantic_memories(),
-            successful_tool_calls=self._tool_calls(run_id),
-            npc_interactions=self._npc_interactions(),
-            current_goals=self._goals_in_progress(),
+            verified_user_facts=section("verified_user_facts", self._user_facts),
+            known_semantic_memories=section(
+                "known_semantic_memories", self._semantic_memories
+            ),
+            successful_tool_calls=section(
+                "successful_tool_calls", lambda: self._tool_calls(run_id)
+            ),
+            npc_interactions=section("npc_interactions", self._npc_interactions),
+            current_goals=section("current_goals", self._goals_in_progress),
             # Phase 10 owns the diary. Until then nothing has been read, which
             # is exactly what an empty tuple says.
             explicitly_read_diary_entries=(),
             memory_authority_facts=AUTHORITATIVE_MEMORY_FACTS,
             built_at=moment,
         )
+        availability["recalled_subjective_memories"] = (
+            "available" if context.recalled_subjective_memories else "empty"
+        )
+        if any(state == "unavailable" for state in availability.values()):
+            logger.warning(
+                "grounding context is degraded; unreadable sources: %s",
+                ", ".join(
+                    sorted(
+                        name
+                        for name, state in availability.items()
+                        if state == "unavailable"
+                    )
+                ),
+            )
+        return dataclasses.replace(context, availability=availability)
 
     # --- sections -----------------------------------------------------------
     def _world_state(self) -> tuple[Evidence, ...]:
@@ -120,7 +161,7 @@ class GroundingContextBuilder:
     def _current_activity(self) -> tuple[Evidence, ...]:
         if self._activities is None:
             return ()
-        activity = _safe(self._activities.ongoing)
+        activity = self._activities.ongoing()
         if activity is None:
             return ()
         return (
@@ -136,7 +177,7 @@ class GroundingContextBuilder:
     def _completed_today(self, now: datetime) -> tuple[Evidence, ...]:
         if self._activities is None:
             return ()
-        completed = _safe(lambda: self._activities.completed(limit=50)) or ()
+        completed = self._activities.completed(limit=50) or ()
         since = now - timedelta(hours=24)
         return tuple(
             Evidence(
@@ -156,7 +197,7 @@ class GroundingContextBuilder:
     def _objective_events(self) -> tuple[Evidence, ...]:
         if self._events is None:
             return ()
-        events = _safe(lambda: self._events.recent(limit=DEFAULT_EVENT_LIMIT)) or ()
+        events = self._events.recent(limit=DEFAULT_EVENT_LIMIT) or ()
         found: list[Evidence] = []
         for event in events:
             if event.event_type in SELF_AUTHORED_EVENT_TYPES:
@@ -182,7 +223,7 @@ class GroundingContextBuilder:
     def _user_facts(self) -> tuple[Evidence, ...]:
         if self._beliefs is None:
             return ()
-        held = _safe(lambda: self._beliefs.held(subject="user", limit=30)) or ()
+        held = self._beliefs.held(subject="user", limit=30) or ()
         return tuple(
             Evidence(
                 kind="verified_user_fact",
@@ -197,9 +238,7 @@ class GroundingContextBuilder:
     def _semantic_memories(self) -> tuple[Evidence, ...]:
         if self._memories is None:
             return ()
-        known = _safe(
-            lambda: self._memories.active_semantic(limit=DEFAULT_SEMANTIC_LIMIT)
-        ) or ()
+        known = self._memories.active_semantic(limit=DEFAULT_SEMANTIC_LIMIT) or ()
         return tuple(
             Evidence(
                 kind="semantic_memory",
@@ -213,7 +252,7 @@ class GroundingContextBuilder:
     def _tool_calls(self, run_id: str | None) -> tuple[Evidence, ...]:
         if self._tools is None:
             return ()
-        call_ids = _safe(lambda: self._tools.successful_call_ids(run_id=run_id)) or ()
+        call_ids = self._tools.successful_call_ids(run_id=run_id) or ()
         return tuple(
             Evidence(
                 kind="tool_call",
@@ -227,7 +266,7 @@ class GroundingContextBuilder:
     def _npc_interactions(self) -> tuple[Evidence, ...]:
         if self._npcs is None:
             return ()
-        npcs = _safe(lambda: self._npcs.all(limit=50)) or ()
+        npcs = self._npcs.all(limit=50) or ()
         return tuple(
             Evidence(kind="npc_interaction", reference=npc.npc_id, summary=npc.name)
             for npc in npcs
@@ -236,7 +275,7 @@ class GroundingContextBuilder:
     def _goals_in_progress(self) -> tuple[Evidence, ...]:
         if self._goals is None:
             return ()
-        goals = _safe(lambda: self._goals.active(limit=DEFAULT_GOAL_LIMIT)) or ()
+        goals = self._goals.active(limit=DEFAULT_GOAL_LIMIT) or ()
         return tuple(
             Evidence(kind="goal", reference=goal.goal_id, summary=goal.description)
             for goal in goals
@@ -282,16 +321,31 @@ def _from_recalled(recalled: Sequence[Any]) -> tuple[Evidence, ...]:
     return tuple(found)
 
 
-def _safe(read):
-    """A source that fails must not take the reply down with it.
+def _read_section(read) -> tuple[tuple[Evidence, ...], bool]:
+    """Run one section reader; report what happened as well as what it found.
 
-    It makes the guard stricter, not looser: the section ends up empty, so
-    nothing it would have grounded can be claimed.
+    Returns ``(evidence, failed)``. The second element is the whole point of
+    audit finding 9: without it a failed read is indistinguishable from a real
+    zero, and a model shown a real zero will narrate an empty day.
+    """
+    try:
+        return tuple(read() or ()), False
+    except Exception:  # noqa: BLE001 - a broken read is information
+        logger.exception("grounding source failed")
+        return (), True
+
+
+def _safe(read):
+    """A single value that must not take the reply down with it.
+
+    Used inside section readers for one-row lookups. Section-level failure is
+    handled by :func:`_read_section`, which keeps the distinction; this is for
+    a value that is genuinely optional within an otherwise healthy section.
     """
     try:
         return read()
-    except Exception:  # noqa: BLE001 - a broken read is a missing section
-        logger.exception("grounding source failed; treating it as empty")
+    except Exception:  # noqa: BLE001
+        logger.exception("grounding value failed; treating it as absent")
         return None
 
 

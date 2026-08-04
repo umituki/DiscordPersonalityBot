@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from app.clock import Clock, SystemClock
 from app.conversation.common_ground import CommonGroundTracker, CorrectionOutcome
+from app.dialogue.correction import CorrectionResolver, ResolvedTarget
 from app.dialogue.situation import SituationBuilder
 from app.dialogue.turn import TurnState
 from app.dialogue.understanding import UNREAD, DiscourseInterpreter
@@ -129,6 +130,7 @@ class ConversationService:
         common_ground: CommonGroundTracker | None = None,
         discourse: DiscourseInterpreter | None = None,
         situation: SituationBuilder | None = None,
+        correction_resolver: CorrectionResolver | None = None,
         tracer: ConversationTracer | None = None,
         runtime: object | None = None,
         clock: Clock | None = None,
@@ -161,6 +163,10 @@ class ConversationService:
         self._discourse = discourse
         #: Dialogue v2: the working picture. Read-only and non-authoritative.
         self._situation = situation
+        #: Audit finding 2: resolves which stored claim a correction is aimed
+        #: at. Optional; without it a single outstanding claim is still handled
+        #: and an ambiguous one retracts nothing.
+        self._correction_resolver = correction_resolver
         #: Patch spec 19.2: where the USER's wait went, stage by stage. Optional
         #: because observability must never be a precondition for answering.
         self._tracer = tracer
@@ -337,11 +343,29 @@ class ConversationService:
         # reply prompt an argument to make.
         correction = CorrectionOutcome()
         if self._common_ground is not None:
+            # Audit finding 2: resolve *which* claim before deciding what to do
+            # about it. The live claims carry the verified semantic
+            # representation stored at delivery, so nothing re-reads the sent
+            # sentence to work out what was claimed (finding 3).
+            target = ResolvedTarget()
+            live = await asyncio.to_thread(
+                self._common_ground.live_claims, conversation.conversation_id
+            )
+            if self._correction_resolver is not None and live:
+                target = await self._correction_resolver.resolve(
+                    event.payload.text,
+                    live,
+                    recent_conversation=rendered_history,
+                    understanding=understanding,
+                    run_id=outcome.run.run_id,
+                    event_id=event.event_id,
+                )
             correction = await asyncio.to_thread(
                 self._common_ground.review_correction,
                 event.payload.text,
                 conversation_id=conversation.conversation_id,
                 context=grounding_context,
+                target_claim_id=target.claim_id,
                 now=event.occurred_at,
             )
 

@@ -20,9 +20,9 @@ said something; it does not make what she said so.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, Sequence
+from typing import Literal, Mapping, Sequence
 
 #: Rebuild spec 15.2. The kinds of statement that are dangerous to get wrong,
 #: because each one asserts something outside the sentence itself.
@@ -30,6 +30,13 @@ ClaimKind = Literal[
     "yui_completed_action",
     "yui_experience_habit",
     "yui_perception",
+    # Audit finding 4. Memory claims split in two, because they are grounded by
+    # different things: 「去年の夏のこと覚えてる」 needs a recalled row, and
+    # 「わたしは忘れることもある」 is a fact about how the Memory subsystem works.
+    # Folding them into one kind is what forced a second reviewer to exist.
+    "yui_specific_memory_recall",
+    "yui_general_memory_capability",
+    #: Legacy alias for specific recall, kept so older rows still parse.
     "yui_memory_claim",
     "user_past_fact",
     "npc_fact",
@@ -42,6 +49,8 @@ CLAIM_KINDS: tuple[ClaimKind, ...] = (
     "yui_completed_action",
     "yui_experience_habit",
     "yui_perception",
+    "yui_specific_memory_recall",
+    "yui_general_memory_capability",
     "yui_memory_claim",
     "user_past_fact",
     "npc_fact",
@@ -87,6 +96,16 @@ ACCEPTED_EVIDENCE: dict[ClaimKind, tuple[EvidenceKind, ...]] = {
         "semantic_memory",
     ),
     "yui_perception": ("activity", "objective_event", "world_state"),
+    # A concrete memory has to have been recalled *this turn*. An authority
+    # fact about how memory works cannot make a specific recollection real.
+    "yui_specific_memory_recall": (
+        "subjective_memory",
+        "objective_event",
+        "diary_entry",
+    ),
+    # A statement about how her memory behaves is settled by the Memory
+    # subsystem's own immutable facts, and by nothing she happens to recall.
+    "yui_general_memory_capability": ("memory_authority",),
     "yui_memory_claim": (
         "subjective_memory",
         "objective_event",
@@ -134,6 +153,11 @@ class Evidence:
     summary: str
     occurred_at: datetime | None = None
     subject: EvidenceSubject = "unknown"
+    #: How the subject stands to the event (audit finding 1). ``actor`` is the
+    #: default because almost every row records something its subject did; a
+    #: world event that reached YUI has to be marked ``experiencer`` by the
+    #: subsystem that actually knows it did.
+    relation: str = "actor"
 
     @property
     def evidence_id(self) -> str:
@@ -169,13 +193,15 @@ class Evidence:
 
     @property
     def is_yuis_own(self) -> bool:
-        """Whether this records something *she* did or the world did to her.
+        """Whether this records something *she* did.
 
-        Unattributed evidence does not count. Requiring the attribution rather
-        than assuming it is the same choice made everywhere else in grounding:
-        a missing fact makes the gate stricter, never looser.
+        No longer includes ``world``. Folding the two together is what let "it
+        rained" support "I got rained on": a world event is not something she
+        did, and whether it reached her is not recorded by the subject field.
+        The permissive case now goes through the ownership matrix, which asks
+        for an explicit ``experiencer`` relation.
         """
-        return self.subject in ("yui", "world")
+        return self.subject == "yui" and self.relation == "actor"
 
     def matches(self, text: str) -> bool:
         """Whether this evidence is about what the claim is about.
@@ -260,6 +286,13 @@ class GroundingContext:
     #: Immutable facts about the actual Memory subsystem. These support only
     #: general capability claims; concrete recall still requires a recalled row.
     memory_authority_facts: tuple[Evidence, ...] = ()
+    #: Audit finding 9. Per-section: did the source answer, and did it have
+    #: anything to say? ``_safe`` used to flatten an exception into an empty
+    #: tuple, which made "the activity repository raised" indistinguishable
+    #: from "she completed nothing today" — and the second is a fact about her
+    #: day while the first is a fact about the database. Sections absent from
+    #: this mapping were never read at all.
+    availability: Mapping[str, str] = field(default_factory=dict)
     #: When the context was assembled, for the trace.
     built_at: datetime | None = None
 
@@ -271,6 +304,35 @@ class GroundingContext:
 
     def of_kinds(self, kinds: tuple[EvidenceKind, ...]) -> tuple[Evidence, ...]:
         return tuple(item for item in self.all_evidence() if item.kind in kinds)
+
+    def status(self, section: str) -> str:
+        """``available``, ``empty``, ``unavailable`` or ``unknown``.
+
+        ``unknown`` means nothing tried to read it — a phase that has not
+        landed. Distinct from ``unavailable``, which means somebody tried and
+        the read failed.
+        """
+        recorded = self.availability.get(section)
+        if recorded:
+            return recorded
+        if getattr(self, section, ()) if hasattr(self, section) else ():
+            return "available"
+        return "unknown"
+
+    @property
+    def unavailable_sections(self) -> tuple[str, ...]:
+        """Sources that were read and failed. Never silently empty."""
+        return tuple(
+            sorted(
+                name
+                for name, state in self.availability.items()
+                if state == "unavailable"
+            )
+        )
+
+    @property
+    def degraded(self) -> bool:
+        return bool(self.unavailable_sections)
 
     def by_id(self, evidence_id: str) -> Evidence | None:
         """Resolve a cited identifier, or refuse it.

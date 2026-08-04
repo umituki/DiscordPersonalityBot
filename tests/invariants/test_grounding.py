@@ -362,7 +362,10 @@ def test_the_running_system_actually_wires_the_guard(temp_config, clock) -> None
     try:
         engine = application.conversation_engine
         assert engine._grounding is not None  # noqa: SLF001
-        assert engine._memory_grounding is not None  # noqa: SLF001
+        # Audit finding 4: one semantic authority, not two. The separate
+        # memory reviewer is gone; its categories live in the unified schema.
+        assert engine._semantic_claims is not None  # noqa: SLF001
+        assert not hasattr(engine, "_memory_grounding")
     finally:
         application.db.close()
 

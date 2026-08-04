@@ -273,16 +273,34 @@ async def test_the_semantic_reviewer_sees_the_question(application, clock) -> No
     assert "根拠には**絶対にならない**" in prompt
 
 
-async def test_the_memory_reviewer_sees_the_question(application, clock) -> None:
-    """Requirement 5's root cause: 「19歳です」 was read without 「何歳？」."""
+async def test_memory_claims_are_reviewed_by_the_one_authority(
+    application, clock
+) -> None:
+    """Audit finding 4. Memory used to have its own reviewer, schema and
+    prompt, so one sentence could be judged twice by two readers that
+    disagreed. There is now a single semantic review per draft, and the memory
+    categories live in it.
+
+    Requirement 5's root cause is covered by the same call: it sees the
+    question, so 「19歳です」 answering 「何歳？」 is a self fact rather than a
+    claim to remember something.
+    """
     model = use_offline_model(application)
 
     await _turn(application, clock, "何歳だっけ？")
 
-    prompt = _prompt_for(model, "memory_claim_review")
+    assert "memory_claim_review" not in model.purposes(), (
+        "the second memory reviewer is still running"
+    )
+    reviews = [p for p in model.purposes() if p == "semantic_claim_review"]
+    assert len(reviews) == 1, f"expected one semantic review, got {len(reviews)}"
+
+    prompt = _prompt_for(model, "semantic_claim_review")
     assert "何歳だっけ？" in prompt
     assert "根拠には使えない" in prompt
-    assert "19歳です" in prompt or "自己属性の申告" in prompt
+    assert "yui_specific_memory_recall" in prompt
+    assert "yui_general_memory_capability" in prompt
+    assert "記憶のcategoryに分類しない" in prompt
 
 
 async def test_the_reviewer_is_given_citable_identifiers(application, clock) -> None:

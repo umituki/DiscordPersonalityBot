@@ -164,7 +164,7 @@ class SituationBuilder:
             _section(
                 "completed_today",
                 "今日 終えたこと",
-                lambda: self._completed_today(moment),
+                lambda: self._completed_today_from(grounding, moment),
                 # The wording matters. "何もしていない" is a claim about her
                 # day; "記録がない" is a claim about the database.
                 empty_text="今日の完了Activityは記録されていない（何もしていないという意味ではない）",
@@ -223,6 +223,26 @@ class SituationBuilder:
             return []
         return [f"{ongoing.name}（{ongoing.kind}）"]
 
+    def _completed_today_from(self, grounding: Any, moment: datetime | None) -> list[str]:
+        """Prefer the authority's answer, including its failure.
+
+        The grounding builder already read the activity repository and recorded
+        how it went. Reading it a second time here could give a different
+        answer, and would lose the ``unavailable`` the authority captured.
+        """
+        if grounding is not None:
+            state = getattr(grounding, "status", lambda _name: "unknown")(
+                "completed_activities_today"
+            )
+            if state == "unavailable":
+                raise RuntimeError("the activity source was unreadable")
+            if state in ("available", "empty"):
+                return [
+                    item.describe()
+                    for item in getattr(grounding, "completed_activities_today", ())
+                ]
+        return self._completed_today(moment)
+
     def _completed_today(self, moment: datetime | None) -> list[str]:
         if self._world is None:
             raise RuntimeError("no world service")
@@ -242,8 +262,16 @@ class SituationBuilder:
 
     @staticmethod
     def _evidence_lines(grounding: Any, section: str) -> list[str]:
+        """Lines from one grounding section, honouring its availability.
+
+        Audit finding 9, carried across the boundary: if the authority could
+        not read the source, this section must say so rather than showing an
+        empty list. Raising is how `_section` records ``unavailable``.
+        """
         if grounding is None:
             raise RuntimeError("no grounding context")
+        if getattr(grounding, "status", lambda _name: "unknown")(section) == "unavailable":
+            raise RuntimeError(f"grounding section {section} was unreadable")
         return [item.describe() for item in getattr(grounding, section, ())]
 
     def _feeling(self) -> list[str]:
@@ -267,7 +295,8 @@ class SituationBuilder:
             raise RuntimeError("no goal repository")
         rows = self._goals.active(limit=10)
         topic = _topic_of(understanding)
-        described = [str(getattr(row, "description", "") or row["description"]) for row in rows]
+        described = [str(getattr(row, "description", "")) for row in rows]
+        described = [item for item in described if item]
         if not topic:
             return described[:2]
         relevant = [item for item in described if _shares_content(item, topic)]
@@ -279,18 +308,34 @@ class SituationBuilder:
         Gated on `self_disclosure_relevant` rather than always present: these
         are the lines most likely to be padded into every reply, and a reply
         that recites her values unprompted is worse than one that omits them.
+
+        Audit finding 6: this used to call ``top()`` and ``strongest()``, which
+        exist on nothing. ``ValueRepository`` and ``SelfRepository`` publish
+        ``all()``; the ranking is done here, on real rows, so the section is
+        actually reachable in production rather than only under a fake.
         """
         if not getattr(understanding, "self_disclosure_relevant", False):
             return []
+        if self._values is None and self._self_model is None:
+            raise RuntimeError("no values or self model wired")
         lines: list[str] = []
         if self._values is not None:
-            for row in self._values.top(limit=3):
-                lines.append(f"価値観: {getattr(row, 'name', row)}")
+            ranked = sorted(
+                self._values.all(),
+                key=lambda row: float(getattr(row, "priority", 0.0) or 0.0),
+                reverse=True,
+            )
+            for row in ranked[:3]:
+                name = getattr(row, "name", "")
+                if name:
+                    lines.append(f"価値観: {name}")
         if self._self_model is not None:
-            for row in self._self_model.strongest(limit=2):
-                lines.append(f"自己理解: {getattr(row, 'statement', row)}")
-        if not lines:
-            raise RuntimeError("no values or self model wired")
+            # `active()` is the published API and already orders by strength;
+            # re-sorting here would duplicate a decision the repository owns.
+            for row in self._self_model.active(limit=2):
+                statement = getattr(row, "statement", "")
+                if statement:
+                    lines.append(f"自己理解: {statement}")
         return lines
 
 

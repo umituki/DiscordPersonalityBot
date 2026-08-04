@@ -69,6 +69,7 @@ from app.runtime.proactive import (
     ProactiveDeliberation,
     ProactiveSource,
 )
+from app.dialogue.correction import CorrectionResolver
 from app.dialogue.semantic_claims import SemanticClaimReviewer
 from app.dialogue.situation import SituationBuilder
 from app.dialogue.understanding import DiscourseInterpreter
@@ -92,7 +93,6 @@ from app.conversation.surface import SurfacePlanner
 from app.conversation.guard import OutputGuard, OutputGuardPolicy
 from app.grounding.claims import ClaimExtractor, ClaimGroundingGuard
 from app.grounding.context import GroundingContextBuilder
-from app.grounding.memory_semantics import SemanticMemoryGroundingGuard
 from app.grounding.policy import GroundingPolicy
 from app.conversation.policy import ConversationPolicy
 from app.conversation.service import ConversationService
@@ -288,6 +288,13 @@ class Application:
     proactive_deliberations: ProactiveDeliberationRepository
     shadow: ShadowController
     shadow_decisions: ShadowDecisionRepository
+    #: Audit finding 6. Exposed so a test can build the situation against the
+    #: real repositories rather than against a double with invented methods —
+    #: which is how `top()` and `strongest()` survived.
+    situation: SituationBuilder
+    value_repo: ValueRepository
+    self_repo: SelfRepository
+    goal_repo: GoalRepository
     growth_policy: GrowthPolicy
     adaptations: AdaptationEngine
     growth: GrowthEngine
@@ -579,10 +586,6 @@ class Application:
             guard=guard,
             policy=conversation_policy,
             grounding=claim_guard,
-            memory_grounding=SemanticMemoryGroundingGuard(
-                structured=structured,
-                prompts=prompts,
-            ),
             # Dialogue v2: the primary reader of what a draft asserts. The
             # regex extractor above stays as the fast backstop.
             semantic_claims=SemanticClaimReviewer(
@@ -1197,6 +1200,19 @@ class Application:
             enabled=resolved_config.runtime.live,
         )
 
+        # Audit finding 6. Built from the repositories' *published* APIs, and
+        # built once so the same object the service uses is the one a test can
+        # inspect.
+        situation_builder = SituationBuilder(
+            world=world_service,
+            state=state_repo,
+            society=society_service,
+            goals=goal_repo,
+            values=value_repo,
+            self_model=self_repo,
+            clock=resolved_clock,
+        )
+
         # The conversation path exists only when the single USER is identified
         # (spec 1.2). Without it, YUI has no one to talk to and stays offline.
         # Rebuild spec 30, Phase 5. Built before the conversation service so
@@ -1306,15 +1322,10 @@ class Application:
                 discourse=DiscourseInterpreter(
                     prompts=prompts, structured=structured
                 ),
-                situation=SituationBuilder(
-                    world=world_service,
-                    state=state_repo,
-                    society=society_service,
-                    goals=goal_repo,
-                    values=value_repo,
-                    self_model=self_repo,
-                    clock=resolved_clock,
+                correction_resolver=CorrectionResolver(
+                    prompts=prompts, structured=structured
                 ),
+                situation=situation_builder,
                 tracer=conversation_tracer,
                 # RUNTIME-003: a USER turn outranks anything the loop wanted.
                 runtime=autonomous_runtime,
@@ -1399,6 +1410,10 @@ class Application:
             proactive_deliberation=proactive_deliberation,
             shadow=shadow,
             shadow_decisions=shadow_decisions,
+            situation=situation_builder,
+            value_repo=value_repo,
+            self_repo=self_repo,
+            goal_repo=goal_repo,
             proactive_deliberations=proactive_deliberations,
             growth_policy=growth_policy,
             adaptations=adaptation_engine,

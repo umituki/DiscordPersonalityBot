@@ -56,6 +56,10 @@ ANSWERS: dict[str, str] = {
     ),
     # An ordinary offline reply asserts nothing, so there is nothing to ground.
     "SemanticClaimReview": '{"claims": []}',
+    # Audit finding 2. The default resolves *nothing*: an offline double that
+    # confidently picked a claim would let a broken resolver pass by always
+    # guessing, which is the bug the resolver replaced.
+    "CorrectionTarget": '{"claim_id": "", "denies": false, "reason": "offline default"}',
     # Semantic Memory grounding. Ordinary offline replies make no memory claim.
     "SemanticMemoryReview": '{"claims": []}',
     # Phase 2 §2E. A batch with no judgements means every candidate was left

@@ -24,6 +24,14 @@ _COLUMNS = (
     "state_commit_ended_at",
     "memory_recall_started_at",
     "memory_recall_ended_at",
+    # Audit finding 7. Persisted, so the three new stages are queryable rather
+    # than marked-and-discarded.
+    "understanding_started_at",
+    "understanding_ended_at",
+    "semantic_grounding_started_at",
+    "semantic_grounding_ended_at",
+    "repair_started_at",
+    "repair_ended_at",
     "dialogue_started_at",
     "dialogue_ended_at",
     "social_interpretation_started_at",
@@ -44,6 +52,10 @@ _COLUMNS = (
     "queue_wait_ms",
     "inference_ms",
     "model_calls",
+    # Audit finding 8. The budget the rendered prompt was measured against.
+    "prompt_tokens",
+    "prompt_budget_tokens",
+    "prompt_over_budget",
     "detail_json",
 )
 
@@ -77,6 +89,9 @@ class ConversationTraceRepository:
                 trace.queue_wait_ms,
                 trace.inference_ms,
                 trace.model_calls,
+                trace.prompt_tokens,
+                trace.prompt_budget_tokens,
+                1 if trace.prompt_over_budget else 0,
                 json.dumps(trace.as_detail(), ensure_ascii=False, sort_keys=True),
             ),
         )
@@ -133,6 +148,14 @@ _STAGE_COLUMNS: tuple[str, ...] = (
     "state_commit_ended_at",
     "memory_recall_started_at",
     "memory_recall_ended_at",
+    # Audit finding 7. Persisted, so the three new stages are queryable rather
+    # than marked-and-discarded.
+    "understanding_started_at",
+    "understanding_ended_at",
+    "semantic_grounding_started_at",
+    "semantic_grounding_ended_at",
+    "repair_started_at",
+    "repair_ended_at",
     "dialogue_started_at",
     "dialogue_ended_at",
     "social_interpretation_started_at",

@@ -2122,6 +2122,38 @@ _0032_SPONTANEOUS_MEMORY_CUES = Migration(
 )
 
 
+_0033_DIALOGUE_AUDIT = Migration(
+    version=33,
+    name="dialogue_grounding_audit",
+    statements=(
+        # Audit finding 3. The verified Semantic Claim, stored with the common
+        # ground row it produced. Correction used to re-parse the sent sentence
+        # with the regex extractor, so the claim that was checked before the
+        # send and the claim that was reconsidered afterwards were two
+        # different objects derived by two different readers. The row now
+        # carries the representation that was actually verified.
+        "ALTER TABLE common_ground_claims ADD COLUMN semantic_json TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE common_ground_claims ADD COLUMN subject TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE common_ground_claims ADD COLUMN modality TEXT NOT NULL DEFAULT ''",
+        # Audit finding 7. These stages were being marked and silently dropped:
+        # `ConversationTrace.mark` ignores anything not in STAGES, and nothing
+        # registered them. Latency for the three most expensive new steps was
+        # unmeasurable.
+        "ALTER TABLE conversation_traces ADD COLUMN understanding_started_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN understanding_ended_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN semantic_grounding_started_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN semantic_grounding_ended_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN repair_started_at TEXT",
+        "ALTER TABLE conversation_traces ADD COLUMN repair_ended_at TEXT",
+        # Audit finding 8. The budget numbers for the prompt that actually went
+        # out, so "did this turn overflow" is a query rather than a guess.
+        "ALTER TABLE conversation_traces ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE conversation_traces ADD COLUMN prompt_budget_tokens INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE conversation_traces ADD COLUMN prompt_over_budget INTEGER NOT NULL DEFAULT 0",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -2155,6 +2187,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0030_FIRST_BOOT,
     _0031_SHADOW_DECISIONS,
     _0032_SPONTANEOUS_MEMORY_CUES,
+    _0033_DIALOGUE_AUDIT,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

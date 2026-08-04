@@ -37,13 +37,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.grounding.models import (
     ACCEPTED_EVIDENCE,
-    SELF_CLAIM_KINDS,
     Claim,
     ClaimKind,
     Evidence,
     GroundedClaim,
     GroundingContext,
 )
+from app.grounding.ownership import may_support, refusal_reason
 from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator
 from app.llm.types import LLMMessage
@@ -59,9 +59,55 @@ PURPOSE = "semantic_claim_review"
 #: YUI claim.
 ClaimSubject = Literal["yui", "user", "npc", "world", "unknown"]
 
-#: How strongly the sentence commits to the proposition. Only an assertion
-#: needs evidence: a wish, a plan or a question asserts nothing.
-Modality = Literal["assertion", "question", "hypothetical", "intention", "hedged"]
+#: How strongly the proposition is committed to (audit finding 5).
+#:
+#: The old set had a bare ``hedged``, and the rule was "hedged needs no
+#: evidence". That is wrong in the direction that matters, because Japanese
+#: softens assertions constantly:
+#:
+#:     「わたしなら好きかも」        a supposition about a situation that did
+#:                                  not happen — nothing is being asserted
+#:     「読むのが好きなようです」    a softened statement about her actual
+#:                                  present preference — asserted, needs a
+#:                                  record
+#:     「前に読んだ気がする」        an uncertain claim about her actual past —
+#:                                  asserted with low confidence, and the
+#:                                  honest alternative is 「思い出せない」
+#:
+#: Surface hedging cannot tell these apart; the proposition can. So the
+#: reviewer classifies what is being committed to, and the hedge words are not
+#: consulted by Python at all.
+Modality = Literal[
+    # Committed to as fact.
+    "assertion",
+    # Committed to as fact, softened. Still needs evidence.
+    "hedged_assertion",
+    # Committed to as fact, with stated uncertainty about recall. Needs
+    # evidence; without it the honest reply is that she cannot remember.
+    "uncertain_recall",
+    # Not committed to: counterfactual, supposition, "if it were me".
+    "hypothetical",
+    # Not committed to: a plan or a wish about the future.
+    "intention",
+    # Not committed to: asking, not telling.
+    "question",
+    # Legacy value from before the split. Accepted so older stored reviews
+    # still parse, and treated as committing — see LEGACY_HEDGED.
+    "hedged",
+]
+
+#: Modalities that commit to something being true, and therefore owe evidence.
+#: Kept as an explicit set rather than ``!= "assertion"`` so that adding a
+#: modality forces a decision about which side it falls on.
+COMMITTING_MODALITIES: frozenset[str] = frozenset(
+    {"assertion", "hedged_assertion", "uncertain_recall", "hedged"}
+)
+
+#: Legacy value, kept only so an older reviewer output still parses. Mapped to
+#: the *strict* side: a bare "hedged" of unknown intent is treated as asserting
+#: something, because the failure direction there is refusing to send rather
+#: than fabricating.
+LEGACY_HEDGED = "hedged"
 
 #: When the claim says it happened.
 #:
@@ -134,8 +180,13 @@ class ResolvedClaim:
 
     @property
     def needs_evidence(self) -> bool:
-        """Only an assertion claims anything."""
-        return self.candidate.modality == "assertion"
+        """Whether this proposition commits to something being true.
+
+        Decided by the classified modality, never by hedge words in the
+        surface: 「〜のようです」 about her actual preference commits, and
+        「わたしなら〜かも」 about a situation that did not happen does not.
+        """
+        return self.candidate.modality in COMMITTING_MODALITIES
 
     @property
     def supported(self) -> bool:
@@ -202,13 +253,20 @@ class EvidenceResolver:
             if found.kind not in accepted_kinds:
                 refusals.append(f"wrong_kind:{evidence_id}")
                 continue
-            if candidate.category in SELF_CLAIM_KINDS and not found.is_yuis_own:
-                # The ownership rule, applied to every claim about her own life
-                # rather than to two of them.
-                refusals.append(f"wrong_subject:{evidence_id}")
-                continue
-            if candidate.subject == "yui" and not found.is_yuis_own:
-                refusals.append(f"wrong_subject:{evidence_id}")
+            # Audit finding 1: the full matrix, in both directions. Her record
+            # cannot settle the USER's past any more than theirs can settle
+            # hers, and a world event is not something she did.
+            if not may_support(
+                candidate.category,
+                subject=found.subject,
+                relation=found.relation,
+            ):
+                reason = refusal_reason(
+                    candidate.category,
+                    subject=found.subject,
+                    relation=found.relation,
+                )
+                refusals.append(f"{reason}:{evidence_id}")
                 continue
             kept.append(found)
 
@@ -330,23 +388,39 @@ class SemanticClaimReviewer:
 def render_evidence(context: GroundingContext | None, limit: int = 40) -> str:
     """Every citable identifier, attributed, grouped by section.
 
-    Attributed because a summary without its owner is the bug this file exists
-    to close, and grouped because the reviewer needs to see that a
-    ``verified_user_fact`` is a fact about the USER before it cites one under a
+    Attributed because a summary without its owner is the bug this module
+    exists to close, and grouped because the reviewer needs to see that a
+    ``verified_user_fact`` is a fact about the USER before citing one under a
     claim about YUI.
+
+    Audit finding 9: a section whose source could not be read says so. An empty
+    section means the record is genuinely empty and a claim needing it is
+    unsupported; an unreadable one means nothing is known either way, and the
+    reviewer must not read the absence as a fact.
     """
-    if context is None or context.is_empty:
-        return "(このターンで確かなことは記録されていない)"
+    if context is None:
+        return "(このターンの記録を読めなかった)"
     from app.grounding.models import GROUNDING_SECTIONS
 
     lines: list[str] = []
+    unreadable: list[str] = []
     for section in GROUNDING_SECTIONS:
+        if context.status(section) == "unavailable":
+            unreadable.append(section)
+            continue
         items = getattr(context, section)
         if not items:
             continue
         lines.append(f"## {section}")
         for item in items[:limit]:
             lines.append(f"- {item.describe()}")
+    if unreadable:
+        lines.append("## 読めなかった情報源")
+        lines.append(
+            "- " + "、".join(unreadable) + " は読み取れなかった。"
+            "「記録が無い」という意味ではないので、"
+            "これらに関わる主張は裏づけ無しとして扱うこと。"
+        )
     return "\n".join(lines) or "(このターンで確かなことは記録されていない)"
 
 
