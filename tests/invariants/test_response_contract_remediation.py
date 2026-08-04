@@ -13,6 +13,7 @@ import pytest
 
 from app.bootstrap import Application
 from app.conversation.engine import _render_grounding
+from app.conversation.quality import QualityIssue
 from app.dialogue.response_contract import (
     AnswerTarget,
     ResponseContract,
@@ -103,12 +104,17 @@ def _understanding(
     )
 
 
-def _social(*, move: str = "acknowledge", question: str = "none") -> str:
+def _social(
+    *,
+    move: str = "acknowledge",
+    question: str = "none",
+    initiative: str = "balanced",
+) -> str:
     return json.dumps(
         {
             "primary_move": move,
             "secondary_move": None,
-            "initiative": "balanced",
+            "initiative": initiative,
             "question": question,
             "tone": "light",
             "response_energy": "low",
@@ -424,3 +430,169 @@ async def test_case_h_safe_generic_repair_cannot_drop_the_direct_answer(
     assert result.suppressed
     assert result.outbound is None
     assert result.generation.quality.issues == ("direct_answer_missing",)
+
+
+# =============================================================================
+# The question policy has four states, and all four reach the send decision
+# =============================================================================
+#
+# `forbidden` was enforced at the Quality Guard and the other three were not
+# checked at all, so a turn whose contract *required* a question was satisfied
+# by a reply asking none. These exercise the production path: the contract is
+# built from the turn reading, carried to the guard, and — when the guard
+# rejects — carried unchanged into the repair and the revalidation.
+
+_NO_QUESTION = '{"text":"そうなんだ。ゆっくりでいいよ。"}'
+_WITH_QUESTION = '{"text":"そうなんだ。いまはどんな気分？"}'
+
+
+async def test_required_question_missing_is_repaired_and_sent(
+    application, clock
+) -> None:
+    """CASE 1. The draft asks nothing, the repair asks something, it goes out.
+
+    Python names the failure and supplies the same contract; it does not supply
+    the question. The rewrite is the model's, within the constraint.
+    """
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(question="necessary")],
+        ReplyDraft=[_NO_QUESTION, _WITH_QUESTION],
+    )
+
+    result = await _turn(application, clock, "ちょっと疲れてる")
+
+    assert result.generation.response_contract.question_policy == "required"
+    assert result.generation.repaired, "the missing question did not reach the guard"
+    assert result.should_send
+    assert "？" in result.generation.text or "?" in result.generation.text
+
+
+async def test_a_repair_that_still_asks_nothing_is_suppressed(
+    application, clock
+) -> None:
+    """CASE 2. The rewrite is revalidated against the same contract, not sent
+    on the strength of having been rewritten."""
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(question="necessary")],
+        ReplyDraft=[_NO_QUESTION, '{"text":"そっか。無理しないでね。"}'],
+    )
+
+    result = await _turn(application, clock, "ちょっと疲れてる")
+
+    assert result.generation.response_contract.question_policy == "required"
+    assert result.suppressed
+    assert result.outbound is None
+    failure = result.generation.outcome.failure
+    assert failure is not None
+    assert failure.reason_code == QualityIssue.REQUIRED_QUESTION_MISSING, failure
+
+
+async def test_an_optional_question_is_not_an_unwanted_one(
+    application, clock
+) -> None:
+    """CASE 3. `optional` means either is fine — the reply asks, and goes."""
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(question="optional", initiative="high")],
+        ReplyDraft=[_WITH_QUESTION],
+    )
+
+    result = await _turn(application, clock, "今日はよく晴れてたね")
+
+    assert result.generation.response_contract.question_policy == "optional"
+    assert result.should_send
+    assert not result.generation.repaired
+    assert QualityIssue.UNWANTED_QUESTION not in result.generation.quality.issues
+
+
+async def test_encouraged_does_not_demand_a_question(application, clock) -> None:
+    """CASE 4. A preference, not an obligation.
+
+    If the absence of a question suppressed the reply, `encouraged` would be a
+    second spelling of `required`.
+    """
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(question="useful")],
+        ReplyDraft=[_NO_QUESTION],
+    )
+
+    result = await _turn(application, clock, "今日はよく晴れてたね")
+
+    assert result.generation.response_contract.question_policy == "encouraged"
+    assert result.should_send
+    assert not result.generation.repaired
+    assert QualityIssue.REQUIRED_QUESTION_MISSING not in (
+        result.generation.quality.issues
+    )
+
+
+async def test_a_forbidden_question_is_still_removed(application, clock) -> None:
+    """CASE 5. The state that already worked keeps working.
+
+    Restated here so the four policies read as one matrix; the original
+    regression at `test_case_b` is untouched.
+    """
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(question="none")],
+        ReplyDraft=[_WITH_QUESTION, _NO_QUESTION],
+    )
+
+    result = await _turn(application, clock, "今日はよく晴れてたね")
+
+    assert result.generation.response_contract.question_policy == "forbidden"
+    assert result.generation.repaired
+    assert result.should_send
+    assert "？" not in result.generation.text
+
+
+async def test_required_is_reachable_from_a_real_turn_reading(
+    application, clock
+) -> None:
+    """The policy is not decorative: `necessary` maps to it in production.
+
+    Without this, "required is enforced" could be satisfied by a state nothing
+    ever produces — which is how it went unnoticed in the first place.
+    """
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(question="necessary")],
+        ReplyDraft=[_WITH_QUESTION],
+    )
+
+    result = await _turn(application, clock, "ちょっと疲れてる")
+
+    assert result.generation.response_contract.question_policy == "required"
+    assert result.should_send
+
+
+async def test_the_contract_reviewer_is_not_asked_about_questions(
+    application, clock
+) -> None:
+    """The obligation is closed and deterministic, so no model call decides it.
+
+    `ResponseContractReviewer` answers one question — was the answer
+    obligation met — and a missing required question must not add a second
+    call, nor be routed through the first.
+    """
+    model = _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(question="necessary")],
+        ReplyDraft=[_NO_QUESTION, _WITH_QUESTION],
+    )
+
+    await _turn(application, clock, "ちょっと疲れてる")
+
+    purposes = model.purposes()
+    assert purposes.count("response_contract_review") <= 1, purposes
+    assert "question_policy_review" not in purposes

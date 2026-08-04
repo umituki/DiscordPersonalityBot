@@ -307,3 +307,163 @@ def test_the_expression_does_not_carry_the_turns_intention(clock) -> None:
 
 def test_no_snapshot_is_not_an_error(clock) -> None:
     assert ExpressionContext.from_snapshot(None).render() == NOTHING
+
+
+# --- ResponseContract question policy: all four states -----------------------
+#
+# The contract has four question policies and the guard checked one of them.
+# `forbidden` was enforced; `optional`, `encouraged` and `required` all meant
+# "accept", so a turn whose contract *required* a question was satisfied by a
+# reply asking none. The state existed in the contract and had no effect at the
+# boundary that is supposed to enforce it.
+
+#: A non-greeting turn, so nothing here is decided by the greeting rules.
+_USER_TURN = "今日は天気がよかったね"
+_WITH_QUESTION = "そうだね、外に出たくなる。そっちはどうだった？"
+_WITHOUT_QUESTION = "そうだね、外に出たくなる陽気だった。"
+
+
+def _review(quality, policy: str, reply: str):
+    return quality.review(
+        reply,
+        # Deliberately the permissive boolean in every case. The contract is
+        # the authority when it is present, so this value must not change any
+        # answer below — including the `forbidden` ones.
+        allows_question=MAY_ASK,
+        question_policy=policy,
+        user_text=_USER_TURN,
+    )
+
+
+def test_forbidden_rejects_a_question(quality) -> None:
+    """A."""
+    verdict = _review(quality, "forbidden", _WITH_QUESTION)
+
+    assert verdict.rejected
+    assert QualityIssue.UNWANTED_QUESTION in verdict.issues
+
+
+def test_forbidden_accepts_no_question(quality) -> None:
+    """B."""
+    assert _review(quality, "forbidden", _WITHOUT_QUESTION).accepted
+
+
+def test_optional_accepts_a_question(quality) -> None:
+    """C."""
+    assert _review(quality, "optional", _WITH_QUESTION).accepted
+
+
+def test_optional_accepts_no_question(quality) -> None:
+    """D."""
+    assert _review(quality, "optional", _WITHOUT_QUESTION).accepted
+
+
+def test_encouraged_accepts_a_question(quality) -> None:
+    """E."""
+    assert _review(quality, "encouraged", _WITH_QUESTION).accepted
+
+
+def test_encouraged_accepts_no_question(quality) -> None:
+    """F. Encouraged is a preference, not an obligation.
+
+    Rejecting a good reply for declining a suggestion would make `encouraged` a
+    second spelling of `required`, and the contract would have three states.
+    """
+    assert _review(quality, "encouraged", _WITHOUT_QUESTION).accepted
+
+
+def test_required_accepts_a_question(quality) -> None:
+    """G."""
+    assert _review(quality, "required", _WITH_QUESTION).accepted
+
+
+def test_required_rejects_no_question(quality) -> None:
+    """H. The finding: this used to be accepted."""
+    verdict = _review(quality, "required", _WITHOUT_QUESTION)
+
+    assert verdict.rejected
+    assert QualityIssue.REQUIRED_QUESTION_MISSING in verdict.issues
+
+
+def test_the_two_question_failures_are_different_reason_codes(quality) -> None:
+    """"Asked when told not to" and "did not ask when told to" call for
+    opposite repairs, so they must be distinguishable in the trace."""
+    unwanted = _review(quality, "forbidden", _WITH_QUESTION)
+    missing = _review(quality, "required", _WITHOUT_QUESTION)
+
+    assert QualityIssue.UNWANTED_QUESTION != QualityIssue.REQUIRED_QUESTION_MISSING
+    assert QualityIssue.REQUIRED_QUESTION_MISSING not in unwanted.issues
+    assert QualityIssue.UNWANTED_QUESTION not in missing.issues
+
+
+def test_the_repair_prompt_is_told_which_question_failure_it_is(quality) -> None:
+    """A new reason code with no description would reach repair as "something
+    was unnatural", which is not something a rewrite can act on."""
+    missing = quality.describe(_review(quality, "required", _WITHOUT_QUESTION))
+    unwanted = quality.describe(_review(quality, "forbidden", _WITH_QUESTION))
+
+    assert "質問が必要" in missing and "含まれていない" in missing
+    assert missing != unwanted
+    assert "不自然な返事" not in missing, "the issue has no problem description"
+
+
+def test_the_contract_outranks_the_legacy_boolean(quality) -> None:
+    """`allows_question` is not a second authority.
+
+    Every case above passes `allows_question=True`; `forbidden` still rejects
+    and `required` still demands. The boolean only speaks when no contract
+    reached the guard.
+    """
+    assert _review(quality, "forbidden", _WITH_QUESTION).rejected
+    assert _review(quality, "required", _WITHOUT_QUESTION).rejected
+
+
+def test_the_legacy_boolean_still_works_without_a_contract(quality) -> None:
+    """Callers written before the contract keep their two states — and a
+    boolean that cannot express an obligation never imposes one."""
+    assert quality.review(
+        _WITH_QUESTION, allows_question=NO_QUESTION, user_text=_USER_TURN
+    ).rejected
+    assert quality.review(
+        _WITHOUT_QUESTION, allows_question=NO_QUESTION, user_text=_USER_TURN
+    ).accepted
+    assert quality.review(
+        _WITHOUT_QUESTION, allows_question=MAY_ASK, user_text=_USER_TURN
+    ).accepted
+
+
+def test_an_unrecognised_policy_falls_back_rather_than_skipping(quality) -> None:
+    """An unknown policy string is not a licence to check nothing."""
+    verdict = quality.review(
+        _WITH_QUESTION,
+        allows_question=NO_QUESTION,
+        question_policy="something_nobody_defined",
+        user_text=_USER_TURN,
+    )
+
+    assert verdict.rejected
+    assert QualityIssue.UNWANTED_QUESTION in verdict.issues
+
+
+def test_every_question_policy_state_is_covered(quality) -> None:
+    """Closed, so adding a fifth state forces a decision here.
+
+    The failure this guards against is exactly the one being fixed: a state was
+    added to the contract and the boundary silently treated it as "accept".
+    """
+    from app.dialogue.response_contract import QuestionPolicy
+
+    outcomes = {
+        policy.value: (
+            _review(quality, policy.value, _WITH_QUESTION).accepted,
+            _review(quality, policy.value, _WITHOUT_QUESTION).accepted,
+        )
+        for policy in QuestionPolicy
+    }
+
+    assert outcomes == {
+        "forbidden": (False, True),
+        "optional": (True, True),
+        "encouraged": (True, True),
+        "required": (True, False),
+    }

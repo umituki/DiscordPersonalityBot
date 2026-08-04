@@ -30,6 +30,7 @@ from typing import Sequence
 from app.conversation.models import ConversationTurn
 from app.conversation.common_ground import detect_correction
 from app.conversation.text import looks_like_question
+from app.dialogue.response_contract import QuestionPolicy
 
 MODULE = "conversation_quality_guard"
 
@@ -43,6 +44,10 @@ class QualityIssue:
     ECHOES_USER = "echoes_user"
     REPEATED_QUESTION = "repeated_question"
     UNWANTED_QUESTION = "unwanted_question"
+    #: The opposite failure, and deliberately not the same code. "asked when
+    #: told not to" and "did not ask when told to" call for opposite repairs,
+    #: and a trace that cannot tell them apart cannot say which happened.
+    REQUIRED_QUESTION_MISSING = "required_question_missing"
     FORMULAIC = "formulaic_repetition"
     CORRECTION_ARGUMENT = "correction_doubled_down"
     DIRECT_ANSWER_MISSING = "direct_answer_missing"
@@ -106,6 +111,10 @@ _PROBLEM_TEXT: dict[str, str] = {
     QualityIssue.ECHOES_USER: "相手の言葉をほぼそのまま返している。自分の言葉にする。",
     QualityIssue.REPEATED_QUESTION: "直前に自分がした質問をもう一度している。訊き直さない。",
     QualityIssue.UNWANTED_QUESTION: "質問しないと決めたのに質問している。質問文を外す。",
+    QualityIssue.REQUIRED_QUESTION_MISSING: (
+        "このターンでは質問が必要だと決めたのに、返信に質問が含まれていない。"
+        "話の流れに合う質問をひとつ加える。"
+    ),
     QualityIssue.FORMULAIC: "決まり文句のくり返しになっている。",
     QualityIssue.CORRECTION_ARGUMENT: (
         "相手の訂正に反論している。説明で押し切らず、短く認めて訂正を受け入れる。"
@@ -179,17 +188,31 @@ class ConversationQualityGuard:
             issues.append(QualityIssue.CORRECTION_ARGUMENT)
             details.append("the reply argues with an explicit USER correction")
 
-        forbidden_question = (
-            question_policy == "forbidden"
-            if question_policy is not None
-            else not allows_question
-        )
-        if forbidden_question and looks_like_question(stripped):
+        # The ResponseContract's question policy has four states, and until now
+        # only one of them did anything here: `forbidden` was checked and the
+        # other three all meant "accept". So a turn whose contract *required* a
+        # question was satisfied by a reply containing none — the state existed
+        # in the contract and had no effect at the boundary that enforces it.
+        #
+        # All four are decided here, from the one policy value, structurally.
+        # Nothing new reads the Japanese: `looks_like_question` is the same
+        # detector the forbidden case has always used, and what changed is what
+        # the policy *means*, not how a question is recognised.
+        policy = self._question_policy(question_policy, allows_question=allows_question)
+        asks = looks_like_question(stripped)
+        if policy is QuestionPolicy.FORBIDDEN and asks:
             # Patch spec 10.4 and 8.1, now spending the SurfacePlan's question
             # budget (Phase 3 §19). The decision said no question; asking one
             # anyway means the prose and the decision disagree.
             issues.append(QualityIssue.UNWANTED_QUESTION)
             details.append("a question was asked although the decision said not to")
+        elif policy is QuestionPolicy.REQUIRED and not asks:
+            issues.append(QualityIssue.REQUIRED_QUESTION_MISSING)
+            details.append("the turn requires a question and the reply asks none")
+        # OPTIONAL and ENCOURAGED accept either way. `encouraged` is a
+        # preference the realizer is told about, not an obligation — rejecting a
+        # good reply for declining a suggestion would make "encouraged" a second
+        # spelling of "required", and then the contract would have three states.
 
         asked_again = self._repeated_question(stripped, recent_turns)
         if asked_again:
@@ -204,6 +227,27 @@ class ConversationQualityGuard:
         if issues:
             return QualityVerdict(False, tuple(issues), "; ".join(details))
         return QualityVerdict(True)
+
+    @staticmethod
+    def _question_policy(
+        question_policy: str | None, *, allows_question: bool
+    ) -> QuestionPolicy:
+        """The contract's policy, or the boolean that predates it.
+
+        The ResponseContract is the authority whenever one reached here. The
+        `allows_question` fallback exists for callers written before the
+        contract — it can only distinguish two states, so it never yields
+        `required`: a caller that could not express the obligation has not
+        imposed one.
+        """
+        if question_policy is not None:
+            try:
+                return QuestionPolicy(question_policy)
+            except ValueError:
+                # An unrecognised policy is not a licence to skip the check.
+                # Fall through to the conservative boolean reading.
+                pass
+        return QuestionPolicy.OPTIONAL if allows_question else QuestionPolicy.FORBIDDEN
 
     @staticmethod
     def with_contract_result(
