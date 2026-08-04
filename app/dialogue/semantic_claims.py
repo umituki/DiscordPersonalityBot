@@ -43,7 +43,11 @@ from app.grounding.models import (
     GroundedClaim,
     GroundingContext,
 )
-from app.grounding.ownership import may_support, refusal_reason
+from app.grounding.ownership import (
+    declared_subject_is_consistent,
+    may_support,
+    refusal_reason,
+)
 from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator
 from app.llm.types import LLMMessage
@@ -52,6 +56,20 @@ logger = logging.getLogger(__name__)
 
 PROMPT_ID = "semantic_claim_review"
 PURPOSE = "semantic_claim_review"
+
+#: Audit finding 2 (round 2). Categories that assert she is *currently*
+#: remembering something. For these, a stored memory row is not enough: the row
+#: has to be one this turn's retrieval actually returned.
+#:
+#: The restriction applies to the ``subjective_memory`` rows only, because they
+#: are the ones that stand for "she brought this to mind". A
+#: ``memory_authority`` fact is a property of the Memory subsystem rather than
+#: of this turn, so it settles a capability statement without being recalled.
+#: For ``yui_specific_memory_recall`` the distinction is moot — a subjective
+#: memory is the only kind it accepts at all.
+RECALL_REQUIRED_CATEGORIES: frozenset[str] = frozenset(
+    {"yui_specific_memory_recall", "yui_memory_claim"}
+)
 
 #: Whose life a claim is about. Kept separate from the claim kind because the
 #: same predicate — 「詠んだ」 — is a different claim depending on who did it,
@@ -189,8 +207,32 @@ class ResolvedClaim:
         return self.candidate.modality in COMMITTING_MODALITIES
 
     @property
+    def contradicted(self) -> bool:
+        """An authoritative record says this is not so (audit finding 3)."""
+        return bool(self.contradictions)
+
+    @property
     def supported(self) -> bool:
-        return bool(self.evidence)
+        """Backed, and not contradicted.
+
+        Both halves. Positive evidence does not outvote a contradiction — a
+        claim with one of each is not "supported with a caveat", it is a claim
+        the record disagrees with.
+        """
+        return bool(self.evidence) and not self.contradicted
+
+    @property
+    def verdict(self) -> str:
+        """``supported`` / ``contradicted`` / ``unsupported``.
+
+        Three states rather than a boolean, because "we found nothing" and
+        "we found the opposite" call for different repairs.
+        """
+        if self.contradicted:
+            return "contradicted"
+        if self.evidence:
+            return "supported"
+        return "unsupported"
 
     @property
     def blocking(self) -> bool:
@@ -236,6 +278,20 @@ class EvidenceResolver:
             return ResolvedClaim(
                 candidate=candidate, refusals=("grounding_context_unavailable",)
             )
+
+        # Audit finding 1 (round 2). The claim has to agree with itself before
+        # any evidence is looked at. A `user_past_fact` declared to be about
+        # YUI is a self-contradictory classification, and picking whichever
+        # half suits the available evidence is how USER-owned rows ended up
+        # under a claim about her. Fail closed.
+        if not declared_subject_is_consistent(candidate.category, candidate.subject):
+            return ResolvedClaim(
+                candidate=candidate,
+                refusals=(
+                    f"category_subject_mismatch:{candidate.category}/{candidate.subject}",
+                ),
+            )
+
         if not candidate.supporting_ids:
             return ResolvedClaim(candidate=candidate, refusals=("no_citation",))
 
@@ -268,9 +324,33 @@ class EvidenceResolver:
                 )
                 refusals.append(f"{reason}:{evidence_id}")
                 continue
+            # Audit finding 2 (round 2). A recollection needs a row that was
+            # recalled *on this turn*. A stored memory nobody retrieved is not
+            # something she is remembering.
+            if (
+                candidate.category in RECALL_REQUIRED_CATEGORIES
+                and found.kind == "subjective_memory"
+                and found not in context.recalled_subjective_memories
+            ):
+                refusals.append(f"not_recalled_this_turn:{evidence_id}")
+                continue
             kept.append(found)
 
-        contradictions = context.resolve_ids(candidate.contradicting_ids)
+        # Audit finding 3 (round 2). A contradiction is a verdict, not a note.
+        # Having found something that supports a claim says nothing about the
+        # thing that contradicts it, and reporting `supported` while an
+        # authoritative record says otherwise is the worst of both.
+        contradictions = tuple(
+            item
+            for item in context.resolve_ids(candidate.contradicting_ids)
+            if may_support(
+                candidate.category, subject=item.subject, relation=item.relation
+            )
+        )
+        if contradictions:
+            refusals.append(
+                "contradicted:" + ",".join(item.evidence_id for item in contradictions)
+            )
         if not kept and not refusals:
             refusals.append("no_citation")
         return ResolvedClaim(

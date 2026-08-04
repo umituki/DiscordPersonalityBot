@@ -121,27 +121,43 @@ class CorrectionResolver:
             prompt_version=template.prompt_version,
         )
         if not outcome.accepted or outcome.value is None:
-            return self._fallback(live, "resolver_unavailable")
+            # The resolver could not run. That is an abstention, not a wrong
+            # answer, so the single-claim reading still applies.
+            return self._abstained(live, "resolver_unavailable")
 
         answer = outcome.value
+        # Audit finding 5 (round 2). Three outcomes, and only one of them
+        # names a claim:
+        #
+        #   abstain   the resolver looked and chose nothing. With exactly one
+        #             outstanding claim that is still actionable — the USER
+        #             denied something and there is only one thing it can be.
+        #   valid     an identifier that is live. Act on it.
+        #   invented  an identifier that does not exist. **Fail closed.**
+        #
+        # The last one used to fall back to the single live claim, which is
+        # worse than guessing: the model asserted a specific target, Python
+        # could not find it, and Python then substituted a different real claim
+        # and retracted *that*. A wrong answer was silently converted into a
+        # confident wrong action.
         if not answer.claim_id:
-            return ResolvedTarget(denies=answer.denies)
+            return self._abstained(live, "no_target")
         if answer.claim_id not in allowed:
-            # An invented identifier retracts nothing. The same rule as
-            # evidence citation: Python owns whether a name refers.
             logger.info(
-                "correction target %r is not a live claim", answer.claim_id[:40]
+                "correction target %r is not a live claim; retracting nothing",
+                answer.claim_id[:40],
             )
-            return self._fallback(live, f"unknown_claim:{answer.claim_id[:24]}")
+            return ResolvedTarget(refused=f"unknown_claim:{answer.claim_id[:24]}")
         return ResolvedTarget(claim_id=answer.claim_id, denies=answer.denies)
 
     @staticmethod
-    def _fallback(live: Sequence[Any], refused: str) -> ResolvedTarget:
-        """Unresolved, and honest about it.
+    def _abstained(live: Sequence[Any], refused: str) -> ResolvedTarget:
+        """The resolver named nothing at all.
 
-        One outstanding claim is unambiguous enough to act on. Several are not,
-        and picking the newest is exactly the guess this class exists to
-        remove — so nothing is retracted and the refusal is recorded.
+        Distinct from naming something that does not exist. Abstaining with one
+        outstanding claim leaves no ambiguity about what the USER meant;
+        abstaining with several does, and picking the newest is the guess this
+        class exists to remove.
         """
         if len(live) == 1:
             return ResolvedTarget(claim_id=live[0].claim_id, refused=refused)

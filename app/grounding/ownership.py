@@ -33,6 +33,7 @@ by default, which is the point: the permissive reading has to be earned.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from app.grounding.models import ClaimKind, EvidenceSubject
@@ -45,90 +46,144 @@ EvidenceRelation = Literal["actor", "experiencer", "topic"]
 DEFAULT_RELATION: EvidenceRelation = "actor"
 
 
-#: Audit finding 1. For each claim category, the subjects whose evidence may
-#: support it — and nothing else.
+#: Audit finding 1 (round 2). **One** table, indexed by claim category.
 #:
-#: Read this as "a claim of kind K is about X's life, so only X's records can
-#: settle it". The four rejections the audit named fall straight out:
+#: There used to be three: ``SUPPORTING_SUBJECTS``, ``SUPPORTING_RELATIONS``
+#: and ``CATEGORY_SUBJECT``. The first two were consulted and the third was
+#: not, so a claim could declare ``subject="yui"`` under
+#: ``category="user_past_fact"`` and be resolved against USER-owned evidence:
+#: the evidence matched the *category*, nobody checked it matched the
+#: *declared subject*, and the contradiction between the two went unnoticed.
 #:
-#:     yui   -> user_past_fact          not in {user}
-#:     user  -> yui_*                   not in {yui}
-#:     world -> yui_completed_action    not in {yui}
-#:     other -> user_past_fact / yui_*  not in either
-SUPPORTING_SUBJECTS: dict[ClaimKind, frozenset[EvidenceSubject]] = {
-    # Her own life. Only her own record, whatever the world was doing.
-    "yui_completed_action": frozenset({"yui"}),
-    "yui_experience_habit": frozenset({"yui"}),
-    "yui_specific_memory_recall": frozenset({"yui"}),
-    # The one memory category the world may answer: these are facts about the
-    # Memory subsystem itself, not about anything she did.
-    "yui_general_memory_capability": frozenset({"world"}),
-    "yui_memory_claim": frozenset({"yui"}),
-    # Perception is the one place a world record can reach, and only through
-    # the experiencer relation below. The subject alone does not open it.
-    "yui_perception": frozenset({"yui", "world"}),
-    # The USER's life. Her having done the same thing is not evidence that
-    # they did — that is the mirror image of the bug this file exists for.
-    "user_past_fact": frozenset({"user"}),
-    # Somebody else's life.
-    "npc_fact": frozenset({"other"}),
-    # A tool call is hers: the Tool Manager records who asked.
-    "tool_use": frozenset({"yui"}),
-    # Knowledge she holds about the world. Held by her, about the world, so
-    # both are legitimate sources.
-    "external_knowledge_claim": frozenset({"yui", "world"}),
-    # The state of the world is the world's to report.
-    "current_world_fact": frozenset({"world"}),
-}
+#: Each entry answers all three questions at once:
+#:
+#:     claims_about   the subject a claim of this category is necessarily
+#:                    about. A claim declaring anything else has contradicted
+#:                    itself and is refused before evidence is looked at.
+#:     subjects       whose evidence may support it.
+#:     relations      per evidence subject, how that subject must stand to the
+#:                    recorded event.
+@dataclass(frozen=True, slots=True)
+class OwnershipRule:
+    """Everything the resolver needs to know about one claim category."""
 
-#: Which relations may support each category, *per subject*.
-#:
-#: Per-subject rather than per-category because the two halves are not
-#: independent: under ``yui_perception`` her own record may be ``actor`` — she
-#: went and looked — while a world record must be ``experiencer``, meaning some
-#: subsystem recorded that the event actually reached her. A single
-#: per-category set cannot say that, and saying it wrongly is how "it rained"
-#: supports "I heard the rain".
-#:
-#: A subject absent from a category's entry falls back to ``ACTOR_OR_TOPIC``;
-#: a category absent altogether supports nothing, via `supporting_subjects`.
+    claims_about: EvidenceSubject
+    subjects: frozenset[str]
+    relations: dict[str, frozenset[str]]
+
+    def relations_for(self, subject: str) -> frozenset[str]:
+        return self.relations.get(subject, ACTOR_OR_TOPIC)
+
+
 ACTOR_ONLY: frozenset[str] = frozenset({"actor"})
 ACTOR_OR_TOPIC: frozenset[str] = frozenset({"actor", "topic"})
+EXPERIENCER_ONLY: frozenset[str] = frozenset({"experiencer"})
 
-SUPPORTING_RELATIONS: dict[ClaimKind, dict[str, frozenset[str]]] = {
-    "yui_completed_action": {"yui": ACTOR_ONLY},
-    "yui_experience_habit": {"yui": ACTOR_ONLY},
-    "yui_specific_memory_recall": {"yui": ACTOR_OR_TOPIC},
-    "yui_general_memory_capability": {"world": ACTOR_OR_TOPIC},
-    "yui_perception": {
-        "yui": ACTOR_ONLY,
-        # The earned case: only an explicit "this reached her" link.
-        "world": frozenset({"experiencer"}),
-    },
-    "user_past_fact": {"user": ACTOR_OR_TOPIC},
-    "npc_fact": {"other": ACTOR_OR_TOPIC},
-    "tool_use": {"yui": ACTOR_ONLY},
-    "external_knowledge_claim": {"yui": ACTOR_OR_TOPIC, "world": ACTOR_OR_TOPIC},
-    "current_world_fact": {"world": ACTOR_OR_TOPIC},
+OWNERSHIP: dict[ClaimKind, OwnershipRule] = {
+    # Her own life. Only her own record, whatever the world was doing.
+    "yui_completed_action": OwnershipRule(
+        claims_about="yui", subjects=frozenset({"yui"}), relations={"yui": ACTOR_ONLY}
+    ),
+    "yui_experience_habit": OwnershipRule(
+        claims_about="yui", subjects=frozenset({"yui"}), relations={"yui": ACTOR_ONLY}
+    ),
+    # Audit finding 2 (round 2): a recollection is settled by *recalling*, and
+    # the accepted evidence kinds enforce the other half of that rule.
+    "yui_specific_memory_recall": OwnershipRule(
+        claims_about="yui",
+        subjects=frozenset({"yui"}),
+        relations={"yui": ACTOR_OR_TOPIC},
+    ),
+    # Facts about how the Memory subsystem behaves. 「わたしにも忘れることは
+    # ある」 is a statement about *her*, which is why ``claims_about`` is
+    # ``yui`` — but nothing she recalls can settle it, which is why the only
+    # evidence subject is the world. The two fields answer different questions
+    # and this is the category where the difference is visible.
+    "yui_general_memory_capability": OwnershipRule(
+        claims_about="yui",
+        subjects=frozenset({"world"}),
+        relations={"world": ACTOR_OR_TOPIC},
+    ),
+    #: Legacy alias for specific recall.
+    "yui_memory_claim": OwnershipRule(
+        claims_about="yui",
+        subjects=frozenset({"yui"}),
+        relations={"yui": ACTOR_OR_TOPIC},
+    ),
+    # Perception is the one place a world record reaches, and only through the
+    # experiencer relation: 「雨の音がしていた」 needs a record that the rain
+    # actually reached her, not merely that it rained.
+    "yui_perception": OwnershipRule(
+        claims_about="yui",
+        subjects=frozenset({"yui", "world"}),
+        relations={"yui": ACTOR_ONLY, "world": EXPERIENCER_ONLY},
+    ),
+    # The USER's life. Her having done the same thing is not evidence they did.
+    "user_past_fact": OwnershipRule(
+        claims_about="user",
+        subjects=frozenset({"user"}),
+        relations={"user": ACTOR_OR_TOPIC},
+    ),
+    "npc_fact": OwnershipRule(
+        claims_about="other",
+        subjects=frozenset({"other"}),
+        relations={"other": ACTOR_OR_TOPIC},
+    ),
+    # A tool call is hers: the Tool Manager records who asked.
+    "tool_use": OwnershipRule(
+        claims_about="yui", subjects=frozenset({"yui"}), relations={"yui": ACTOR_ONLY}
+    ),
+    # Knowledge she holds about the world. The proposition is about the world
+    # — 「富士山は3776m」 — even though she is the one holding it, so a claim
+    # declaring ``yui`` here has classified the wrong thing.
+    "external_knowledge_claim": OwnershipRule(
+        claims_about="world",
+        subjects=frozenset({"yui", "world"}),
+        relations={"yui": ACTOR_OR_TOPIC, "world": ACTOR_OR_TOPIC},
+    ),
+    "current_world_fact": OwnershipRule(
+        claims_about="world",
+        subjects=frozenset({"world"}),
+        relations={"world": ACTOR_OR_TOPIC},
+    ),
 }
 
-#: The subject a claim is *about*, when the claim's own ``subject`` field is
-#: unknown. Used only as a cross-check: a reviewer that says a
-#: ``yui_completed_action`` is about the USER has contradicted itself, and the
-#: category is the half we trust, because it is the half the matrix indexes.
-CATEGORY_SUBJECT: dict[ClaimKind, EvidenceSubject] = {
-    "yui_completed_action": "yui",
-    "yui_experience_habit": "yui",
-    "yui_specific_memory_recall": "yui",
-    "yui_general_memory_capability": "world",
-    "yui_memory_claim": "yui",
-    "yui_perception": "yui",
-    "user_past_fact": "user",
-    "npc_fact": "other",
-    "tool_use": "yui",
-    "external_knowledge_claim": "yui",
-    "current_world_fact": "world",
-}
+#: The reviewer's subject vocabulary and the evidence subject vocabulary are
+#: not the same words for the same thing: a claim declares ``npc``, a row is
+#: owned by ``other``. Translating in one place is the point — the pair was
+#: compared directly at first, which silently refused every well-formed
+#: ``npc_fact`` because "npc" is not "other".
+SUBJECT_ALIASES: dict[str, EvidenceSubject] = {"npc": "other"}
+
+
+def normalize_subject(subject: str) -> str:
+    """The declared subject, in the evidence vocabulary."""
+    return SUBJECT_ALIASES.get(subject, subject)  # type: ignore[return-value]
+
+
+def declared_subject_is_consistent(category: str, subject: str) -> bool:
+    """Whether the claim's declared subject agrees with its category.
+
+    Fail closed. A reviewer that says a ``user_past_fact`` is about YUI has
+    contradicted itself, and a self-contradictory classification is not a
+    licence to pick whichever half is convenient — it is a reason to resolve
+    nothing at all.
+
+    ``unknown`` and the empty string are not contradictions: a reviewer that
+    did not commit to a subject has asserted nothing about it, and the category
+    still decides who the claim is about.
+    """
+    rule = OWNERSHIP.get(category)  # type: ignore[arg-type]
+    if rule is None:
+        return False
+    if not subject or subject == "unknown":
+        return True
+    return normalize_subject(subject) == rule.claims_about
+
+
+def claims_about(category: str) -> str:
+    rule = OWNERSHIP.get(category)  # type: ignore[arg-type]
+    return "" if rule is None else rule.claims_about
 
 
 def supporting_subjects(category: str) -> frozenset[str]:
@@ -137,13 +192,14 @@ def supporting_subjects(category: str) -> frozenset[str]:
     An unknown category supports nothing. A category nobody has thought about
     is not a category with permissive defaults.
     """
-    return SUPPORTING_SUBJECTS.get(category, frozenset())  # type: ignore[arg-type]
+    rule = OWNERSHIP.get(category)  # type: ignore[arg-type]
+    return frozenset() if rule is None else rule.subjects
 
 
 def supporting_relations(category: str, subject: str) -> frozenset[str]:
     """Which relations this subject may stand in, for this category."""
-    per_subject = SUPPORTING_RELATIONS.get(category, {})  # type: ignore[arg-type]
-    return per_subject.get(subject, ACTOR_OR_TOPIC)
+    rule = OWNERSHIP.get(category)  # type: ignore[arg-type]
+    return frozenset() if rule is None else rule.relations_for(subject)
 
 
 def may_support(
@@ -175,15 +231,31 @@ def refusal_reason(
     return ""
 
 
+#: Backwards-compatible views onto the one table. Derived, never edited: two
+#: hand-maintained copies of the same rule is exactly what this round fixed.
+SUPPORTING_SUBJECTS: dict[str, frozenset[str]] = {
+    category: rule.subjects for category, rule in OWNERSHIP.items()
+}
+CATEGORY_SUBJECT: dict[str, str] = {
+    category: rule.claims_about for category, rule in OWNERSHIP.items()
+}
+
+
 __all__ = [
     "ACTOR_ONLY",
     "ACTOR_OR_TOPIC",
     "CATEGORY_SUBJECT",
     "DEFAULT_RELATION",
+    "EXPERIENCER_ONLY",
     "EvidenceRelation",
-    "SUPPORTING_RELATIONS",
+    "OWNERSHIP",
+    "OwnershipRule",
+    "SUBJECT_ALIASES",
     "SUPPORTING_SUBJECTS",
+    "claims_about",
+    "declared_subject_is_consistent",
     "may_support",
+    "normalize_subject",
     "refusal_reason",
     "supporting_relations",
     "supporting_subjects",

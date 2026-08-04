@@ -728,11 +728,6 @@ class ConversationEngine:
         turn = turn or TurnState()
         review: SemanticReviewOutcome | None = None
         claims = ()
-        # The regex extractor stays, reduced to what it is good at: fast,
-        # obvious, hard-format detection and regression compatibility. It is no
-        # longer the primary authority on what a sentence asserts.
-        if self._grounding is not None:
-            claims += self._grounding.review(text, context).claims
         # Audit finding 4: one semantic authority. Memory claims used to have
         # their own reviewer, their own schema and their own prompt, so the
         # same sentence could be judged twice by two readers that disagreed.
@@ -763,6 +758,19 @@ class ConversationEngine:
                 )
             else:
                 claims += tuple(item.as_grounded() for item in review.claims)
+                # Audit finding 4 (round 2). The semantic reviewer answered, so
+                # it is *the* answer. Running the regex extractor over the same
+                # draft and merging its verdict made two authorities decide one
+                # question, and the weaker one could veto a sentence the
+                # stronger one had cleared.
+                return GroundingVerdict(claims=claims), review
+
+        # Only when there is no semantic authority for this draft — the
+        # reviewer is unwired, or it could not run — does the legacy extractor
+        # speak. Then it is the only thing standing between a fabricated claim
+        # and the USER, which is a different job from being a second opinion.
+        if self._grounding is not None:
+            claims += self._grounding.review(text, context).claims
         return GroundingVerdict(claims=claims), review
 
     async def _repair(

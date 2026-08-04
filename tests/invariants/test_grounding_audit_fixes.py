@@ -92,15 +92,18 @@ def test_yui_evidence_cannot_settle_the_users_past() -> None:
 
 
 @pytest.mark.parametrize(
-    "category",
+    ("category", "reason"),
     [
-        "yui_completed_action",
-        "yui_experience_habit",
-        "yui_perception",
-        "yui_specific_memory_recall",
+        ("yui_completed_action", "wrong_subject"),
+        ("yui_experience_habit", "wrong_subject"),
+        ("yui_perception", "wrong_subject"),
+        # Round 2 made this one stricter still: a recollection accepts only
+        # `subjective_memory`, so a USER event is refused on kind before the
+        # subject is even considered. Unsupported either way.
+        ("yui_specific_memory_recall", "wrong_kind"),
     ],
 )
-def test_user_evidence_cannot_settle_her_own_life(category) -> None:
+def test_user_evidence_cannot_settle_her_own_life(category, reason) -> None:
     resolved = _resolve(
         category,
         _evidence("user", kind="objective_event"),
@@ -108,7 +111,8 @@ def test_user_evidence_cannot_settle_her_own_life(category) -> None:
     )
 
     assert not resolved.supported
-    assert any(reason.startswith("wrong_subject") for reason in resolved.refusals)
+    assert resolved.blocking
+    assert any(item.startswith(reason) for item in resolved.refusals), resolved.refusals
 
 
 def test_a_world_event_is_not_something_she_did() -> None:
@@ -596,3 +600,400 @@ def test_reverification_reresolves_the_stored_claim_not_the_sentence(
         assert calls == [], "the legacy parser re-read a claim that had a stored one"
     finally:
         database.close()
+
+
+# =============================================================================
+# Round 2. Codex's reproductions, as fixtures.
+# =============================================================================
+
+
+class TestCategorySubjectConsistency:
+    """BLOCKING 1. The claim has to agree with itself before evidence is read.
+
+    Codex's reproduction: a claim declaring ``subject="yui"`` under
+    ``category="user_past_fact"``, cited against a USER-owned
+    ``verified_user_fact``, resolved as *supported*. The evidence matched the
+    category, nothing checked it matched the declared subject, and the
+    contradiction between the claim's own two fields went unnoticed.
+    """
+
+    def test_the_codex_reproduction_is_refused(self) -> None:
+        evidence = Evidence(
+            kind="verified_user_fact",
+            reference="uf_1",
+            summary="本を読んだ",
+            subject="user",
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは本を読んだ",
+            trigger="読んだよ",
+            subject="yui",
+            category="user_past_fact",
+            supporting_ids=(evidence.evidence_id,),
+        )
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(verified_user_facts=(evidence,))
+        )
+
+        assert not resolved.supported
+        assert resolved.blocking
+        assert any(
+            reason.startswith("category_subject_mismatch")
+            for reason in resolved.refusals
+        )
+
+    def test_the_mirror_image_is_refused_too(self) -> None:
+        evidence = Evidence(
+            kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="USERは本を読んだ",
+            trigger="読んだんだね",
+            subject="user",
+            category="yui_completed_action",
+            supporting_ids=(evidence.evidence_id,),
+        )
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(completed_activities_today=(evidence,))
+        )
+
+        assert not resolved.supported
+        assert any(
+            reason.startswith("category_subject_mismatch")
+            for reason in resolved.refusals
+        )
+
+    def test_a_consistent_claim_still_resolves(self) -> None:
+        """The gate must pass the true case, or it is a mute button."""
+        evidence = Evidence(
+            kind="verified_user_fact",
+            reference="uf_1",
+            summary="本を読んだ",
+            subject="user",
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="USERは本を読んだ",
+            trigger="読んだんだね",
+            subject="user",
+            category="user_past_fact",
+            supporting_ids=(evidence.evidence_id,),
+        )
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(verified_user_facts=(evidence,))
+        )
+
+        assert resolved.supported
+
+    def test_an_uncommitted_subject_leaves_the_category_in_charge(self) -> None:
+        """A reviewer that declared no subject has contradicted nothing."""
+        evidence = Evidence(
+            kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは本を読んだ",
+            trigger="読んだよ",
+            category="yui_completed_action",
+            supporting_ids=(evidence.evidence_id,),
+        )
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(completed_activities_today=(evidence,))
+        )
+
+        assert resolved.supported
+
+    def test_an_unknown_category_supports_nothing(self) -> None:
+        evidence = Evidence(
+            kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="なにか",
+            trigger="なにか",
+            subject="yui",
+            category="yui_completed_action",
+            supporting_ids=(evidence.evidence_id,),
+        ).model_copy(update={"category": "a_category_nobody_defined"})
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(completed_activities_today=(evidence,))
+        )
+
+        assert not resolved.supported
+
+    def test_there_is_one_ownership_table(self) -> None:
+        """`CATEGORY_SUBJECT` and the matrix were two hand-maintained copies of
+        the same rule, and only one of them was consulted."""
+        from app.grounding.ownership import (
+            CATEGORY_SUBJECT,
+            OWNERSHIP,
+            SUPPORTING_SUBJECTS,
+        )
+
+        assert CATEGORY_SUBJECT == {
+            category: rule.claims_about for category, rule in OWNERSHIP.items()
+        }
+        assert SUPPORTING_SUBJECTS == {
+            category: rule.subjects for category, rule in OWNERSHIP.items()
+        }
+
+
+class TestSpecificRecallAuthority:
+    """BLOCKING 2. "It happened" does not mean "she is remembering it".
+
+    `yui_specific_memory_recall` accepted ``objective_event`` and
+    ``diary_entry``, so a recorded event supported 「覚えている」 with nothing
+    recalled — which is exactly what `memory.current_recall_required` forbids.
+    """
+
+    def test_an_event_alone_does_not_support_remembering(self) -> None:
+        event = Evidence(
+            kind="objective_event", reference="e1", summary="海に行った", subject="yui"
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは海に行ったことを覚えている",
+            trigger="覚えているよ",
+            subject="yui",
+            category="yui_specific_memory_recall",
+            supporting_ids=(event.evidence_id,),
+        )
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(recent_objective_events=(event,))
+        )
+
+        assert not resolved.supported
+        assert resolved.blocking
+
+    def test_a_memory_recalled_this_turn_does(self) -> None:
+        memory = Evidence(
+            kind="subjective_memory",
+            reference="m1",
+            summary="海に行った",
+            subject="yui",
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは海に行ったことを覚えている",
+            trigger="覚えているよ",
+            subject="yui",
+            category="yui_specific_memory_recall",
+            supporting_ids=(memory.evidence_id,),
+        )
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(recalled_subjective_memories=(memory,))
+        )
+
+        assert resolved.supported
+
+    def test_a_stored_memory_nobody_retrieved_does_not(self) -> None:
+        """The half the accepted-kind list cannot express: the row exists, and
+        it is not one of *this turn's* recalls."""
+        memory = Evidence(
+            kind="subjective_memory",
+            reference="m1",
+            summary="海に行った",
+            subject="yui",
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは海に行ったことを覚えている",
+            trigger="覚えているよ",
+            subject="yui",
+            category="yui_specific_memory_recall",
+            supporting_ids=(memory.evidence_id,),
+        )
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(known_semantic_memories=(memory,))
+        )
+
+        assert not resolved.supported
+        assert any(
+            reason.startswith("not_recalled_this_turn") for reason in resolved.refusals
+        )
+
+    def test_the_accepted_kinds_match_the_authority_fact(self) -> None:
+        """`memory.current_recall_required` says a concrete recollection needs
+        a current recall. The table has to say the same thing."""
+        from app.grounding.models import ACCEPTED_EVIDENCE
+
+        assert ACCEPTED_EVIDENCE["yui_specific_memory_recall"] == ("subjective_memory",)
+        for kind in ("objective_event", "diary_entry", "semantic_memory"):
+            assert kind not in ACCEPTED_EVIDENCE["yui_specific_memory_recall"]
+
+
+class TestContradictionVerdict:
+    """BLOCKING 3. A contradiction is a verdict, not a note.
+
+    Supporting and contradicting evidence both present returned
+    ``supported=True``: the contradiction was collected, displayed and ignored.
+    """
+
+    def test_a_contradiction_beats_supporting_evidence(self) -> None:
+        good = Evidence(
+            kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+        )
+        bad = Evidence(
+            kind="activity", reference="a2", summary="読んでいない", subject="yui"
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは本を読んだ",
+            trigger="読んだよ",
+            subject="yui",
+            category="yui_completed_action",
+            supporting_ids=(good.evidence_id,),
+            contradicting_ids=(bad.evidence_id,),
+        )
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(completed_activities_today=(good, bad))
+        )
+
+        assert not resolved.supported
+        assert resolved.blocking
+        assert resolved.contradicted
+        assert resolved.verdict == "contradicted"
+
+    def test_the_three_verdicts_are_distinguishable(self) -> None:
+        """"Nothing found" and "the opposite found" call for different repairs."""
+        good = Evidence(
+            kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+        )
+        base = SemanticClaimCandidate(
+            proposition="YUIは本を読んだ",
+            trigger="読んだよ",
+            subject="yui",
+            category="yui_completed_action",
+        )
+        context = GroundingContext(completed_activities_today=(good,))
+
+        supported = EvidenceResolver().resolve(
+            base.model_copy(update={"supporting_ids": (good.evidence_id,)}), context
+        )
+        unsupported = EvidenceResolver().resolve(base, context)
+        contradicted = EvidenceResolver().resolve(
+            base.model_copy(
+                update={
+                    "supporting_ids": (good.evidence_id,),
+                    "contradicting_ids": (good.evidence_id,),
+                }
+            ),
+            context,
+        )
+
+        assert supported.verdict == "supported"
+        assert unsupported.verdict == "unsupported"
+        assert contradicted.verdict == "contradicted"
+
+    def test_an_invented_contradiction_is_ignored(self) -> None:
+        """Python owns whether a cited name refers — in both directions. A
+        contradiction that does not exist must not block a good claim."""
+        good = Evidence(
+            kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは本を読んだ",
+            trigger="読んだよ",
+            subject="yui",
+            category="yui_completed_action",
+            supporting_ids=(good.evidence_id,),
+            contradicting_ids=("activity:does_not_exist",),
+        )
+
+        resolved = EvidenceResolver().resolve(
+            candidate, GroundingContext(completed_activities_today=(good,))
+        )
+
+        assert resolved.supported
+        assert not resolved.contradicted
+
+    def test_a_contradiction_from_the_wrong_owner_is_ignored(self) -> None:
+        """The USER disagreeing is not the record disagreeing."""
+        good = Evidence(
+            kind="activity", reference="a1", summary="本を読んだ", subject="yui"
+        )
+        theirs = Evidence(
+            kind="objective_event",
+            reference="e1",
+            summary="読んでないでしょ",
+            subject="user",
+        )
+        candidate = SemanticClaimCandidate(
+            proposition="YUIは本を読んだ",
+            trigger="読んだよ",
+            subject="yui",
+            category="yui_completed_action",
+            supporting_ids=(good.evidence_id,),
+            contradicting_ids=(theirs.evidence_id,),
+        )
+
+        resolved = EvidenceResolver().resolve(
+            candidate,
+            GroundingContext(
+                completed_activities_today=(good,), recent_objective_events=(theirs,)
+            ),
+        )
+
+        assert resolved.supported
+
+
+class TestCorrectionInvalidId:
+    """BLOCKING 5. An invented identifier retracts nothing.
+
+    With one live claim, an invented id was replaced by the real one and *that*
+    was retracted — a wrong answer converted into a confident wrong action.
+    """
+
+    async def test_an_invented_id_with_one_live_claim_retracts_nothing(
+        self, prompt_registry
+    ) -> None:
+        resolved = await _resolver(
+            {"claim_id": "cgc_invented", "denies": True}, prompt_registry
+        ).resolve("ちがうよ", [_Claim("cgc_1", "YUIは本を読んだ")])
+
+        assert not resolved.resolved
+        assert resolved.claim_id == ""
+        assert "unknown_claim" in resolved.refused
+
+    async def test_a_valid_exact_id_is_acted_on(self, prompt_registry) -> None:
+        resolved = await _resolver(
+            {"claim_id": "cgc_1", "denies": True}, prompt_registry
+        ).resolve("ちがうよ", [_Claim("cgc_1", "YUIは本を読んだ")])
+
+        assert resolved.claim_id == "cgc_1"
+        assert resolved.denies
+
+    async def test_abstaining_with_one_live_claim_is_still_actionable(
+        self, prompt_registry
+    ) -> None:
+        """Naming nothing is different from naming something that is not there.
+
+        The USER denied something and there is exactly one thing it can be.
+        """
+        resolved = await _resolver({"claim_id": ""}, prompt_registry).resolve(
+            "ちがうよ", [_Claim("cgc_1", "YUIは本を読んだ")]
+        )
+
+        assert resolved.claim_id == "cgc_1"
+        assert resolved.refused == "no_target"
+
+    async def test_abstaining_with_several_retracts_nothing(
+        self, prompt_registry
+    ) -> None:
+        resolved = await _resolver({"claim_id": ""}, prompt_registry).resolve(
+            "ちがうよ", [_Claim("cgc_1", "A"), _Claim("cgc_2", "B")]
+        )
+
+        assert not resolved.resolved
+
+    async def test_an_invented_id_with_several_live_claims_retracts_nothing(
+        self, prompt_registry
+    ) -> None:
+        resolved = await _resolver(
+            {"claim_id": "cgc_nope"}, prompt_registry
+        ).resolve("ちがうよ", [_Claim("cgc_1", "A"), _Claim("cgc_2", "B")])
+
+        assert not resolved.resolved
+        assert "unknown_claim" in resolved.refused

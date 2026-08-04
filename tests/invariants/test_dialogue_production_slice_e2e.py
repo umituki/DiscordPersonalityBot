@@ -516,3 +516,198 @@ def test_a_delivered_claim_stores_its_verified_representation(
     assert stored.subject == "yui"
     assert stored.modality == "assertion"
     assert stored.evidence == ("activity:act_1",)
+
+
+# =============================================================================
+# Finding 4 (round 2): one semantic authority on the production path
+# =============================================================================
+
+
+def _count_legacy_reviews(application) -> list[int]:
+    """Wrap the legacy regex guard so the test can see whether it was asked.
+
+    Returns a one-element list used as a counter, because the wrapper has to
+    stay a plain function on the engine's own attribute — replacing the guard
+    with a double would test the double.
+    """
+    engine = application.conversation_engine
+    guard = engine._grounding  # noqa: SLF001
+    assert guard is not None, "the legacy guard is not wired; the test proves nothing"
+    calls = [0]
+    original = guard.review
+
+    def counting(text, context):
+        calls[0] += 1
+        return original(text, context)
+
+    guard.review = counting  # type: ignore[method-assign]
+    return calls
+
+
+async def test_a_normal_draft_is_judged_by_exactly_one_authority(
+    application, clock
+) -> None:
+    """Audit finding 4 (round 2).
+
+    Both readers used to run on every production draft: the semantic reviewer
+    resolved the claims by identity, and then the regex extractor re-read the
+    same sentence and merged a second verdict. Two authorities answering one
+    question is the defect — the weaker one could veto a sentence the stronger
+    one had cleared, and neither was accountable for the result.
+    """
+    legacy = _count_legacy_reviews(application)
+    model = use_offline_model(application)
+
+    result = await _turn(application, clock, "やっほー")
+
+    assert not result.suppressed, "the draft did not survive; count the reviews of what did"
+    assert model.purposes().count("semantic_claim_review") == 1, (
+        f"the draft was reviewed {model.purposes().count('semantic_claim_review')} "
+        "times; got " + repr(model.purposes())
+    )
+    assert legacy[0] == 0, (
+        "the legacy regex guard judged a draft the semantic reviewer had already "
+        "settled"
+    )
+    assert "memory_claim_review" not in model.purposes(), (
+        "the retired memory reviewer is still reachable in production"
+    )
+
+
+async def test_the_legacy_guard_speaks_only_where_there_is_no_reviewer(
+    application, clock
+) -> None:
+    """The other half of one-authority: not two, but never zero.
+
+    With the semantic reviewer unwired — an older deployment, or a draft it
+    could not run on — the regex extractor is the only thing between a
+    fabricated claim and the USER. That is a fallback, not a second opinion,
+    and it has to still happen.
+    """
+    legacy = _count_legacy_reviews(application)
+    application.conversation_engine._semantic_claims = None  # noqa: SLF001
+    model = use_offline_model(application)
+
+    await _turn(application, clock, "やっほー")
+
+    assert legacy[0] == 1, "nothing reviewed the draft at all"
+    assert "semantic_claim_review" not in model.purposes()
+
+
+def test_the_retired_memory_reviewer_is_constructed_nowhere() -> None:
+    """`SemanticMemoryGroundingGuard` is reference material, not a code path.
+
+    Asserted against the application source rather than against a run, because
+    "it did not fire on this turn" is a weaker statement than "nothing builds
+    it".
+    """
+    import pathlib
+
+    hits = [
+        path
+        for path in pathlib.Path("app").rglob("*.py")
+        if path.name != "memory_semantics.py"
+        and "SemanticMemoryGroundingGuard(" in path.read_text(encoding="utf-8")
+    ]
+    assert hits == [], f"the retired memory guard is constructed in {hits}"
+
+
+# =============================================================================
+# Finding 6 (round 2): NPC evidence is interactions, not definitions
+# =============================================================================
+
+
+def _npc_claim(evidence_id: str):
+    from app.dialogue.semantic_claims import SemanticClaimCandidate
+
+    return SemanticClaimCandidate(
+        proposition="ミカと昨日話した",
+        trigger="ミカと話したんだ",
+        # The reviewer's word for an NPC. The evidence rows say `other`;
+        # translating between the two is `ownership.normalize_subject`, and
+        # comparing them directly is what used to refuse every valid npc_fact.
+        subject="npc",
+        category="npc_fact",
+        supporting_ids=(evidence_id,),
+    )
+
+
+def _production_grounding(application, clock):
+    """The builder the running application actually uses."""
+    builder = application.conversation._grounding  # noqa: SLF001
+    assert builder is not None
+    return builder.build(now=clock.now())
+
+
+def test_an_npc_that_merely_exists_grounds_nothing(application, clock) -> None:
+    """Audit finding 6 (round 2), against real rows.
+
+    The builder read `NPCRepository.all()` — the *definitions* — and emitted one
+    ``npc_interaction`` per NPC, whose summary was the NPC's name. So writing a
+    person into the world made "I talked to her yesterday" supportable, with the
+    row proving her existence standing in for the conversation.
+    """
+    from app.dialogue.semantic_claims import EvidenceResolver
+
+    npc = application.society.introduce(name="ミカ", tier=2, role="友人")
+
+    context = _production_grounding(application, clock)
+
+    assert context.npc_interactions == (), (
+        "a defined NPC produced interaction evidence: "
+        f"{[e.evidence_id for e in context.npc_interactions]}"
+    )
+    assert context.availability["npc_interactions"] == "empty"
+
+    resolved = EvidenceResolver().resolve(
+        _npc_claim(f"npc_interaction:{npc.npc_id}"), context
+    )
+    assert not resolved.supported, "an NPC's existence settled what she did"
+    assert resolved.blocking
+    assert any("unknown_evidence" in reason for reason in resolved.refusals), (
+        resolved.refusals
+    )
+
+
+def test_a_recorded_interaction_is_what_supports_an_npc_fact(
+    application, clock
+) -> None:
+    """And when it did happen, the claim stands — on the interaction row."""
+    from app.dialogue.semantic_claims import EvidenceResolver
+
+    npc = application.society.introduce(name="ミカ", tier=2, role="友人")
+    record = application.society.interact(
+        npc.npc_id, kind="conversation", valence=0.4, summary="短歌の話をした"
+    )
+
+    context = _production_grounding(application, clock)
+
+    assert context.availability["npc_interactions"] == "available"
+    evidence = context.npc_interactions[0]
+    assert evidence.evidence_id == f"npc_interaction:{record.interaction.interaction_id}"
+    assert evidence.subject == "other", "an NPC's action was filed as somebody else's"
+    assert "ミカ" in evidence.summary and "短歌の話をした" in evidence.summary
+
+    resolved = EvidenceResolver().resolve(_npc_claim(evidence.evidence_id), context)
+    assert resolved.supported, resolved.refusals
+    assert not resolved.blocking
+
+
+def test_the_builder_reads_the_interaction_repository_not_the_roster(
+    application,
+) -> None:
+    """Structural, so the wiring cannot quietly revert.
+
+    The two repositories are different objects with different tables; passing
+    the roster where the evidence belongs is the whole finding, and a test that
+    only checks the output would pass again the moment somebody re-pointed the
+    parameter.
+    """
+    from app.storage.repositories.society import (
+        NPCInteractionRepository,
+        NPCRepository,
+    )
+
+    builder = application.conversation._grounding  # noqa: SLF001
+    assert isinstance(builder._npc_interactions_repo, NPCInteractionRepository)  # noqa: SLF001
+    assert isinstance(builder._npcs, NPCRepository)  # noqa: SLF001

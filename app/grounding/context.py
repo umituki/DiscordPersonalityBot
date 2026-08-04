@@ -57,6 +57,10 @@ class GroundingContextBuilder:
         goals: Any | None = None,
         tools: Any | None = None,
         npcs: Any | None = None,
+        #: Audit finding 6 (round 2). The interactions, which are the evidence.
+        #: Separate from `npcs`, which only supplies names — conflating the two
+        #: let "this NPC is defined" stand in for "this NPC did something".
+        npc_interactions: Any | None = None,
         state: Any | None = None,
         clock: Clock | None = None,
     ) -> None:
@@ -67,6 +71,7 @@ class GroundingContextBuilder:
         self._goals = goals
         self._tools = tools
         self._npcs = npcs
+        self._npc_interactions_repo = npc_interactions
         self._state = state
         self._clock = clock or SystemClock()
 
@@ -264,13 +269,43 @@ class GroundingContextBuilder:
         )
 
     def _npc_interactions(self) -> tuple[Evidence, ...]:
-        if self._npcs is None:
+        """Things that actually happened with an NPC.
+
+        Audit finding 6 (round 2). This read ``NPCRepository.all()`` — the
+        *definitions* — and emitted one ``npc_interaction`` per NPC whose
+        summary was the NPC's name. So an NPC merely being defined supported a
+        claim that she had done something with them, and the evidence carried
+        no subject at all, so the ownership matrix could not refuse it either.
+        "ミカ exists" and "ミカ and YUI talked" are different facts, and only
+        the second belongs here.
+        """
+        if self._npc_interactions_repo is None:
             return ()
-        npcs = self._npcs.all(limit=50) or ()
+        interactions = self._npc_interactions_repo.recent(limit=50) or ()
         return tuple(
-            Evidence(kind="npc_interaction", reference=npc.npc_id, summary=npc.name)
-            for npc in npcs
+            Evidence(
+                kind="npc_interaction",
+                reference=interaction.interaction_id,
+                summary=self._describe_interaction(interaction),
+                occurred_at=interaction.occurred_at,
+                # Somebody else's doing, which is what `npc_fact` is about.
+                subject="other",
+            )
+            for interaction in interactions
         )
+
+    def _describe_interaction(self, interaction) -> str:
+        """One line naming who it was with, from the definition repository.
+
+        The name is a lookup, not the evidence: what makes this citable is the
+        interaction row, and the NPC repository only supplies a label for it.
+        """
+        name = ""
+        if self._npcs is not None:
+            npc = _safe(lambda: self._npcs.get(interaction.npc_id))
+            name = getattr(npc, "name", "") if npc is not None else ""
+        summary = interaction.summary or interaction.kind
+        return f"{name}: {summary}" if name else summary
 
     def _goals_in_progress(self) -> tuple[Evidence, ...]:
         if self._goals is None:

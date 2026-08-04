@@ -96,13 +96,18 @@ ACCEPTED_EVIDENCE: dict[ClaimKind, tuple[EvidenceKind, ...]] = {
         "semantic_memory",
     ),
     "yui_perception": ("activity", "objective_event", "world_state"),
-    # A concrete memory has to have been recalled *this turn*. An authority
-    # fact about how memory works cannot make a specific recollection real.
-    "yui_specific_memory_recall": (
-        "subjective_memory",
-        "objective_event",
-        "diary_entry",
-    ),
+    # Audit finding 2 (round 2). A concrete recollection is settled by one
+    # thing only: a memory that was actually recalled on this turn.
+    #
+    # "the event happened" and "she is remembering it now" are different
+    # claims, and the first does not imply the second. An objective event, a
+    # diary entry or an archive row each prove something occurred; none of
+    # them proves she can bring it to mind — which is exactly what
+    # `memory.current_recall_required` says in AUTHORITATIVE_MEMORY_FACTS.
+    #
+    # `subjective_memory` alone, and the resolver additionally requires the row
+    # to be one of *this turn's* recalls.
+    "yui_specific_memory_recall": ("subjective_memory",),
     # A statement about how her memory behaves is settled by the Memory
     # subsystem's own immutable facts, and by nothing she happens to recall.
     "yui_general_memory_capability": ("memory_authority",),
