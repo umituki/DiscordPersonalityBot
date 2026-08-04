@@ -42,6 +42,20 @@ ANSWERS: dict[str, str] = {
         '"wants_to_speak": "speak", "reason": "ordinary acknowledgement"}'
     ),
     "ReplyDraft": '{"text": "うん。"}',
+    # Dialogue v2. A deliberately *neutral* reading: no question target, no
+    # resolved message and no memory query, so `retrieval_query` falls back to
+    # the raw user text and every existing memory test keeps the behaviour it
+    # was written against. A test that is about interpretation overrides this.
+    "TurnUnderstanding": (
+        '{"current_topic": "", "user_intent": "acknowledge", '
+        '"question_target": "none", "referenced_action_owner": "unclear", '
+        '"referenced_subject": "", "temporal_scope": "unspecified", '
+        '"resolved_message": "", "correction_target": "", "memory_query": "", '
+        '"wants_memory": false, "self_disclosure_relevant": false, '
+        '"reason": "offline default"}'
+    ),
+    # An ordinary offline reply asserts nothing, so there is nothing to ground.
+    "SemanticClaimReview": '{"claims": []}',
     # Semantic Memory grounding. Ordinary offline replies make no memory claim.
     "SemanticMemoryReview": '{"claims": []}',
     # Phase 2 §2E. A batch with no judgements means every candidate was left

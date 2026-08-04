@@ -69,6 +69,9 @@ from app.runtime.proactive import (
     ProactiveDeliberation,
     ProactiveSource,
 )
+from app.dialogue.semantic_claims import SemanticClaimReviewer
+from app.dialogue.situation import SituationBuilder
+from app.dialogue.understanding import DiscourseInterpreter
 from app.live.readiness import LiveReadiness
 from app.runtime.shadow import ShadowController
 from app.runtime.social import GroupSource, NPCSource, SocialActions, SocialCandidates
@@ -539,9 +542,16 @@ class Application:
         # Rebuild spec 13.2, Phase 3 §27-§28. A corpus is optional; a broken
         # one must not stop her speaking, so a failed load degrades to no
         # references rather than to no startup.
+        #
+        # Off unless asked for (Dialogue v2). The shipped corpus is a developer
+        # fixture whose examples include first-person lived experience; used in
+        # production it reads as material she may draw on, and a real run had
+        # her doing exactly that. The examples are not evidence and there is no
+        # grounding path that could make them so, which is precisely why they
+        # must not reach the realizer by default.
         references = NullReferenceProvider()
         corpus_path = resolved_config.references_dir / "fixture_ja.yaml"
-        if corpus_path.is_file():
+        if resolved_config.runtime.dialogue_references and corpus_path.is_file():
             try:
                 references = FixtureReferenceProvider.load(corpus_path)
             except Exception:  # noqa: BLE001 - references are never load-bearing
@@ -572,6 +582,11 @@ class Application:
             memory_grounding=SemanticMemoryGroundingGuard(
                 structured=structured,
                 prompts=prompts,
+            ),
+            # Dialogue v2: the primary reader of what a draft asserts. The
+            # regex extractor above stays as the fast backstop.
+            semantic_claims=SemanticClaimReviewer(
+                prompts=prompts, structured=structured
             ),
             interpreter=SocialInterpreter(
                 identity=identity, prompts=prompts, structured=structured
@@ -1284,6 +1299,20 @@ class Application:
                     tools=tool_manager,
                     npcs=npc_repo,
                     state=state_repo,
+                    clock=resolved_clock,
+                ),
+                # Dialogue v2. Interpretation runs before retrieval, because
+                # the query is the first thing that needs it.
+                discourse=DiscourseInterpreter(
+                    prompts=prompts, structured=structured
+                ),
+                situation=SituationBuilder(
+                    world=world_service,
+                    state=state_repo,
+                    society=society_service,
+                    goals=goal_repo,
+                    values=value_repo,
+                    self_model=self_repo,
                     clock=resolved_clock,
                 ),
                 tracer=conversation_tracer,

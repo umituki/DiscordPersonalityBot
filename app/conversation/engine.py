@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from app.clock import Clock, SystemClock, to_iso
-from app.context.builder import BuiltContext, ContextBuilder, Requirement
+from app.context.builder import BuiltContext, ContextBuilder, Requirement, measure_prompt
 from app.conversation.expression import ExpressionContext
 from app.conversation.guard import OutputGuard
 from app.conversation.models import ConversationTurn, ReplyDraft
@@ -55,7 +55,9 @@ from app.conversation.surface import RelationshipBand, SurfacePlan, SurfacePlann
 from app.conversation.text import looks_like_question
 from app.grounding.claims import ClaimGroundingGuard, GroundingVerdict
 from app.grounding.memory_semantics import SemanticMemoryGroundingGuard
-from app.grounding.models import GroundingContext
+from app.dialogue.semantic_claims import SemanticClaimReviewer, SemanticReviewOutcome
+from app.dialogue.turn import TurnState
+from app.grounding.models import Claim, GroundedClaim, GroundingContext
 from app.memory.recall_models import RecalledMemory
 from app.conversation.policy import ConversationPolicy
 from app.llm.prompts import PromptRegistry
@@ -154,6 +156,10 @@ class ReplyGeneration:
     #: and a repair call produced the text being returned (patch spec 10,
     #: GROUND-002).
     repaired: bool = False
+    #: Dialogue v2: the semantic review of the text actually being returned.
+    #: Carried so the common ground can record verified claims rather than
+    #: re-reading the sentence with a weaker reader after the send.
+    semantic_review: SemanticReviewOutcome | None = None
 
     @property
     def accepted(self) -> bool:
@@ -176,6 +182,7 @@ class ConversationEngine:
         quality: ConversationQualityGuard | None = None,
         grounding: ClaimGroundingGuard | None = None,
         memory_grounding: SemanticMemoryGroundingGuard | None = None,
+        semantic_claims: SemanticClaimReviewer | None = None,
         interpreter: SocialInterpreter | None = None,
         planner: SurfacePlanner | None = None,
         references: DialogueReferenceProvider | None = None,
@@ -190,6 +197,10 @@ class ConversationEngine:
         self._guard = guard
         self._policy = policy
         #: Rebuild spec 10. The one social reading of the turn.
+        #: Dialogue v2: the unified semantic claim reviewer. The primary
+        #: authority on what a draft asserts; the regex extractor is now a
+        #: backstop rather than the answer.
+        self._semantic_claims = semantic_claims
         self._interpreter = interpreter or SocialInterpreter(
             identity=identity, prompts=prompts, structured=structured
         )
@@ -236,9 +247,7 @@ class ConversationEngine:
         user_text: str,
         recent_turns: Sequence[ConversationTurn] = (),
         snapshot: StateSnapshot | None = None,
-        grounding: GroundingContext | None = None,
-        common_ground: str = "",
-        correction: str = "",
+        turn: TurnState | None = None,
         relationship_band: RelationshipBand = "acquaintance",
         run_id: str | None = None,
         event_id: str | None = None,
@@ -250,6 +259,11 @@ class ConversationEngine:
         (§46): a preview that took a different path would be a preview of a
         different system. It writes nothing and sends nothing.
         """
+        turn = turn or TurnState(user_text=user_text)
+        grounding = turn.grounding
+        common_ground = turn.common_ground
+        correction = turn.correction
+
         _mark(trace, "social_interpretation_started_at")
         social = await self._interpreter.interpret(
             user_text=user_text,
@@ -381,9 +395,7 @@ class ConversationEngine:
         run_id: str | None = None,
         event_id: str | None = None,
         tool_success_ids: Sequence[str] = (),
-        grounding: GroundingContext | None = None,
-        common_ground: str = "",
-        correction: str = "",
+        turn: TurnState | None = None,
         relationship_band: RelationshipBand = "acquaintance",
         plan: TurnPlan | None = None,
         trace: "ConversationTrace | None" = None,
@@ -392,14 +404,21 @@ class ConversationEngine:
         # because it has to know whether she is speaking at all before the
         # typing indicator goes up (spec 12.4). Re-planning here would spend a
         # second interpretation call on a decision already made.
+        turn = turn or TurnState(user_text=user_text)
+        # One object, so these cannot be half-passed. They used to be two
+        # string parameters defaulting to "", and the service passed them to
+        # the planner and not to here — the realizer rendered "nothing has been
+        # established" into every prompt and the correction never arrived.
+        grounding = turn.grounding
+        common_ground = turn.common_ground
+        correction = turn.correction
+
         if plan is None:
             plan = await self.plan_turn(
                 user_text=user_text,
                 recent_turns=recent_turns,
                 snapshot=snapshot,
-                grounding=grounding,
-                common_ground=common_ground,
-                correction=correction,
+                turn=turn,
                 relationship_band=relationship_band,
                 run_id=run_id,
                 event_id=event_id,
@@ -434,7 +453,12 @@ class ConversationEngine:
                 if context.includes("relevant_memories")
                 else NO_MEMORIES
             ),
-            # Rebuild spec 15.1: what she may speak of as having happened.
+            # Dialogue v2: the reading of the turn, and the working picture.
+            # Both explicitly non-authoritative in the prompt itself.
+            turn_understanding=turn.render_understanding(),
+            situation=turn.render_situation(),
+            # Rebuild spec 15.1: what she may speak of as having happened,
+            # grouped by who each fact is about.
             grounding_facts=_render_grounding(grounding),
             social_intent=social.render(),
             surface_plan=surface.render(),
@@ -446,6 +470,21 @@ class ConversationEngine:
             correction=correction or NO_CORRECTION,
             current_time=to_iso(self._clock.now()),
         )
+
+        # Requirement 12: measure what actually goes out, not what the builder
+        # assembled. The two were never the same number, because the template
+        # renders grounding, common ground, correction, references, style and
+        # the situation around the built items.
+        rendered_size = measure_prompt(system_content + user_text)
+        if trace is not None:
+            trace.prompt_chars = rendered_size.chars
+            trace.prompt_tokens = rendered_size.tokens
+        if rendered_size.over_budget:
+            logger.warning(
+                "conversation prompt over budget event_id=%s %s",
+                event_id,
+                rendered_size.describe(),
+            )
 
         _mark(trace, "realization_started_at")
         outcome = await self._structured.generate(
@@ -499,7 +538,7 @@ class ConversationEngine:
             run_id=run_id,
             event_id=event_id,
             tool_success_ids=tool_success_ids,
-            grounding=grounding,
+            turn=turn,
         )
 
     # --- quality (patch spec 10) -------------------------------------------
@@ -514,7 +553,7 @@ class ConversationEngine:
         run_id: str | None,
         event_id: str | None,
         tool_success_ids: Sequence[str],
-        grounding: GroundingContext | None = None,
+        turn: TurnState | None = None,
     ) -> ReplyGeneration:
         """Review the draft, and rewrite it at most once.
 
@@ -525,6 +564,8 @@ class ConversationEngine:
         wrong. Failing either check after that rewrite suppresses the send
         (GROUND-003).
         """
+        turn = turn or TurnState(user_text=user_text)
+        grounding = turn.grounding
         text = generation.text or ""
         quality = self._quality.review(
             text,
@@ -532,11 +573,16 @@ class ConversationEngine:
             user_text=user_text,
             recent_turns=recent_turns,
         )
-        grounded = await self._check_grounding(
-            text, grounding, run_id=run_id, event_id=event_id
+        grounded, review = await self._check_grounding(
+            text, grounding, turn=turn, run_id=run_id, event_id=event_id
         )
         if quality.accepted and grounded.accepted:
-            return dataclasses.replace(generation, quality=quality, grounding=grounded)
+            return dataclasses.replace(
+                generation,
+                quality=quality,
+                grounding=grounded,
+                semantic_review=review,
+            )
 
         _log_rejection(event_id, quality, grounded)
         repaired = await self._repair(
@@ -552,6 +598,8 @@ class ConversationEngine:
             run_id=run_id,
             event_id=event_id,
             tool_success_ids=tool_success_ids,
+            turn=turn,
+            review=review,
         )
 
         if repaired.accepted and repaired.value is not None:
@@ -562,8 +610,8 @@ class ConversationEngine:
                 user_text=user_text,
                 recent_turns=recent_turns,
             )
-            second_grounded = await self._check_grounding(
-                second_text, grounding, run_id=run_id, event_id=event_id
+            second_grounded, second_review = await self._check_grounding(
+                second_text, grounding, turn=turn, run_id=run_id, event_id=event_id
             )
             if second.accepted and second_grounded.accepted:
                 return dataclasses.replace(
@@ -572,8 +620,9 @@ class ConversationEngine:
                     quality=second,
                     grounding=second_grounded,
                     repaired=True,
+                    semantic_review=second_review,
                 )
-            quality, grounded = second, second_grounded
+            quality, grounded, review = second, second_grounded, second_review
 
         # One rewrite was the budget. Saying nothing is worse than a good
         # reply and better than one that contradicts its own decision
@@ -605,6 +654,10 @@ class ConversationEngine:
             quality=quality,
             grounding=grounded,
             repaired=True,
+            # Carried even here. A suppressed draft never reaches the common
+            # ground — `confirm_sent` is the only caller and it only runs on a
+            # real send — but the trace should still say what was decided.
+            semantic_review=review,
         )
 
     async def _check_grounding(
@@ -612,29 +665,70 @@ class ConversationEngine:
         text: str,
         context: GroundingContext | None,
         *,
+        turn: TurnState | None = None,
         run_id: str | None = None,
         event_id: str | None = None,
-    ) -> GroundingVerdict:
+    ) -> tuple[GroundingVerdict, SemanticReviewOutcome | None]:
         """Resolve this text's claims against what is known (spec 15.3).
+
+        Returns the semantic review alongside the verdict rather than stashing
+        it on the engine: one engine serves every turn, and per-turn state on a
+        shared object is a race waiting for two conversations at once.
 
         With no guard or no context there is nothing to resolve against, and an
         empty verdict accepts: the guard's job is to catch a claim that
         contradicts the record, not to refuse to speak when there is no record.
         """
         if context is None:
-            return GroundingVerdict()
+            return GroundingVerdict(), None
+        turn = turn or TurnState()
+        review: SemanticReviewOutcome | None = None
         claims = ()
+        # The regex extractor stays, reduced to what it is good at: fast,
+        # obvious, hard-format detection and regression compatibility. It is no
+        # longer the primary authority on what a sentence asserts.
         if self._grounding is not None:
             claims += self._grounding.review(text, context).claims
         if self._memory_grounding is not None:
             semantic = await self._memory_grounding.review(
                 text,
                 context,
+                user_text=turn.user_text,
+                recent_conversation=turn.recent_conversation,
+                understanding=turn.understanding,
                 run_id=run_id,
                 event_id=event_id,
             )
             claims += semantic.claims
-        return GroundingVerdict(claims=claims)
+        # The unified semantic reviewer covers the categories regex cannot
+        # reach — 「静かに過ごしていました」 in answer to 「今日は何してた？」 is a
+        # completed-action claim and matches no pattern at all.
+        if self._semantic_claims is not None:
+            review = await self._semantic_claims.review(
+                text,
+                context,
+                understanding=turn.understanding,
+                user_text=turn.user_text,
+                recent_conversation=turn.recent_conversation,
+                run_id=run_id,
+                event_id=event_id,
+            )
+            if review.unavailable:
+                # Not clean. A classifier that could not run must not read as
+                # a draft with nothing to answer for.
+                claims += (
+                    GroundedClaim(
+                        claim=Claim(
+                            kind="yui_completed_action",
+                            text=text[:200],
+                            trigger="semantic_review_unavailable",
+                        ),
+                        evidence=(),
+                    ),
+                )
+            else:
+                claims += tuple(item.as_grounded() for item in review.claims)
+        return GroundingVerdict(claims=claims), review
 
     async def _repair(
         self,
@@ -651,7 +745,22 @@ class ConversationEngine:
         run_id: str | None,
         event_id: str | None,
         tool_success_ids: Sequence[str],
+        turn: TurnState | None = None,
+        review: SemanticReviewOutcome | None = None,
     ) -> StructuredOutcome[ReplyDraft]:
+        """Rewrite the draft, knowing what it may and may not say.
+
+        Repair used to be told only what was wrong. That is enough to make a
+        model apologise and rephrase, and not enough to make it write something
+        true: it did not know what the USER asked, what facts were available,
+        what had already been retracted, or which of its claims had failed for
+        lack of evidence versus for the wrong owner.
+
+        Python still writes none of the sentence. It supplies the constraints —
+        available facts, unusable facts, the question, the correction state —
+        and the model writes Japanese within them.
+        """
+        turn = turn or TurnState(user_text=user_text)
         template = self._prompts.get(REPAIR_PROMPT_ID)
         content = template.render(
             identity=self._identity.render_for_prompt(),
@@ -661,6 +770,12 @@ class ConversationEngine:
             user_message=user_text,
             rejected_reply=rejected_text,
             problems=self._describe_problems(verdict, grounded),
+            turn_understanding=turn.render_understanding(),
+            usable_facts=_render_grounding(turn.grounding),
+            unusable_claims=_render_unusable(grounded, review),
+            recalled_memories=_render_recalled(turn.grounding),
+            common_ground=turn.common_ground or NO_COMMON_GROUND,
+            correction=turn.correction or NO_CORRECTION,
         )
         return await self._structured.generate(
             ReplyDraft,
@@ -676,7 +791,9 @@ class ConversationEngine:
             ),
             run_id=run_id,
             event_id=event_id,
-            temperature=self._policy.generation.temperature,
+            # Accuracy over variety: the intention is fixed, the facts are
+            # given, and the failed claims are named.
+            temperature=self._policy.generation.repair_temperature,
             max_tokens=self._policy.generation.max_tokens,
             priority="P0",
             prompt_id=REPAIR_PROMPT_ID,
@@ -780,6 +897,15 @@ class ConversationEngine:
             )
         return builder.build(self._policy.context.budget())
 
+    def render_history(self, turns: Sequence[ConversationTurn]) -> str:
+        """The rendered conversation, for callers that need the same view.
+
+        Public because the discourse interpreter and the semantic claim
+        reviewer both have to see exactly what the realizer saw; two renderings
+        of "the recent conversation" would eventually disagree.
+        """
+        return self._render_history(turns)
+
     def _render_history(self, turns: Sequence[ConversationTurn]) -> str:
         limit = self._policy.context.recent_turn_limit
         max_chars = self._policy.context.recent_turn_max_chars
@@ -820,17 +946,77 @@ def _has_lived_evidence(grounding: GroundingContext | None) -> bool:
     return bool(grounding.of_kinds(_LIVED_EVIDENCE))
 
 
-def _render_grounding(grounding: GroundingContext | None, limit: int = 8) -> str:
-    """The facts she may speak of as hers (spec 15.1).
+def _render_unusable(
+    grounded: GroundingVerdict, semantic: SemanticReviewOutcome | None
+) -> str:
+    """What this draft claimed and could not back up, and why.
 
-    Deliberately short. This is not the whole grounding context — the guard
-    resolves against that — it is the handful she can actually refer to.
+    The "why" is what makes repair able to do anything useful. "No evidence"
+    and "that evidence is about the USER, not you" call for different rewrites:
+    the first means drop the claim, the second means attribute it correctly.
+    """
+    lines: list[str] = []
+    for item in grounded.blocking:
+        lines.append(f"- 「{item.claim.trigger}」({item.claim.kind}): 裏づけがない")
+    if semantic is not None and not semantic.unavailable:
+        for claim in semantic.blocking:
+            reasons = []
+            for refusal in claim.refusals:
+                if refusal.startswith("wrong_subject"):
+                    reasons.append("その記録はYUI自身のことではない")
+                elif refusal.startswith("unknown_evidence"):
+                    reasons.append("存在しない根拠を挙げていた")
+                elif refusal.startswith("wrong_kind"):
+                    reasons.append("その種類の記録では裏づけにならない")
+                else:
+                    reasons.append("根拠が挙がっていない")
+            lines.append(
+                f"- 「{claim.candidate.trigger}」: {'、'.join(dict.fromkeys(reasons))}"
+            )
+    return "\n".join(lines) or "(裏づけの取れない主張はない)"
+
+
+def _render_recalled(grounding: GroundingContext | None, limit: int = 5) -> str:
+    """What she actually recalled this turn. Often nothing, which is a fact."""
+    if grounding is None or not grounding.recalled_subjective_memories:
+        return "(このターンで思い出せた具体的な記憶はない)"
+    return "\n".join(
+        f"- {item.describe()}"
+        for item in grounding.recalled_subjective_memories[:limit]
+    )
+
+
+def _render_grounding(grounding: GroundingContext | None, limit: int = 10) -> str:
+    """The facts available this turn, each attributed to whoever they are about.
+
+    The attribution is the whole point, and it used to be missing. This
+    rendered ``f"- {item.summary}"``, so a ``verified_user_fact`` whose summary
+    was 「詠んだよ」 arrived under the heading 「確かなこと」 with no owner — and a
+    reply built on it reads as *her* having done it. The summary alone cannot
+    carry the subject, so the subject is rendered explicitly.
+
+    USER- and NPC-owned facts are included rather than filtered out, because
+    she genuinely needs them: 「そうなんだ、詠んだんだね」 is the right reply and
+    needs to know the USER did it. What must never happen is losing which is
+    which, so they are grouped under headings that say so.
     """
     if grounding is None:
         return NO_GROUNDING
-    lines = [
-        f"- {item.summary}"
-        for item in grounding.of_kinds(_LIVED_EVIDENCE + ("world_state", "tool_call"))
-        if item.summary.strip()
-    ]
-    return "\n".join(lines[:limit]) or NO_GROUNDING
+    hers: list[str] = []
+    theirs: list[str] = []
+    for item in grounding.of_kinds(
+        _LIVED_EVIDENCE
+        + ("world_state", "tool_call", "verified_user_fact", "npc_interaction")
+    ):
+        if not item.summary.strip():
+            continue
+        (hers if item.is_yuis_own else theirs).append(item.describe())
+    blocks: list[str] = []
+    if hers:
+        blocks.append("### YUI自身のこととして言えること\n" + "\n".join(f"- {line}" for line in hers[:limit]))
+    if theirs:
+        blocks.append(
+            "### 相手・他者のこと（YUI自身の経験として語ってはいけない）\n"
+            + "\n".join(f"- {line}" for line in theirs[:limit])
+        )
+    return "\n\n".join(blocks) or NO_GROUNDING

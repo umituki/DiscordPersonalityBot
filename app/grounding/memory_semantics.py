@@ -101,9 +101,24 @@ class SemanticMemoryGroundingGuard:
         text: str,
         context: GroundingContext,
         *,
+        user_text: str = "",
+        recent_conversation: str = "",
+        understanding: object | None = None,
         run_id: str | None = None,
         event_id: str | None = None,
     ) -> GroundingVerdict:
+        """Classify the draft's memory claims, with enough context to do it.
+
+        The interpretation context is new, and it closes a real failure. Shown
+        only the draft, this reviewer read 「19歳です」 as a claim to *remember*
+        being nineteen and demanded a recalled memory for it. Shown the question
+        it answers — 「何歳？」 — it is a self fact, and memory recall has nothing
+        to do with it.
+
+        The context makes the sentence classifiable. It never supports it: what
+        the USER said cannot be evidence for what YUI remembers, and the prompt
+        renders the two under headings that say which is which.
+        """
         template = self._prompts.get(PROMPT_ID)
         outcome = await self._structured.generate(
             SemanticMemoryReview,
@@ -112,6 +127,13 @@ class SemanticMemoryGroundingGuard:
                     role="user",
                     content=template.render(
                         candidate_reply=text,
+                        user_message=user_text or "(なし)",
+                        recent_conversation=recent_conversation or "(なし)",
+                        turn_understanding=(
+                            understanding.render()
+                            if understanding is not None
+                            else "(なし)"
+                        ),
                         recalled_memories=_render_evidence(
                             context.recalled_subjective_memories
                         ),

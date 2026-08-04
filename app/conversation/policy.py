@@ -36,6 +36,15 @@ class GenerationPolicy(_Frozen):
     #: and every other reply needs a repair, so the real value comes from
     #: measurement on hardware.
     realizer_temperature: float = Field(default=0.85, ge=0.0, le=2.0)
+    #: Dialogue v2. Repair is a *constrained rewrite*, not composition: the
+    #: intention is already fixed, the facts are supplied, and the failed
+    #: claims are named. Variety buys nothing there and costs accuracy, so this
+    #: is deliberately below the realizer's.
+    #:
+    #: The value is a candidate, not a measurement. It is a separate knob so a
+    #: fixture run can compare it against the realizer's 0.85 — which is what
+    #: it silently reused before — and the real-machine tuning comes later.
+    repair_temperature: float = Field(default=0.4, ge=0.0, le=2.0)
     #: Phase 3 §25. Two to five examples. More and the model copies them.
     reference_limit: int = Field(default=4, ge=0, le=5)
     max_tokens: int = Field(default=400, gt=0)

@@ -91,6 +91,12 @@ class ConversationTrace:
     queue_wait_ms: int = 0
     inference_ms: int = 0
     model_calls: int = 0
+    #: Dialogue v2, requirement 12. The size of the *final rendered* realizer
+    #: input, which is not what the context builder accounted for: the template
+    #: renders grounding, common ground, correction, references, style hints
+    #: and the situation around the built items.
+    prompt_chars: int = 0
+    prompt_tokens: int = 0
     detail: dict[str, object] = field(default_factory=dict)
 
     @classmethod

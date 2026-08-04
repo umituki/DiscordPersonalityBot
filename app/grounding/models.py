@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Sequence
 
 #: Rebuild spec 15.2. The kinds of statement that are dangerous to get wrong,
 #: because each one asserts something outside the sentence itself.
@@ -106,9 +106,23 @@ ACCEPTED_EVIDENCE: dict[ClaimKind, tuple[EvidenceKind, ...]] = {
 #: a claim about YUI happens to share.
 EvidenceSubject = Literal["yui", "user", "other", "world", "unknown"]
 
-#: Claims about YUI's own doing and perceiving, which only YUI's own actions can
-#: evidence. The USER saying 「小説読むの好き」 does not mean she read one.
-SELF_CLAIM_KINDS: frozenset[str] = frozenset({"yui_completed_action", "yui_perception"})
+#: Claims about YUI's own life, which only YUI's own record can evidence. The
+#: USER saying 「小説読むの好き」 does not mean she read one — and that is just as
+#: true of a habit claim as of a completed action.
+#:
+#: ``yui_experience_habit`` and ``yui_memory_claim`` were missing here, and the
+#: consequence was concrete: both accept ``objective_event``, and a
+#: ``USER_MESSAGE_RECEIVED`` event is an objective event. So 「詠んだよ」 from the
+#: USER could support 「わたしもよく詠むよ」 from her, because the ownership filter
+#: only ran for two of the four kinds that need it.
+SELF_CLAIM_KINDS: frozenset[str] = frozenset(
+    {
+        "yui_completed_action",
+        "yui_perception",
+        "yui_experience_habit",
+        "yui_memory_claim",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +134,38 @@ class Evidence:
     summary: str
     occurred_at: datetime | None = None
     subject: EvidenceSubject = "unknown"
+
+    @property
+    def evidence_id(self) -> str:
+        """The name a semantic reviewer may cite this by.
+
+        Kind-prefixed so an identifier carries its own authority: a reviewer
+        that cites ``activity:...`` for a memory claim has cited something of
+        the wrong kind, and Python can see that without trusting the prose
+        around it. Derived rather than stored, so it cannot drift from the
+        evidence it names.
+        """
+        return f"{self.kind}:{self.reference}"
+
+    @property
+    def owner_label(self) -> str:
+        """Who this is about, in words the realizer prompt can carry.
+
+        The reason this exists: a summary alone loses the subject. 「詠んだよ」
+        rendered as a bare fact reads as *hers*, and the model then writes a
+        reply built on having done it.
+        """
+        return {
+            "yui": "YUI",
+            "user": "USER",
+            "other": "他者",
+            "world": "世界",
+            "unknown": "出所不明",
+        }[self.subject]
+
+    def describe(self) -> str:
+        """One line, attributed, for a prompt."""
+        return f"[{self.evidence_id}] ({self.owner_label}) {self.summary}"
 
     @property
     def is_yuis_own(self) -> bool:
@@ -225,6 +271,28 @@ class GroundingContext:
 
     def of_kinds(self, kinds: tuple[EvidenceKind, ...]) -> tuple[Evidence, ...]:
         return tuple(item for item in self.all_evidence() if item.kind in kinds)
+
+    def by_id(self, evidence_id: str) -> Evidence | None:
+        """Resolve a cited identifier, or refuse it.
+
+        The Python half of the semantic-claim contract: the model proposes
+        identifiers and this decides whether they exist. An identifier that
+        was invented — however plausible, however confidently cited — resolves
+        to ``None`` and supports nothing (GROUND-001).
+        """
+        for item in self.all_evidence():
+            if item.evidence_id == evidence_id:
+                return item
+        return None
+
+    def resolve_ids(self, evidence_ids: Sequence[str]) -> tuple[Evidence, ...]:
+        """Every cited identifier that turned out to be real, in cited order."""
+        resolved: list[Evidence] = []
+        for evidence_id in evidence_ids:
+            found = self.by_id(evidence_id)
+            if found is not None and found not in resolved:
+                resolved.append(found)
+        return tuple(resolved)
 
     @property
     def is_empty(self) -> bool:

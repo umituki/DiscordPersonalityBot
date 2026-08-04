@@ -76,6 +76,51 @@ class ContextBudget:
 
 
 @dataclass(frozen=True, slots=True)
+class PromptMeasurement:
+    """The size of what was actually sent to the model.
+
+    The builder's own accounting covers the items it assembled. The realizer
+    then renders grounding, common ground, correction, references, style hints
+    and the situation into the template around them, so the builder's number
+    has never been the number that left the process. This measures the final
+    string, which is the only figure a context budget can be checked against.
+    """
+
+    chars: int
+    tokens: int
+    #: How much of a budget this used, when one was supplied.
+    fraction: float | None = None
+
+    @property
+    def over_budget(self) -> bool:
+        return self.fraction is not None and self.fraction > 1.0
+
+    def describe(self) -> str:
+        head = f"{self.chars} chars / ~{self.tokens} tokens"
+        if self.fraction is None:
+            return head
+        return f"{head} ({self.fraction:.0%} of budget)"
+
+
+def measure_prompt(
+    rendered: str, budget: "ContextBudget | None" = None
+) -> PromptMeasurement:
+    """Measure a fully rendered model input.
+
+    Deliberately takes the finished string rather than the parts: measuring the
+    parts is what produced a number that did not match reality.
+    """
+    chars_per_token = (
+        budget.chars_per_token if budget is not None else DEFAULT_CHARS_PER_TOKEN
+    )
+    tokens = estimate_tokens(rendered, chars_per_token)
+    fraction = None
+    if budget is not None and budget.max_tokens:
+        fraction = tokens / budget.max_tokens
+    return PromptMeasurement(chars=len(rendered), tokens=tokens, fraction=fraction)
+
+
+@dataclass(frozen=True, slots=True)
 class BuiltContext:
     items: tuple[ContextItem, ...]
     dropped: tuple[ContextItem, ...]

@@ -222,7 +222,7 @@ async def test_engine_builds_identity_and_history_into_the_prompt(
     assert generation.context.includes("identity")
     assert generation.context.includes("current_message")
     assert "ただいま" in generation.context.get("recent_conversation").content
-    assert generation.prompt_version == "conversation_reply@v8"
+    assert generation.prompt_version == "conversation_reply@v9"
     # Rebuild spec 10: the social reading was decided before the sentence.
     assert generation.social.moves
     assert generation.context.includes("social_intent")

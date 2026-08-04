@@ -157,13 +157,30 @@ class CommonGroundTracker:
         conversation_id: str,
         event_id: str | None,
         context: GroundingContext | None,
+        reviewed: object | None = None,
         now: datetime,
     ) -> tuple[CommonGroundClaim, ...]:
         """Enter the claims a delivered reply made into the common ground.
 
         Only a *delivered* reply: a suppressed draft asserted nothing, so it
         enters nothing (the same rule as GROUND-004).
+
+        ``reviewed`` is the semantic review that was already run *before* the
+        send, and passing it is the point. Re-extracting and re-resolving the
+        same sentence afterwards meant two different authorities decided what
+        the reply had claimed: the pre-send reviewer read the proposition with
+        the turn's context, and the post-send extractor read the surface
+        patterns without it. They disagreed, and the common ground recorded the
+        second answer. Now the verified claims are carried forward, and the
+        extractor is only the fallback for callers that have none.
         """
+        if reviewed is not None and not getattr(reviewed, "unavailable", False):
+            return self._record_reviewed(
+                reviewed,
+                conversation_id=conversation_id,
+                event_id=event_id,
+                now=now,
+            )
         claims = self._extractor.extract(text)
         if not claims:
             return ()
@@ -184,6 +201,39 @@ class CommonGroundTracker:
                     status="supported" if claim.trigger in supported else "provisional",
                     source="yui_inference",
                     confidence="high" if claim.trigger in supported else "low",
+                    now=now,
+                )
+            )
+        return tuple(recorded)
+
+    def _record_reviewed(
+        self,
+        reviewed,
+        *,
+        conversation_id: str,
+        event_id: str | None,
+        now: datetime,
+    ) -> tuple[CommonGroundClaim, ...]:
+        """Record exactly what was verified before the send, unchanged.
+
+        The proposition is stored rather than the surface sentence, because the
+        proposition is what a later correction has to be matched against.
+        """
+        recorded: list[CommonGroundClaim] = []
+        for claim in reviewed.claims:
+            if not claim.needs_evidence:
+                # A wish or a question asserted nothing, so the conversation is
+                # not now treating anything as true.
+                continue
+            recorded.append(
+                self._repository.record(
+                    conversation_id=conversation_id,
+                    event_id=event_id,
+                    kind=claim.candidate.category,
+                    statement=claim.candidate.proposition or claim.candidate.trigger,
+                    status="supported" if claim.supported else "provisional",
+                    source="yui_inference",
+                    confidence="high" if claim.supported else "low",
                     now=now,
                 )
             )

@@ -29,6 +29,9 @@ from dataclasses import dataclass
 
 from app.clock import Clock, SystemClock
 from app.conversation.common_ground import CommonGroundTracker, CorrectionOutcome
+from app.dialogue.situation import SituationBuilder
+from app.dialogue.turn import TurnState
+from app.dialogue.understanding import UNREAD, DiscourseInterpreter
 from app.conversation.engine import ConversationEngine, ReplyGeneration
 from app.conversation.events import (
     USER_MESSAGE_RECEIVED,
@@ -93,6 +96,10 @@ class ConversationResult:
     #: memories the sent reply actually rests on. A memory that sat in context
     #: and left no mark on the sentence was available, not used.
     retrieval: object | None = None
+    #: Dialogue v2. The semantic claim review that was run before the send,
+    #: carried so the common ground records what was verified rather than a
+    #: second, weaker reading of the same sentence.
+    semantic_review: object | None = None
     #: Phase 4. What was decided about speaking at all, and why.
     intent: IntentDecision | None = None
     #: True when she chose not to speak. Distinct from ``suppressed``, which
@@ -120,6 +127,8 @@ class ConversationService:
         tools: ToolManager | None = None,
         grounding: GroundingContextBuilder | None = None,
         common_ground: CommonGroundTracker | None = None,
+        discourse: DiscourseInterpreter | None = None,
+        situation: SituationBuilder | None = None,
         tracer: ConversationTracer | None = None,
         runtime: object | None = None,
         clock: Clock | None = None,
@@ -146,6 +155,12 @@ class ConversationService:
         #: Rebuild spec 11: what this conversation is treating as true, and
         #: what happens when the USER says it is not.
         self._common_ground = common_ground
+        #: Dialogue v2: what this turn means. Optional, and a failure returns
+        #: UNREAD rather than raising — interpretation improves retrieval and
+        #: classification, and must never be able to cost her a reply.
+        self._discourse = discourse
+        #: Dialogue v2: the working picture. Read-only and non-authoritative.
+        self._situation = situation
         #: Patch spec 19.2: where the USER's wait went, stage by stage. Optional
         #: because observability must never be a precondition for answering.
         self._tracer = tracer
@@ -261,6 +276,22 @@ class ConversationService:
         if trace is not None:
             trace.run_id = outcome.run.run_id
 
+        # Dialogue v2. Read the turn *before* retrieving anything, because the
+        # query is the first thing that needs the reading: 「詩？」 and 「それは？」
+        # retrieve nothing useful as raw text, and the referent is in the turn
+        # before. Interpretation only — nothing here is evidence.
+        rendered_history = self._engine.render_history(recent)
+        understanding = UNREAD
+        if self._discourse is not None:
+            self._mark(trace, "understanding_started_at")
+            understanding = await self._discourse.read(
+                event.payload.text,
+                recent_conversation=rendered_history,
+                run_id=outcome.run.run_id,
+                event_id=event.event_id,
+            )
+            self._mark(trace, "understanding_ended_at")
+
         memories = ()
         retrieval = None
         if self._memory is not None:
@@ -271,7 +302,7 @@ class ConversationService:
             # Recall reads subjective memory only — never the archive
             # (spec 10.1, Phase 2 §2H). Recalling nothing is a normal result.
             retrieval = await self._memory.recall(
-                event.payload.text,
+                understanding.retrieval_query(event.payload.text),
                 now=event.occurred_at,
                 run_id=outcome.run.run_id,
                 event_id=event.event_id,
@@ -314,13 +345,24 @@ class ConversationService:
                 now=event.occurred_at,
             )
 
-        # Rebuild spec 12: decide whether a speech act happens at all, before
-        # anything the USER can see. Everything up to here is reading; nothing
-        # up to here has told them a reply is coming.
-        plan = await self._engine.plan_turn(
+        # Dialogue v2. The turn's state, assembled once and handed whole to
+        # every stage that needs any of it. Previously the common ground and
+        # the correction were passed to the planner and silently dropped before
+        # the realizer, because both parameters defaulted to "".
+        situation = None
+        if self._situation is not None:
+            situation = await asyncio.to_thread(
+                self._situation.build,
+                understanding=understanding,
+                recalled=memories,
+                grounding=grounding_context,
+                now=event.occurred_at,
+            )
+        turn = TurnState(
             user_text=event.payload.text,
-            recent_turns=recent,
-            snapshot=outcome.post_commit_snapshot,
+            recent_conversation=rendered_history,
+            understanding=understanding,
+            situation=situation,
             grounding=grounding_context,
             common_ground=(
                 self._common_ground.render(conversation.conversation_id)
@@ -328,6 +370,16 @@ class ConversationService:
                 else ""
             ),
             correction=correction.render(),
+        )
+
+        # Rebuild spec 12: decide whether a speech act happens at all, before
+        # anything the USER can see. Everything up to here is reading; nothing
+        # up to here has told them a reply is coming.
+        plan = await self._engine.plan_turn(
+            user_text=event.payload.text,
+            recent_turns=recent,
+            snapshot=outcome.post_commit_snapshot,
+            turn=turn,
             relationship_band=self._relationship_band(outcome.post_commit_snapshot),
             run_id=outcome.run.run_id,
             event_id=event.event_id,
@@ -362,7 +414,7 @@ class ConversationService:
             run_id=outcome.run.run_id,
             event_id=event.event_id,
             tool_success_ids=tool_success_ids,
-            grounding=grounding_context,
+            turn=turn,
             plan=plan,
         )
         self._mark(trace, "reply_ended_at")
@@ -379,6 +431,10 @@ class ConversationService:
                 trace=trace,
                 retrieval=retrieval,
                 intent=plan.intent,
+                # Carried for the trace. A suppressed draft still never enters
+                # the common ground: `confirm_sent` is the only caller of the
+                # recorder, and it only runs after a real send (GROUND-004).
+                semantic_review=generation.semantic_review,
             )
 
         return ConversationResult(
@@ -390,6 +446,7 @@ class ConversationService:
             grounding_context=grounding_context,
             retrieval=retrieval,
             intent=plan.intent,
+            semantic_review=generation.semantic_review,
             outbound=OutboundMessage(
                 channel_id=message.channel_id,
                 text=generation.text,
@@ -454,6 +511,10 @@ class ConversationService:
                 conversation_id=conversation.conversation_id,
                 event_id=sent.event_id,
                 context=result.grounding_context,
+                # The review that ran before the send. Recording those claims
+                # rather than re-deriving them is what keeps one authority on
+                # what the reply asserted.
+                reviewed=result.semantic_review,
                 now=sent.occurred_at,
             )
         # 19.2: the moment the reply is actually visible in the next turn's

@@ -91,6 +91,13 @@ class RuntimeSection(_Section):
     #: throws once, deliberately. Everything else on the go-live checklist can
     #: become true on its own; this one cannot, which is the point of having it.
     live: bool = False
+    #: Dialogue v2. `config/references/fixture_ja.yaml` is a *developer*
+    #: fixture: hand-written example turns, several of which describe lived
+    #: experiences. Handing those to the realizer as "how people say this"
+    #: invites her to borrow the experience along with the phrasing, and a real
+    #: run produced exactly that. So production loads no corpus unless somebody
+    #: says otherwise, and tests that are about the corpus turn it on.
+    dialogue_references: bool = False
     #: Spec 21, RUNTIME-004. Whether her life runs on its own between messages.
     #: Off by default so that a test, a CLI command or a migration run does not
     #: silently start a background loop that acts while nobody is watching; the

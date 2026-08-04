@@ -13,6 +13,9 @@ generation:
   # Phase 3 §34: realizer は appraisal より高くてよい。
   # 高すぎると grounding repair が増えるので、実機評価で決める。
   realizer_temperature: 0.85
+  # Dialogue v2: repair is a constrained rewrite. Candidate value, to be
+  # compared against 0.85 on the real machine.
+  repair_temperature: 0.4
   # Phase 3 §25: 2〜5 例。多いと真似になる。
   reference_limit: 4
   temperature: 0.8
