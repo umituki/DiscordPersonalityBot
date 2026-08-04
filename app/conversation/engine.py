@@ -24,6 +24,7 @@ it is allowed to claim.
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Sequence
@@ -61,6 +62,12 @@ from app.conversation.surface import RelationshipBand, SurfacePlan, SurfacePlann
 from app.conversation.text import looks_like_question
 from app.grounding.claims import ClaimGroundingGuard, GroundingVerdict
 from app.dialogue.semantic_claims import SemanticClaimReviewer, SemanticReviewOutcome
+from app.dialogue.response_contract import (
+    ContractReviewOutcome,
+    ResponseContract,
+    ResponseContractReviewer,
+    build_response_contract,
+)
 from app.dialogue.turn import TurnState
 from app.grounding.models import Claim, GroundedClaim, GroundingContext
 from app.memory.recall_models import RecalledMemory
@@ -128,6 +135,7 @@ class TurnPlan:
     style_hints: StyleHints
     references: tuple[DialogueReference, ...]
     intent: IntentDecision
+    response_contract: ResponseContract = ResponseContract()
 
     @property
     def speaks(self) -> bool:
@@ -151,6 +159,9 @@ class ReplyGeneration:
     style_hints: StyleHints = StyleHints()
     #: Phase 4: what was decided about speaking at all.
     intent: IntentDecision = IntentDecision(intent=ResponseIntent.NORMAL_REPLY)
+    #: The same turn-level obligation the realizer, quality guard and repair
+    #: read. It decides no facts and is never rebuilt from the draft.
+    response_contract: ResponseContract = ResponseContract()
     #: How she was, in words rather than numbers (patch spec 9).
     expression: ExpressionContext = ExpressionContext()
     #: The last quality verdict, on whichever text is being returned.
@@ -187,6 +198,7 @@ class ConversationEngine:
         quality: ConversationQualityGuard | None = None,
         grounding: ClaimGroundingGuard | None = None,
         semantic_claims: SemanticClaimReviewer | None = None,
+        contract_reviewer: ResponseContractReviewer | None = None,
         interpreter: SocialInterpreter | None = None,
         planner: SurfacePlanner | None = None,
         references: DialogueReferenceProvider | None = None,
@@ -205,6 +217,9 @@ class ConversationEngine:
         #: authority on what a draft asserts; the regex extractor is now a
         #: backstop rather than the answer.
         self._semantic_claims = semantic_claims
+        self._contract_reviewer = contract_reviewer or ResponseContractReviewer(
+            prompts=prompts, structured=structured
+        )
         self._interpreter = interpreter or SocialInterpreter(
             identity=identity, prompts=prompts, structured=structured
         )
@@ -283,6 +298,13 @@ class ConversationEngine:
         social = social.with_correction(correction)
         _mark(trace, "social_interpretation_ended_at")
 
+        response_contract = build_response_contract(
+            turn.understanding,
+            social,
+            user_text=user_text,
+            grounding=grounding,
+        )
+
         surface = self._planner.plan(
             social,
             user_text=user_text,
@@ -290,6 +312,7 @@ class ConversationEngine:
             # §22: an experience may only be disclosed as an experience when
             # something says it happened.
             grounded_experience=_has_lived_evidence(grounding),
+            question_policy=response_contract.question_policy,
         )
         hints = self._repetition.review(recent_turns)
 
@@ -312,6 +335,7 @@ class ConversationEngine:
                 style_hints=hints,
                 references=(),
                 intent=intent,
+                response_contract=response_contract,
             )
 
         _mark(trace, "reference_retrieval_started_at")
@@ -323,6 +347,7 @@ class ConversationEngine:
             style_hints=hints,
             references=references,
             intent=intent,
+            response_contract=response_contract,
         )
 
     # --- shadowed silence (rebuild spec 47) ---------------------------------
@@ -428,6 +453,7 @@ class ConversationEngine:
                 trace=trace,
             )
         social, surface = plan.social, plan.surface
+        response_contract = plan.response_contract
         hints, references = plan.style_hints, plan.references
 
         # Patch spec 9: the reply expresses the state the event produced, in
@@ -449,6 +475,7 @@ class ConversationEngine:
                 surface,
                 expression,
                 turn=turn,
+                response_contract=response_contract,
                 style_hints=hints.render(),
                 references=render_references(references),
             )
@@ -472,6 +499,7 @@ class ConversationEngine:
                 social=social,
                 surface=surface,
                 intent=plan.intent,
+                response_contract=response_contract,
             )
 
         system_content = template.render(
@@ -497,6 +525,9 @@ class ConversationEngine:
             turn_understanding=_section_or(context, "turn_understanding", "(解釈なし)"),
             situation=_section_or(context, "situation", "(状況を組み立てられなかった)"),
             grounding_facts=_section_or(context, "grounding_facts", NO_GROUNDING),
+            response_contract=_section_or(
+                context, "response_contract", response_contract.render()
+            ),
             social_intent=social.render(),
             surface_plan=surface.render(),
             style_hints=_section_or(context, "style_hints", NO_STYLE_HINTS),
@@ -562,6 +593,7 @@ class ConversationEngine:
             references=references,
             style_hints=hints,
             intent=plan.intent,
+            response_contract=response_contract,
             expression=expression,
         )
         if not outcome.accepted or outcome.value is None:
@@ -609,7 +641,8 @@ class ConversationEngine:
         text = generation.text or ""
         quality = self._quality.review(
             text,
-            allows_question=generation.surface.allows_question,
+            allows_question=generation.response_contract.allows_question,
+            question_policy=generation.response_contract.question_policy.value,
             user_text=user_text,
             recent_turns=recent_turns,
         )
@@ -618,6 +651,15 @@ class ConversationEngine:
             text, grounding, turn=turn, run_id=run_id, event_id=event_id
         )
         _mark(trace, "semantic_grounding_ended_at")
+        if quality.accepted and grounded.accepted:
+            quality = await self._apply_contract_review(
+                quality,
+                text=text,
+                user_text=user_text,
+                contract=generation.response_contract,
+                run_id=run_id,
+                event_id=event_id,
+            )
         if quality.accepted and grounded.accepted:
             return dataclasses.replace(
                 generation,
@@ -643,6 +685,7 @@ class ConversationEngine:
             tool_success_ids=tool_success_ids,
             turn=turn,
             review=review,
+            response_contract=generation.response_contract,
         )
         _mark(trace, "repair_ended_at")
 
@@ -650,13 +693,23 @@ class ConversationEngine:
             second_text = repaired.value.text.strip()
             second = self._quality.review(
                 second_text,
-                allows_question=generation.surface.allows_question,
+                allows_question=generation.response_contract.allows_question,
+                question_policy=generation.response_contract.question_policy.value,
                 user_text=user_text,
                 recent_turns=recent_turns,
             )
             second_grounded, second_review = await self._check_grounding(
                 second_text, grounding, turn=turn, run_id=run_id, event_id=event_id
             )
+            if second.accepted and second_grounded.accepted:
+                second = await self._apply_contract_review(
+                    second,
+                    text=second_text,
+                    user_text=user_text,
+                    contract=generation.response_contract,
+                    run_id=run_id,
+                    event_id=event_id,
+                )
             if second.accepted and second_grounded.accepted:
                 return dataclasses.replace(
                     generation,
@@ -702,6 +755,38 @@ class ConversationEngine:
             # ground — `confirm_sent` is the only caller and it only runs on a
             # real send — but the trace should still say what was decided.
             semantic_review=review,
+        )
+
+    async def _apply_contract_review(
+        self,
+        verdict: QualityVerdict,
+        *,
+        text: str,
+        user_text: str,
+        contract: ResponseContract,
+        run_id: str | None,
+        event_id: str | None,
+    ) -> QualityVerdict:
+        """Check answer fulfilment only after structural and factual checks.
+
+        This ordering keeps the common failure path at one extra call: an
+        unsupported draft already needs repair, so there is no value asking
+        whether that draft answered well. The repaired candidate is checked
+        once after it is structurally safe and grounded.
+        """
+        if not contract.requires_answer:
+            return verdict
+        result: ContractReviewOutcome = await self._contract_reviewer.review(
+            text,
+            user_text=user_text,
+            contract=contract,
+            run_id=run_id,
+            event_id=event_id,
+        )
+        return self._quality.with_contract_result(
+            verdict,
+            fulfilled=result.fulfilled,
+            detail=result.detail,
         )
 
     async def _check_grounding(
@@ -790,6 +875,7 @@ class ConversationEngine:
         tool_success_ids: Sequence[str],
         turn: TurnState | None = None,
         review: SemanticReviewOutcome | None = None,
+        response_contract: ResponseContract = ResponseContract(),
     ) -> StructuredOutcome[ReplyDraft]:
         """Rewrite the draft, knowing what it may and may not say.
 
@@ -810,11 +896,12 @@ class ConversationEngine:
             expression=expression.render(),
             recent_conversation=self._render_history(recent_turns) or NO_HISTORY,
             dialogue_acts=social.render() + "\n" + surface.render(),
+            response_contract=response_contract.render(),
             user_message=user_text,
             rejected_reply=rejected_text,
             problems=self._describe_problems(verdict, grounded),
             turn_understanding=turn.render_understanding(),
-            usable_facts=_render_grounding(turn.grounding),
+            usable_facts=_render_grounding(turn.grounding, response_contract),
             unusable_claims=_render_unusable(grounded, review),
             recalled_memories=_render_recalled(turn.grounding),
             common_ground=turn.common_ground or NO_COMMON_GROUND,
@@ -886,6 +973,7 @@ class ConversationEngine:
         surface: SurfacePlan | None = None,
         expression: ExpressionContext | None = None,
         turn: TurnState | None = None,
+        response_contract: ResponseContract | None = None,
         style_hints: str = "",
         references: str = "",
     ) -> BuiltContext:
@@ -899,6 +987,7 @@ class ConversationEngine:
         requirement level each actually has.
         """
         turn = turn or TurnState(user_text=user_text)
+        response_contract = response_contract or ResponseContract()
         builder = ContextBuilder()
         builder.add(
             "identity",
@@ -955,8 +1044,15 @@ class ConversationEngine:
         # would not shorten the reply, it would remove the only thing stopping
         # the reply from being invented.
         builder.add(
+            "response_contract",
+            response_contract.render(),
+            requirement=Requirement.REQUIRED,
+            priority=88,
+            source="turn_response_contract",
+        )
+        builder.add(
             "grounding_facts",
-            _render_grounding(turn.grounding),
+            _render_grounding(turn.grounding, response_contract),
             requirement=Requirement.REQUIRED,
             priority=85,
             source="grounding_context",
@@ -1094,6 +1190,26 @@ def _render_unusable(
             lines.append(
                 f"- 「{claim.candidate.trigger}」: {'、'.join(dict.fromkeys(reasons))}"
             )
+            lines.append(
+                json.dumps(
+                    {
+                        "category": claim.candidate.category,
+                        "proposition": claim.candidate.proposition,
+                        "trigger": claim.candidate.trigger,
+                        "refusals": list(claim.refusals),
+                        "invalid_evidence_ids": [
+                            refusal.split(":", 1)[1]
+                            for refusal in claim.refusals
+                            if refusal.startswith(
+                                ("unknown_evidence:", "wrong_kind:", "wrong_subject:", "wrong_relation:")
+                            )
+                            and ":" in refusal
+                        ],
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
     return "\n".join(lines) or "(裏づけの取れない主張はない)"
 
 
@@ -1115,7 +1231,11 @@ def _render_recalled(grounding: GroundingContext | None, limit: int = 5) -> str:
     )
 
 
-def _render_grounding(grounding: GroundingContext | None, limit: int = 10) -> str:
+def _render_grounding(
+    grounding: GroundingContext | None,
+    contract: ResponseContract | None = None,
+    limit: int = 20,
+) -> str:
     """The facts available this turn, each attributed to whoever they are about.
 
     The attribution is the whole point, and it used to be missing. This
@@ -1132,22 +1252,50 @@ def _render_grounding(grounding: GroundingContext | None, limit: int = 10) -> st
     if grounding is None:
         return NO_GROUNDING
     degraded = grounding.unavailable_sections
+    requested = tuple(contract.allowed_evidence_kinds) if contract else ()
+    kinds = requested or (
+        _LIVED_EVIDENCE
+        + (
+            "world_state",
+            "tool_call",
+            "verified_user_fact",
+            "npc_interaction",
+        )
+    )
     hers: list[str] = []
     theirs: list[str] = []
-    for item in grounding.of_kinds(
-        _LIVED_EVIDENCE
-        + ("world_state", "tool_call", "verified_user_fact", "npc_interaction")
-    ):
+    for item in grounding.of_kinds(kinds):
         if not item.summary.strip():
             continue
-        (hers if item.is_yuis_own else theirs).append(item.describe())
+        record = json.dumps(
+            {
+                "id": item.evidence_id,
+                "kind": item.kind,
+                "owner": item.owner_label,
+                "subject": item.subject,
+                "relation": item.relation,
+                "summary": item.summary,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        (hers if item.is_yuis_own else theirs).append(record)
     blocks: list[str] = []
     if hers:
-        blocks.append("### YUI自身のこととして言えること\n" + "\n".join(f"- {line}" for line in hers[:limit]))
+        blocks.append(
+            "### YUI自身のこととして言えること (authoritative_evidence_jsonl)\n"
+            + "\n".join(hers[:limit])
+        )
     if theirs:
         blocks.append(
-            "### 相手・他者のこと（YUI自身の経験として語ってはいけない）\n"
-            + "\n".join(f"- {line}" for line in theirs[:limit])
+            "### 相手・他者のこと（YUI自身の経験として語ってはいけない） "
+            "(authoritative_evidence_jsonl)\n"
+            + "\n".join(theirs[:limit])
+        )
+    if not hers and not theirs and requested:
+        blocks.append(
+            "### authoritative_evidence_jsonl\n"
+            "(このanswer targetに使える根拠は記録されていない)"
         )
     if degraded:
         # Audit finding 9. Silence about an unreadable source reads as "there

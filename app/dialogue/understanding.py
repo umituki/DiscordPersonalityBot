@@ -68,6 +68,19 @@ QuestionTarget = Literal[
     "unclear",
 ]
 
+#: What kind of memory answer the USER is asking for.  Kept separate from the
+#: broad ``question_target=yui_memory`` so a question about the subsystem's
+#: range cannot silently turn into a claim that a concrete episode is being
+#: recalled now.
+MemoryQueryIntent = Literal[
+    "none",
+    "general_capability",
+    "specific_recall",
+    "memory_content",
+    "memory_range",
+    "unknown",
+]
+
 #: Whose action the turn is talking about. The single most important field
 #: here: 「詠んだよ」 is the USER's doing, and a reply that treats it as shared
 #: is a fabrication.
@@ -88,6 +101,7 @@ class TurnUnderstanding(BaseModel):
     current_topic: str = Field(default="", max_length=120)
     user_intent: UserIntent = "unclear"
     question_target: QuestionTarget = "none"
+    memory_query_intent: MemoryQueryIntent = "none"
     #: Whose action the USER's message refers to.
     referenced_action_owner: ActionOwner = "unclear"
     #: The thing being talked about, with ellipsis resolved where possible.
@@ -129,6 +143,7 @@ class TurnUnderstanding(BaseModel):
             f"- 話題: {self.current_topic or '不明'}",
             f"- USERの意図: {self.user_intent}",
             f"- 質問の対象: {self.question_target}",
+            f"- 記憶質問の種類: {self.memory_query_intent}",
             f"- 言及されている行為の主体: {self.referenced_action_owner}",
             f"- 言及対象: {self.referenced_subject or '不明'}",
             f"- 時間範囲: {self.temporal_scope}",
@@ -217,6 +232,7 @@ class DiscourseInterpreter:
 __all__ = [
     "ActionOwner",
     "DiscourseInterpreter",
+    "MemoryQueryIntent",
     "PROMPT_ID",
     "PURPOSE",
     "QuestionTarget",

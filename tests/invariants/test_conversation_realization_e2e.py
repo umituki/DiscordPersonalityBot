@@ -105,6 +105,14 @@ class TurnClient:
         elif title == "ReplyDraft":
             self.realizer_prompts.append(request.messages[0].content)
             text = json.dumps({"text": self._reply}, ensure_ascii=False)
+        elif title == "ResponseContractAssessment":
+            text = json.dumps(
+                {
+                    "fulfilled": True,
+                    "addressed_target": "direct_user_question",
+                    "reason": "test reply answers the scripted direct question",
+                }
+            )
         else:
             raise AssertionError(f"unscripted schema: {title!r}")
         return LLMResponse(text=text, model=self.model, created_at=NOW, latency_ms=5)

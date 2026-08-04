@@ -48,6 +48,7 @@ from tests.unit.test_conversation import (  # noqa: F401 - shared fixtures
     inbound,
 )
 from tests.unit.test_memory import memories, memory_policy  # noqa: F401
+from tests.support import PassingContractReviewer
 
 pytestmark = pytest.mark.invariant
 
@@ -198,6 +199,7 @@ def pipeline(
         structured=generator,
         guard=guard,
         policy=conversation_policy,
+        contract_reviewer=PassingContractReviewer(),
         clock=clock,
     )
     processor = EventProcessor(

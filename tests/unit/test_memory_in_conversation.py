@@ -21,6 +21,7 @@ from tests.unit.test_conversation import (  # noqa: F401 - pytest fixtures are r
 )
 from tests.unit.test_llm_structured import ScriptedClient
 from tests.unit.test_memory import memories, memory_policy  # noqa: F401
+from tests.support import PassingContractReviewer
 
 SUMMARY = (
     '{"summary": "ユーザーが海に行った話をしてくれた。", "topics": ["海"], '
@@ -67,6 +68,7 @@ def service_with_memory(
             structured=generator,
             guard=guard,
             policy=conversation_policy,
+            contract_reviewer=PassingContractReviewer(),
             clock=clock,
         )
         service = ConversationService(

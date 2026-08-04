@@ -30,6 +30,7 @@ purpose, and they are rendered under headings that say so.
 from __future__ import annotations
 
 import logging
+import json
 from dataclasses import dataclass
 from typing import Any, Literal, Sequence
 
@@ -334,7 +335,8 @@ def admit(category: str, evidence_id: str, context: GroundingContext) -> Admissi
         wrong_relation          right subject, wrong standing to the event.
         not_recalled_this_turn  a memory row nobody retrieved this turn.
     """
-    found = context.by_id(evidence_id)
+    normalized_id = normalize_evidence_id(evidence_id)
+    found = context.by_id(normalized_id)
     if found is None:
         # The one that matters most: a fluent model will cite something
         # plausible-looking rather than admit it has nothing.
@@ -358,6 +360,26 @@ def admit(category: str, evidence_id: str, context: GroundingContext) -> Admissi
     ):
         return Admission(refusal=f"not_recalled_this_turn:{evidence_id}")
     return Admission(evidence=found)
+
+
+def normalize_evidence_id(evidence_id: str) -> str:
+    """Remove display-only ASCII wrappers, and nothing semantic.
+
+    The result is still resolved by exact lookup in the current context.  No
+    fuzzy, substring or nearest-ID matching is performed, so an invented ID
+    stays invented after normalization.
+    """
+
+    value = str(evidence_id).strip()
+    wrappers = (("[", "]"), ('"', '"'), ("'", "'"), ("`", "`"))
+    for _ in range(2):
+        for left, right in wrappers:
+            if len(value) >= 2 and value.startswith(left) and value.endswith(right):
+                value = value[len(left) : len(value) - len(right)].strip()
+                break
+        else:
+            break
+    return value
 
 
 class EvidenceResolver:
@@ -595,7 +617,20 @@ def render_evidence(context: GroundingContext | None, limit: int = 40) -> str:
             continue
         lines.append(f"## {section}")
         for item in items[:limit]:
-            lines.append(f"- {item.describe()}")
+            lines.append(
+                json.dumps(
+                    {
+                        "id": item.evidence_id,
+                        "kind": item.kind,
+                        "owner": item.owner_label,
+                        "subject": item.subject,
+                        "relation": item.relation,
+                        "summary": item.summary,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
     if unreadable:
         lines.append("## 読めなかった情報源")
         lines.append(
@@ -622,5 +657,6 @@ __all__ = [
     "SemanticReviewOutcome",
     "TemporalScope",
     "admit",
+    "normalize_evidence_id",
     "render_evidence",
 ]

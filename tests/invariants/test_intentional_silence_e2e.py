@@ -44,6 +44,7 @@ from tests.unit.test_discord_gateway import (  # noqa: F401 - shared fixtures
     FakeMessage,
     TypingChannel,
 )
+from tests.support import PassingContractReviewer
 
 pytestmark = pytest.mark.invariant
 
@@ -117,6 +118,7 @@ def silent_turn(
             interpreter=SocialInterpreter(
                 identity=identity, prompts=prompt_registry, structured=generator
             ),
+            contract_reviewer=PassingContractReviewer(),
             clock=clock,
         )
         processor = EventProcessor(

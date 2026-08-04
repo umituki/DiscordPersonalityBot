@@ -41,6 +41,7 @@ from tests.unit.test_conversation import (  # noqa: F401 - shared fixtures
     inbound,
 )
 from tests.unit.test_memory import memories, memory_policy  # noqa: F401
+from tests.support import PassingContractReviewer
 
 pytestmark = pytest.mark.invariant
 
@@ -116,6 +117,7 @@ def grounded_conversation(
             guard=guard,
             policy=conversation_policy,
             grounding=claim_guard,
+            contract_reviewer=PassingContractReviewer(),
             clock=clock,
         )
         processor = EventProcessor(

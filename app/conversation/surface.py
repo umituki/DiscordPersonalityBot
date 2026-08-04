@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.conversation.social_interpretation import SocialInterpretation
+from app.dialogue.response_contract import QuestionPolicy
 
 Length = Literal["very_short", "short", "medium", "long"]
 Register = Literal["polite", "neutral", "casual"]
@@ -80,6 +81,10 @@ class SurfacePlan:
     self_disclosure: Disclosure = "none"
     #: §19: a budget, not a probability. 0 or 1.
     question_budget: int = 0
+    #: The turn-level meaning behind the budget.  ``optional`` means a
+    #: question is permitted, not required; it must not collapse to the hard
+    #: prohibition represented by ``forbidden``.
+    question_policy: str = QuestionPolicy.FORBIDDEN.value
     initiative: str = "balanced"
     fragmentation: Fragmentation = "natural"
     explicit_emotion: ExplicitEmotion = "low"
@@ -112,10 +117,14 @@ class SurfacePlan:
             f"- 口調: {registers[self.register]}",
             f"- 言い方: {directness_lines[self.directness]}",
         ]
-        if self.question_budget == 0:
+        if self.question_policy == QuestionPolicy.FORBIDDEN:
             lines.append("- 質問はしない")
+        elif self.question_policy == QuestionPolicy.REQUIRED:
+            lines.append("- 質問を一つする")
+        elif self.question_policy == QuestionPolicy.ENCOURAGED:
+            lines.append("- 必要なら質問を一つして会話を進める")
         else:
-            lines.append(f"- 質問は最大 {self.question_budget} つまで")
+            lines.append("- 軽い質問は一つまで可能。ただし質問しなくてもよい")
         if self.self_disclosure == "none":
             lines.append("- 自分の話は今回しなくてよい")
         if self.explicit_emotion == "low":
@@ -141,14 +150,23 @@ class SurfacePlanner:
         user_text: str,
         band: RelationshipBand = "acquaintance",
         grounded_experience: bool = False,
+        question_policy: QuestionPolicy | None = None,
     ) -> SurfacePlan:
         user_length = len((user_text or "").strip())
+        resolved_policy = question_policy or self.question_policy(interpretation)
+        question_budget = self.question_budget(
+            interpretation, question_policy=question_policy
+        )
+        effective_policy = (
+            resolved_policy if question_budget else QuestionPolicy.FORBIDDEN
+        )
         return SurfacePlan(
             length=self._length(interpretation, user_length),
             register=self._register(band, interpretation),
             directness=self._directness(interpretation),
             self_disclosure=self._disclosure(interpretation, grounded_experience),
-            question_budget=self.question_budget(interpretation),
+            question_budget=question_budget,
+            question_policy=effective_policy.value,
             initiative=interpretation.initiative,
             fragmentation="natural",
             explicit_emotion=self._explicit_emotion(interpretation),
@@ -156,18 +174,34 @@ class SurfacePlanner:
         )
 
     @staticmethod
-    def question_budget(interpretation: SocialInterpretation) -> int:
+    def question_budget(
+        interpretation: SocialInterpretation,
+        *,
+        question_policy: QuestionPolicy | None = None,
+    ) -> int:
         """§19. A count, never a rate.
 
-        ``optional`` earns a question only when she is the one carrying the
-        turn. That is what stops 「今日は疲れた」 from being answered with
-        「何があったの？」 every single time (§20).
+        A policy of ``optional`` is permission, never an instruction to ask.
+        Whether the realizer spends that one-question budget remains a prose
+        decision. Repeated-question and explicit-forbidden guards still apply.
         """
-        if interpretation.question == "none":
+        if question_policy is not None:
+            return 0 if question_policy is QuestionPolicy.FORBIDDEN else 1
+        policy = SurfacePlanner.question_policy(interpretation)
+        if policy is QuestionPolicy.FORBIDDEN:
             return 0
-        if interpretation.question == "optional":
+        if policy is QuestionPolicy.OPTIONAL:
             return 1 if interpretation.initiative == "high" else 0
         return 1
+
+    @staticmethod
+    def question_policy(interpretation: SocialInterpretation) -> QuestionPolicy:
+        return {
+            "none": QuestionPolicy.FORBIDDEN,
+            "optional": QuestionPolicy.OPTIONAL,
+            "useful": QuestionPolicy.ENCOURAGED,
+            "necessary": QuestionPolicy.REQUIRED,
+        }.get(interpretation.question, QuestionPolicy.FORBIDDEN)
 
     @staticmethod
     def _length(interpretation: SocialInterpretation, user_length: int) -> Length:

@@ -45,6 +45,7 @@ class QualityIssue:
     UNWANTED_QUESTION = "unwanted_question"
     FORMULAIC = "formulaic_repetition"
     CORRECTION_ARGUMENT = "correction_doubled_down"
+    DIRECT_ANSWER_MISSING = "direct_answer_missing"
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +110,10 @@ _PROBLEM_TEXT: dict[str, str] = {
     QualityIssue.CORRECTION_ARGUMENT: (
         "相手の訂正に反論している。説明で押し切らず、短く認めて訂正を受け入れる。"
     ),
+    QualityIssue.DIRECT_ANSWER_MISSING: (
+        "安全な文章にはなっているが、USERが尋ねた対象へ答えていない。"
+        "分からない場合も、分からない範囲を質問への答えとして明示する。"
+    ),
 }
 
 
@@ -137,6 +142,7 @@ class ConversationQualityGuard:
         text: str,
         *,
         allows_question: bool,
+        question_policy: str | None = None,
         user_text: str,
         recent_turns: Sequence[ConversationTurn] = (),
     ) -> QualityVerdict:
@@ -173,7 +179,12 @@ class ConversationQualityGuard:
             issues.append(QualityIssue.CORRECTION_ARGUMENT)
             details.append("the reply argues with an explicit USER correction")
 
-        if not allows_question and looks_like_question(stripped):
+        forbidden_question = (
+            question_policy == "forbidden"
+            if question_policy is not None
+            else not allows_question
+        )
+        if forbidden_question and looks_like_question(stripped):
             # Patch spec 10.4 and 8.1, now spending the SurfacePlan's question
             # budget (Phase 3 §19). The decision said no question; asking one
             # anyway means the prose and the decision disagree.
@@ -193,6 +204,21 @@ class ConversationQualityGuard:
         if issues:
             return QualityVerdict(False, tuple(issues), "; ".join(details))
         return QualityVerdict(True)
+
+    @staticmethod
+    def with_contract_result(
+        verdict: QualityVerdict, *, fulfilled: bool, detail: str = ""
+    ) -> QualityVerdict:
+        """Merge the answer-fulfilment check into the one quality verdict."""
+        if fulfilled:
+            return verdict
+        issues = tuple(dict.fromkeys((*verdict.issues, QualityIssue.DIRECT_ANSWER_MISSING)))
+        details = "; ".join(
+            part
+            for part in (verdict.detail, detail or "the direct answer obligation was not met")
+            if part
+        )
+        return QualityVerdict(False, issues, details)
 
     @staticmethod
     def describe(verdict: QualityVerdict) -> str:

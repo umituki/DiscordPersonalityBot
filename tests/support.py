@@ -52,10 +52,16 @@ ANSWERS: dict[str, str] = {
         '"referenced_subject": "", "temporal_scope": "unspecified", '
         '"resolved_message": "", "correction_target": "", "memory_query": "", '
         '"wants_memory": false, "self_disclosure_relevant": false, '
-        '"reason": "offline default"}'
+        '"memory_query_intent": "none", "reason": "offline default"}'
     ),
     # An ordinary offline reply asserts nothing, so there is nothing to ground.
     "SemanticClaimReview": '{"claims": []}',
+    # Response Contract v2. The ordinary direct question is answered. Tests
+    # for an omitted answer override this with a negative assessment.
+    "ResponseContractAssessment": (
+        '{"fulfilled": true, "addressed_target": "direct_user_question", '
+        '"reason": "offline default"}'
+    ),
     # Audit finding 2. The default resolves *nothing*: an offline double that
     # confidently picked a claim would let a broken resolver pass by always
     # guessing, which is the bug the resolver replaced.
@@ -118,6 +124,15 @@ class OfflineModelClient:
     # --- convenience --------------------------------------------------------
     def purposes(self) -> list[str]:
         return [request.purpose for request in self.requests]
+
+
+class PassingContractReviewer:
+    """A dependency double for tests whose subject is not answer fulfilment."""
+
+    async def review(self, *_args, **_kwargs):
+        from app.dialogue.response_contract import ContractReviewOutcome
+
+        return ContractReviewOutcome(fulfilled=True, detail="test precondition")
 
 
 def use_offline_model(
