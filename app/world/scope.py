@@ -35,6 +35,37 @@ from enum import StrEnum
 from typing import Sequence
 
 
+#: Which generation of the world model a stored row was produced under.
+#:
+#: Not the schema version. A migration adds columns; it cannot add meaning. The
+#: audit's finding was that migration 36 gave every pre-existing month
+#: `participants=[]` and `interaction_scope=local` — structurally identical to
+#: a month the current validator had actually passed, and produced by a critic
+#: that a paraphrase walked straight past. The row looked verified because the
+#: columns existed, not because anything had checked it.
+#:
+#: So provenance is recorded rather than inferred. A row written by code that
+#: ran the current validation carries this number; everything older carries 0,
+#: which means "no claim was ever made about this under the current rules".
+#: There is no safe way to backfill it, because inferring participants from
+#: Japanese prose is the exact structure the world model replaced.
+#:
+#: Bump when the world semantics change in a way that invalidates stored
+#: judgements. The resolution is a fresh rebuild, never a quiet reinterpretation.
+#:
+#: 1 — the digital-existence identity, retroactively. No row was ever tagged 1.
+#: 2 — YUI is a person in her own world; nothing physical reaches the USER's.
+CURRENT_WORLD_MODEL_VERSION = 2
+
+#: What a row carries when nothing recorded its provenance.
+UNVERIFIED_WORLD_MODEL_VERSION = 0
+
+
+def is_current_world_model(version: int | None) -> bool:
+    """Whether a stored row was judged under the rules in force now."""
+    return int(version or 0) == CURRENT_WORLD_MODEL_VERSION
+
+
 class WorldScope(StrEnum):
     """Where a fact holds."""
 
@@ -124,7 +155,10 @@ def worlds_are_separate(first: str, second: str) -> bool:
 
 
 __all__ = [
+    "CURRENT_WORLD_MODEL_VERSION",
     "SUBJECT_WORLDS",
+    "UNVERIFIED_WORLD_MODEL_VERSION",
+    "is_current_world_model",
     "InteractionScope",
     "WorldScope",
     "is_reachable",

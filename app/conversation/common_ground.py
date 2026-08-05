@@ -31,6 +31,7 @@ from app.dialogue.semantic_claims import (
     StoredSemanticClaim,
 )
 from app.grounding.claims import ClaimExtractor, ClaimGroundingGuard
+from app.world.scope import is_current_world_model
 from app.grounding.models import GroundingContext
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,23 @@ class CommonGroundClaim:
     semantic_json: str = ""
     subject: str = ""
     modality: str = ""
+    #: Which generation of the world model judged this row. 0 means none did —
+    #: the row predates the current rules, and its content is a record of what
+    #: was said rather than something that may be re-asserted as true.
+    world_model_version: int = 0
+
+    @property
+    def world_verified(self) -> bool:
+        """Whether the stored claim may be re-admitted as a fact.
+
+        Not "does it have a stored representation". A pre-world-model blob has
+        one, and `StoredSemanticClaim` will happily fill in
+        `local_to_subject_world` and no participants for it — which is how
+        「USERと同じ部屋で本を読んだ」 came back as an ordinary local claim and
+        resolved against her own activity row. The blob is not the question;
+        whether anything ever checked it under these rules is.
+        """
+        return is_current_world_model(self.world_model_version)
 
     @property
     def is_live(self) -> bool:
@@ -366,20 +384,41 @@ class CommonGroundTracker:
             # Nothing to check against. CORR-002 leans to retraction, so an
             # unverifiable claim is not treated as verified.
             return False
+
+        if not claim.world_verified:
+            # A row from before the world model, or one nothing checked under
+            # it. It does not stand.
+            #
+            # This is the audit's reproduction. `StoredSemanticClaim` fills the
+            # missing world fields with `local_to_subject_world` and no
+            # participants — the permissive values — so 「USERと同じ部屋で本を
+            # 読んだ」 came back as an ordinary local claim and resolved against
+            # her own activity row. The blob existing is not the same as
+            # anything having judged it.
+            #
+            # And *not* by falling back to the regex extractor, which is where
+            # this used to go. That would restore the second factual authority
+            # the whole subsystem exists to remove: a legacy row would get its
+            # truth from a reader nothing else in the system trusts. Unverified
+            # is unverified.
+            logger.info(
+                "claim %s predates the current world model; not re-admitted",
+                claim.claim_id,
+            )
+            return False
+
         candidate = _stored_claim(claim)
-        if candidate is not None:
-            resolved = self._resolver.resolve(candidate, context)
-            if not resolved.needs_evidence:
-                # It never asserted anything, so there is nothing to defend and
-                # nothing to take back.
-                return True
-            return resolved.supported
-        # A legacy row, recorded before the representation was stored. The old
-        # reader is the only thing that can speak for it.
-        verdict = self._guard.review(claim.statement, context)
-        if not verdict.claims:
+        if candidate is None:
+            # Verified provenance and no readable representation is a
+            # contradiction — a corrupted blob on a row that was stamped. Fail
+            # closed rather than guessing which half to believe.
+            return False
+        resolved = self._resolver.resolve(candidate, context)
+        if not resolved.needs_evidence:
+            # It never asserted anything, so there is nothing to defend and
+            # nothing to take back.
             return True
-        return all(item.supported for item in verdict.claims)
+        return resolved.supported
 
 
 def _stored_claim(claim: CommonGroundClaim) -> SemanticClaimCandidate | None:

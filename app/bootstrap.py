@@ -117,6 +117,7 @@ from app.social.beliefs import BeliefEngine
 from app.social.self_model import SelfEngine
 from app.tools.builtin import register_builtin_tools, register_search_provider
 from app.tools.manager import ToolManager, ToolRegistry
+from app.storage.repositories.world_provenance import read_world_provenance
 from app.world.policy import WorldPolicy
 from app.world.service import WorldService
 from app.social.policy import RelationshipPolicy
@@ -1198,6 +1199,12 @@ class Application:
             schema_version=current_schema,
             latest_schema=LATEST_VERSION,
             enabled=resolved_config.runtime.live,
+            rebuild=rebuild_epoch_repo,
+            # Read lazily so the check reflects the database as it stands when
+            # the question is asked, not as it stood at startup — a
+            # rebuild-reset inside a running process would otherwise keep
+            # reporting the life it replaced.
+            world_provenance=lambda: read_world_provenance(db),
         )
 
         # Audit finding 6. Built from the repositories' *published* APIs, and

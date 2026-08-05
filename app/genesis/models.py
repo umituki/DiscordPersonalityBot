@@ -158,18 +158,53 @@ class CriticVerdict(BaseModel):
         return max(found, key=order.index) if found else ""
 
 
+class ExperienceActor(BaseModel):
+    """Somebody in an experience, with their name kept apart from their role.
+
+    The name is free text and stays free text — 「ミカ」, 「先生」, 「母」 are
+    how a life reads, and no rule should be inferring anything from them. The
+    `subject` is the closed value the world model checks. Splitting them is the
+    point: `actors=["USER"]` used to be an ordinary string that no validator
+    could see was a person from another world.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    name: str = Field(default="", max_length=80)
+    subject: WorldParticipant
+
+
 class ExperienceCandidate(BaseModel):
     """34.11. Something that happened, extracted from a finished month.
 
     ``全 narrative sentence を Event にしない`` — repetitive daily life is one
     compressed experience, not thirty. What survives extraction is what would
     still be worth mentioning a year later.
+
+    An experience is a *derivative* of a month that already passed world
+    validation, not a second generation stage — but a second model call
+    produced it, and that call could introduce a person the month never had.
+    The audit found `actors=["USER"]` accepted by this schema and staged
+    without anything looking at it. So the world metadata is required here for
+    the same reason it is required of a claim, and checked against the month it
+    came from before the row exists.
     """
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     occurred_at: datetime
     ends_at: datetime | None = None
+    #: Who was there, with a checkable role each. Required, and empty for
+    #: something she did alone.
+    actor_refs: tuple[ExperienceActor, ...]
+    #: Who the experience involves besides her, in the closed vocabulary.
+    #: Must be a subset of the month's — extraction compresses what happened,
+    #: it does not add to it.
+    participants: tuple[WorldParticipant, ...]
+    #: Where the contact took place.
+    interaction_scope: GenesisInteractionScope
+    #: Legacy free-text actor list, kept so migration-29 rows still read.
+    #: Never consulted for world safety.
     actors: tuple[str, ...] = ()
     context: str = Field(default="", max_length=400)
     action: str = Field(default="", max_length=400)

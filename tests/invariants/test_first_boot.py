@@ -46,6 +46,7 @@ from app.genesis.models import (
     AnnualSynthesis,
     CriticIssue,
     CriticVerdict,
+    ExperienceActor,
     ExperienceCandidate,
     MonthNarrative,
 )
@@ -147,7 +148,7 @@ class Storyteller:
                     "USERと会って話した。" if self.body else "本を読んでいた。"
                 ),
                 importance="routine",
-                participants=("user",) if self.body else (),
+                participants=("user",) if self.body else ("npc",),
                 interaction_scope="local_to_subject_world",
                 people=("ミカ",),
             )
@@ -158,7 +159,9 @@ class Storyteller:
                 experiences=(
                     ExperienceCandidate(
                         occurred_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
-                        actors=("ミカ",),
+                        actor_refs=(ExperienceActor(name="ミカ", subject="npc"),),
+                        participants=("npc",),
+                        interaction_scope="local_to_subject_world",
                         context="家で",
                         action="本を読んだ",
                         outcome="面白かった",

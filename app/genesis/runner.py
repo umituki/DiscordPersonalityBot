@@ -45,6 +45,11 @@ from app.genesis.critics import (
     ReviewTarget,
     check_identity,
 )
+from app.genesis.experience_world import validate_experience
+from app.world.scope import (
+    CURRENT_WORLD_MODEL_VERSION,
+    is_current_world_model,
+)
 from app.genesis.ledger import ContinuityLedger
 from app.genesis.models import (
     WORTH_DETAIL,
@@ -93,6 +98,40 @@ FIRST_BOOT_AUDITS: tuple[str, ...] = (
     "no_real_user_before_first_boot",
 )
 
+
+
+def _replay_refusal(row) -> str:
+    """Why this stored experience may not become an Event, if it may not.
+
+    Provenance first. A row written before the world model carries version 0,
+    and there is no way to check it after the fact — the metadata columns hold
+    a migration's defaults, not a judgement. It is not replayed, and the
+    resolution is a fresh Genesis rather than a reinterpretation.
+    """
+    import json as _json
+
+    if not is_current_world_model(_int_column(row, "world_model_version")):
+        return "world_model_unverified"
+    try:
+        participants = tuple(_json.loads(row["participants_json"] or "[]"))
+        actors = tuple(_json.loads(row["actor_subjects_json"] or "[]"))
+    except Exception:  # noqa: BLE001 - unreadable metadata is not a pass
+        return "world_metadata_unreadable"
+    scope = row["interaction_scope"] or ""
+    if not scope:
+        return "world_metadata_missing"
+    return validate_experience(
+        participants=participants,
+        interaction_scope=scope,
+        actor_subjects=actors,
+    )
+
+
+def _int_column(row, name: str) -> int:
+    try:
+        return int(row[name] or 0)
+    except (IndexError, KeyError, TypeError, ValueError):
+        return 0
 
 
 def _stored_participants(row) -> tuple[str, ...]:
@@ -605,11 +644,43 @@ class GenesisRunner:
                 narrative=month["narrative"],
                 period=f"{month['month_start']} 〜 {month['month_end']}",
                 importance=month["importance_class"],
+                # The month's own world metadata, so extraction knows what it
+                # is compressing rather than guessing who was there.
+                month_participants=", ".join(_stored_participants(month)) or "(なし)",
+                month_interaction_scope=(
+                    month["interaction_scope"] or "local_to_subject_world"
+                ),
             )
             if extracted is None:
                 progress.incomplete.append(f"month_{month['month_id']}_extraction")
                 return False
+            month_participants = _stored_participants(month)
             for sequence, candidate in enumerate(extracted.experiences):
+                # Before the row exists. An experience that is written and then
+                # rejected is a past that already happened — it has an id, a
+                # month, a sequence, and the next resume finds it there.
+                refusal = validate_experience(
+                    participants=candidate.participants,
+                    interaction_scope=candidate.interaction_scope,
+                    actor_subjects=[
+                        ref.subject for ref in candidate.actor_refs
+                    ],
+                    month_participants=month_participants,
+                )
+                if refusal:
+                    progress.blocked_by.append(
+                        CriticIssue(
+                            severity="fatal",
+                            target_id=month["month_id"],
+                            code="EXPERIENCE_WORLD_CONTRADICTION",
+                            reason=f"extracted experience is not of this month: {refusal}",
+                            repair_scope="month",
+                        )
+                    )
+                    progress.incomplete.append(
+                        f"month_{month['month_id']}_experience_{sequence} (world)"
+                    )
+                    return False
                 self._experiences.stage(
                     genesis_run_id=run_id,
                     month_id=month["month_id"],
@@ -642,6 +713,20 @@ class GenesisRunner:
         from app.simulation.events import SIMULATED_EXPERIENCE, SimulatedExperiencePayload
 
         for row in self._experiences.pending(run_id, year_number=year_number):
+            # Defence in depth, at the boundary where an experience becomes an
+            # Event and from there a memory, a mood, a personality drift. The
+            # pre-stage check ran against an object in memory; this runs
+            # against what is actually on disk — which is what a restart, a
+            # legacy row, or a hand-edited database presents.
+            refusal = _replay_refusal(row)
+            if refusal:
+                logger.error(
+                    "experience %s is not replayable: %s", row["experience_id"], refusal
+                )
+                progress.incomplete.append(
+                    f"experience_{row['experience_id']} ({refusal})"
+                )
+                return False
             event = Event.create(
                 event_type=SIMULATED_EXPERIENCE,
                 category="internal",

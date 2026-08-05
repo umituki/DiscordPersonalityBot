@@ -34,6 +34,7 @@ from app.genesis.anchors import (
 from app.genesis.critics import CriticBoard, ReviewTarget, check_chronology, check_identity
 from app.genesis.ledger import ContinuityLedger
 from app.genesis.models import (
+    ExperienceActor,
     WORTH_DETAIL,
     AnnualScaffold,
     AnnualSynthesis,
@@ -123,7 +124,9 @@ class Storyteller:
             return MonthNarrative(
                 narrative="本を読んでいた。",
                 importance=self.importance,  # type: ignore[arg-type]
-                participants=(),
+                # The month names ミカ, so the experiences extracted from it
+                # may too — and may not name anybody the month did not.
+                participants=("npc",),
                 interaction_scope="local_to_subject_world",
                 people=("ミカ",),
                 interests=("本",),
@@ -135,7 +138,11 @@ class Storyteller:
                 experiences=tuple(
                     ExperienceCandidate(
                         occurred_at=datetime(2008, 6, 1, tzinfo=timezone.utc),
-                        actors=("ミカ",),
+                        # identity v2: the name is free text, the subject is
+                        # what the world validator reads.
+                        actor_refs=(ExperienceActor(name="ミカ", subject="npc"),),
+                        participants=("npc",),
+                        interaction_scope="local_to_subject_world",
                         context="家で",
                         action="本を読んだ",
                         outcome="面白かった",
@@ -645,7 +652,12 @@ async def test_a_month_does_not_become_thirty_events(application, anchors) -> No
 
 def test_a_repeated_routine_is_one_compressed_experience() -> None:
     candidate = ExperienceCandidate(
-        occurred_at=PRESENT, action="毎朝おなじことをした", compressed=True
+        occurred_at=PRESENT,
+        action="毎朝おなじことをした",
+        actor_refs=(),
+        participants=(),
+        interaction_scope="local_to_subject_world",
+        compressed=True,
     )
 
     assert candidate.compressed
@@ -1248,7 +1260,11 @@ async def test_replayed_experiences_must_have_real_events(
             year_number=1,
             sequence=sequence,
             candidate=ExperienceCandidate(
-                occurred_at=datetime(2008, 6, 1, tzinfo=timezone.utc), action="でっちあげ"
+                occurred_at=datetime(2008, 6, 1, tzinfo=timezone.utc),
+                action="でっちあげ",
+                actor_refs=(),
+                participants=(),
+                interaction_scope="local_to_subject_world",
             ),
         )
         application.genesis_experiences.mark_replayed(
@@ -1292,7 +1308,11 @@ async def test_personality_growth_fails_when_replay_produced_nothing(
         year_number=1,
         sequence=0,
         candidate=ExperienceCandidate(
-            occurred_at=datetime(2008, 6, 1, tzinfo=timezone.utc), action="でっちあげ"
+            occurred_at=datetime(2008, 6, 1, tzinfo=timezone.utc),
+            action="でっちあげ",
+            actor_refs=(),
+            participants=(),
+            interaction_scope="local_to_subject_world",
         ),
     )
     application.genesis_experiences.mark_replayed(

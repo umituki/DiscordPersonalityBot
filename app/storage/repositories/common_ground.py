@@ -6,6 +6,10 @@ import json
 import sqlite3
 from datetime import datetime
 
+from app.world.scope import (
+    CURRENT_WORLD_MODEL_VERSION,
+    UNVERIFIED_WORLD_MODEL_VERSION,
+)
 from app.clock import from_iso, to_iso
 from app.conversation.common_ground import CommonGroundClaim, LIVE_STATUSES
 from app.ids import new_id
@@ -43,8 +47,8 @@ class CommonGroundRepository:
             "INSERT INTO common_ground_claims ("
             "claim_id, conversation_id, event_id, kind, statement, status, source, "
             "confidence, evidence_json, semantic_json, subject, modality, "
-            "asserted_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "world_model_version, asserted_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 claim_id,
                 conversation_id,
@@ -66,6 +70,15 @@ class CommonGroundRepository:
                 ),
                 subject,
                 modality,
+                # World-model provenance, stamped at write time. A row is
+                # "verified under the current rules" because the code that
+                # wrote it ran them — never because a migration gave it the
+                # columns a verified row happens to have.
+                (
+                    CURRENT_WORLD_MODEL_VERSION
+                    if semantic
+                    else UNVERIFIED_WORLD_MODEL_VERSION
+                ),
                 to_iso(now),
                 to_iso(now),
             ),
@@ -138,7 +151,16 @@ def _to_claim(row: sqlite3.Row) -> CommonGroundClaim:
         semantic_json=_column(row, "semantic_json"),
         subject=_column(row, "subject"),
         modality=_column(row, "modality"),
+        world_model_version=_int_column(row, "world_model_version"),
     )
+
+
+def _int_column(row: sqlite3.Row, name: str) -> int:
+    """A provenance column older rows do not have. Absent means unverified."""
+    try:
+        return int(row[name] or 0)
+    except (IndexError, KeyError, TypeError, ValueError):
+        return UNVERIFIED_WORLD_MODEL_VERSION
 
 
 def _column(row: sqlite3.Row, name: str) -> str:

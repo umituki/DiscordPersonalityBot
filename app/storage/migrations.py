@@ -2225,6 +2225,43 @@ _0036_GENESIS_WORLD_METADATA = Migration(
 )
 
 
+_0037_WORLD_MODEL_PROVENANCE = Migration(
+    version=37,
+    name="world_model_provenance",
+    statements=(
+        # A schema version says which columns exist. It says nothing about
+        # which rules a row was judged under, and migration 36 made that gap
+        # visible: it gave every pre-existing month `participants=[]` and
+        # `interaction_scope=local`, which is exactly what a month the current
+        # validator passed looks like. A month generated under the old
+        # substring critic — one a paraphrase walked past — became
+        # indistinguishable from a verified one by being migrated.
+        #
+        # So provenance is stored. Rows written by code that ran the current
+        # world validation carry CURRENT_WORLD_MODEL_VERSION; everything that
+        # predates this migration keeps 0, meaning "nothing ever checked this
+        # under the current rules".
+        #
+        # Nothing is backfilled. Reading old prose to guess who was in it is
+        # the structure the world model replaced, and a migration that guesses
+        # meaning is worse than one that admits it does not know. The way out
+        # is an explicit rebuild-reset, not a silent reinterpretation.
+        "ALTER TABLE rebuild_epochs ADD COLUMN world_model_version INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE common_ground_claims ADD COLUMN world_model_version INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE life_months ADD COLUMN world_model_version INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE genesis_experiences ADD COLUMN world_model_version INTEGER NOT NULL DEFAULT 0",
+        # An experience is a derivative of a validated month, and until now it
+        # carried none of the month's world metadata — so a second model call
+        # could introduce a person the month never had. These are the fields
+        # the validator reads, persisted so a restart re-checks the same thing
+        # rather than trusting that it was checked once.
+        "ALTER TABLE genesis_experiences ADD COLUMN participants_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE genesis_experiences ADD COLUMN interaction_scope TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE genesis_experiences ADD COLUMN actor_subjects_json TEXT NOT NULL DEFAULT '[]'",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -2262,6 +2299,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0034_SEMANTIC_MEMORY_SUBJECT,
     _0035_SEMANTIC_MEMORY_IDENTITY,
     _0036_GENESIS_WORLD_METADATA,
+    _0037_WORLD_MODEL_PROVENANCE,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

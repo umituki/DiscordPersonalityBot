@@ -151,15 +151,83 @@ def test_without_evidence_the_claim_is_retracted(tracker, conversation) -> None:
     assert "取り消して" in outcome.render()
 
 
-def test_with_evidence_the_claim_stands_but_is_contested(tracker, conversation) -> None:
-    """Backing down is not the same as having no spine. A claim the record
-    supports is not retracted merely because the USER disagrees — it is marked
-    contested, which is the honest state of the conversation."""
+def _reviewed_claim():
+    """A semantic review of `CLAIMED`, as the pre-send reviewer would produce.
+
+    Carrying it is what stamps the row with the current world model version:
+    provenance is recorded by the code that ran the rules, never inferred from
+    the columns a row happens to have.
+    """
+    from app.dialogue.semantic_claims import (
+        EvidenceResolver,
+        SemanticClaimCandidate,
+        SemanticReviewOutcome,
+    )
+
+    candidate = SemanticClaimCandidate(
+        proposition="YUIは今日本を読んだ",
+        trigger=CLAIMED,
+        subject="yui",
+        category="yui_completed_action",
+        modality="assertion",
+        interaction_scope="local_to_subject_world",
+        participants=(),
+        supporting_ids=tuple(
+            item.evidence_id for item in SUPPORTING.completed_activities_today
+        ),
+    )
+    return SemanticReviewOutcome(
+        claims=(EvidenceResolver().resolve(candidate, SUPPORTING),)
+    )
+
+
+def test_a_claim_from_before_the_world_model_does_not_stand(
+    tracker, conversation
+) -> None:
+    """The audit's reproduction, at the correction boundary.
+
+    A row with no review has no world metadata, and `StoredSemanticClaim` fills
+    the gap with the permissive values — local, nobody involved. That made
+    「USERと同じ部屋で本を読んだ」 re-resolve as an ordinary claim about her own
+    day. Provenance decides instead: nothing judged this under the current
+    rules, so it is not re-admitted.
+    """
     tracker.record_reply(
         CLAIMED,
         conversation_id=conversation.conversation_id,
         event_id="evt_1",
         context=SUPPORTING,
+        now=NOW,
+    )
+
+    outcome = tracker.review_correction(
+        "違うよ",
+        conversation_id=conversation.conversation_id,
+        context=SUPPORTING,
+        now=NOW,
+    )
+
+    assert outcome.retracted, "an unverified legacy claim was defended"
+    assert outcome.claim is not None
+    assert outcome.claim.world_model_version == 0
+
+
+def test_with_evidence_the_claim_stands_but_is_contested(tracker, conversation) -> None:
+    """Backing down is not the same as having no spine. A claim the record
+    supports is not retracted merely because the USER disagrees — it is marked
+    contested, which is the honest state of the conversation.
+
+    Recorded through the reviewed path, because standing up to a challenge is
+    something only a claim verified under the current world model may do. One
+    written without a review has no representation anything checked, and the
+    test below says what happens to those.
+    """
+    tracker.record_reply(
+        CLAIMED,
+        conversation_id=conversation.conversation_id,
+        event_id="evt_1",
+        context=SUPPORTING,
+        reviewed=_reviewed_claim(),
         now=NOW,
     )
 

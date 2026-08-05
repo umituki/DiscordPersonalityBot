@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Iterable
 
 from app import ids
+from app.world.scope import CURRENT_WORLD_MODEL_VERSION
 from app.clock import to_iso
 from app.storage.database import Database
 
@@ -37,8 +38,8 @@ class RebuildEpochRepository:
             INSERT INTO rebuild_epochs
                 (epoch_id, started_at, reason, spec_version, schema_version,
                  backup_path, archived_db_path, previous_epoch_id, genesis_status,
-                 detail_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 detail_json, world_model_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 epoch_id,
@@ -51,6 +52,11 @@ class RebuildEpochRepository:
                 previous_epoch_id,
                 genesis_status,
                 json.dumps(detail or {}, ensure_ascii=False, sort_keys=True),
+                # A rebuild started by this code ran under these world rules.
+                # An epoch migrated in from before them keeps 0, and that is
+                # what makes "a fresh rebuild is required" a fact rather than
+                # an operator's memory.
+                CURRENT_WORLD_MODEL_VERSION,
             ),
         )
         return epoch_id

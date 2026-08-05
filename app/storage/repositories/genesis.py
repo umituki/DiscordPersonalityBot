@@ -10,6 +10,7 @@ from typing import Any, Sequence
 from app import ids
 from app.clock import from_iso, to_iso
 from app.genesis.anchors import LifeAnchors, TemperamentSeed
+from app.world.scope import CURRENT_WORLD_MODEL_VERSION
 from app.storage.database import Database
 
 RUN = "gen"
@@ -276,14 +277,18 @@ class LifeRecordRepository:
                 (month_id, year_id, month_number, month_start, month_end,
                  age_start, age_end, narrative, importance_class, status,
                  prompt_version, model_version, participants_json,
-                 interaction_scope)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'drafted', ?, ?, ?, ?)
+                 interaction_scope, world_model_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'drafted', ?, ?, ?, ?, ?)
             """,
             (
                 month_id, year_id, month_number, to_iso(month_start),
                 to_iso(month_end), age_start, age_end, narrative,
                 importance_class, prompt_version, model_version,
                 json.dumps(list(participants)), interaction_scope,
+                # Written by the code that ran the world validation. Migration
+                # 36 gave old rows the same two metadata columns; only this
+                # says anything ever checked them.
+                CURRENT_WORLD_MODEL_VERSION,
             ),
         )
         return month_id
@@ -478,18 +483,40 @@ class GenesisExperienceRepository:
             INSERT INTO genesis_experiences
                 (experience_id, genesis_run_id, month_id, year_number, sequence,
                  occurred_at, actors, context, action, outcome,
-                 social_significance, importance, compressed, confidence)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 social_significance, importance, compressed, confidence,
+                 participants_json, interaction_scope, actor_subjects_json,
+                 world_model_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 experience_id, genesis_run_id, month_id, year_number, sequence,
-                to_iso(candidate.occurred_at), ",".join(candidate.actors),
+                to_iso(candidate.occurred_at), ",".join(self._actor_names(candidate)),
                 candidate.context, candidate.action, candidate.outcome,
                 candidate.social_significance, candidate.importance,
                 1 if candidate.compressed else 0, candidate.confidence,
+                json.dumps(list(getattr(candidate, "participants", ()))),
+                getattr(candidate, "interaction_scope", ""),
+                json.dumps(
+                    [ref.subject for ref in getattr(candidate, "actor_refs", ())]
+                ),
+                # Stamped by the writer, which is the only thing that knows the
+                # validation ran. A migration cannot add this honestly.
+                CURRENT_WORLD_MODEL_VERSION,
             ),
         )
         return experience_id
+
+    @staticmethod
+    def _actor_names(candidate: Any) -> list[str]:
+        """The display names, for the legacy `actors` column.
+
+        Free text, and never consulted for world safety — `actor_subjects_json`
+        is. Kept so migration-29 readers still see something.
+        """
+        refs = getattr(candidate, "actor_refs", ())
+        if refs:
+            return [ref.name for ref in refs if ref.name]
+        return list(getattr(candidate, "actors", ()))
 
     def mark_replayed(self, experience_id: str, *, event_id: str, now: datetime) -> None:
         self._db.execute(

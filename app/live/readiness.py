@@ -104,6 +104,11 @@ class LiveReadiness:
         backups: Any = None,
         runtime: Any = None,
         ticks: Any = None,
+        #: The rebuild epoch, the life months and the staged experiences —
+        #: read to answer one question: was any of this produced under the
+        #: world model in force now?
+        rebuild: Any = None,
+        world_provenance: Any = None,
         owner_id: str = "",
         channel_id: str = "",
         token: str | None = None,
@@ -119,6 +124,8 @@ class LiveReadiness:
         self._backups = backups
         self._runtime = runtime
         self._ticks = ticks
+        self._rebuild = rebuild
+        self._world_provenance = world_provenance
         self._owner_id = owner_id
         self._channel_id = channel_id
         self._token = token
@@ -152,11 +159,45 @@ class LiveReadiness:
             self._capabilities_verified(),
             self._no_dead_subsystem(),
             self._backup_available(),
+            self._world_model_is_current(),
         ]
         checks.extend(self._shadow_evaluated())
         return LiveReport(checks=tuple(checks))
 
     # --- checks ---------------------------------------------------------------
+    def _world_model_is_current(self) -> Check:
+        """Was this life produced under the world model in force now?
+
+        The migration that added the provenance columns could not answer this,
+        which is the whole reason the columns exist. A month generated under
+        the old substring critic came out of migration 36 with
+        `participants=[]` and `interaction_scope=local` — structurally
+        identical to a month the current validator had actually passed. Only a
+        version stamped by the code that ran the validation tells them apart.
+        
+        A mismatch is not repaired here and never repaired automatically:
+        inferring what an old month meant is the structure the world model
+        replaced. It is reported, and the resolution is an explicit
+        rebuild-reset.
+        """
+        if self._world_provenance is None:
+            return Check("world_model_current", True, "not wired")
+        try:
+            report = self._world_provenance()
+        except Exception as exc:  # noqa: BLE001
+            return Check("world_model_current", False, repr(exc)[:120])
+        if not report.stale:
+            return Check(
+                "world_model_current",
+                True,
+                f"world model v{report.current}",
+            )
+        return Check(
+            "world_model_current",
+            False,
+            "rebuild_required_world_model_version: " + "; ".join(report.stale),
+        )
+
     def _first_boot_complete(self) -> Check:
         """The hard one. Nothing else on this list matters if she does not
         exist yet, and Phase 13 already refuses in that case — this repeats it

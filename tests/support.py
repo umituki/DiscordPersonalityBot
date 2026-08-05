@@ -188,10 +188,22 @@ def mark_born(application) -> str:
     epoch = application.rebuild.current_epoch()
     if epoch is None:
         epoch_id = ids.new_id("epo")
+        # `world_model_version` too: an epoch with none is one nothing checked
+        # under the current world rules, which the readiness gate blocks on.
+        # A test precondition that says "she exists" has to say she exists
+        # *now*, the same way a real rebuild-reset does.
+        from app.world.scope import CURRENT_WORLD_MODEL_VERSION
+
         application.db.execute(
-            "INSERT INTO rebuild_epochs (epoch_id, started_at, reason, genesis_status) "
-            "VALUES (?, ?, ?, 'complete')",
-            (epoch_id, application.clock.now().isoformat(), "test precondition"),
+            "INSERT INTO rebuild_epochs "
+            "(epoch_id, started_at, reason, genesis_status, world_model_version) "
+            "VALUES (?, ?, ?, 'complete', ?)",
+            (
+                epoch_id,
+                application.clock.now().isoformat(),
+                "test precondition",
+                CURRENT_WORLD_MODEL_VERSION,
+            ),
         )
     else:
         epoch_id = epoch["epoch_id"]
