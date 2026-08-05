@@ -103,6 +103,13 @@ OWNERSHIP: dict[ClaimKind, OwnershipRule] = {
         subjects=frozenset({"yui"}),
         relations={"yui": ACTOR_OR_TOPIC},
     ),
+    # Who she is. `topic` because a birthday is not something she did — it is
+    # something true of her, recorded once and derived from thereafter.
+    "yui_identity_fact": OwnershipRule(
+        claims_about="yui",
+        subjects=frozenset({"yui"}),
+        relations={"yui": ACTOR_OR_TOPIC},
+    ),
     # Facts about how the Memory subsystem behaves. 「わたしにも忘れることは
     # ある」 is a statement about *her*, which is why ``claims_about`` is
     # ``yui`` — but nothing she recalls can settle it, which is why the only

@@ -49,6 +49,7 @@ from app.grounding.ownership import (
     may_support,
     refusal_reason,
 )
+from app.world.scope import InteractionScope, is_reachable
 from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator
 from app.llm.types import LLMMessage
@@ -97,6 +98,7 @@ RuntimeClaimKind = Literal[
     "yui_perception",
     "yui_specific_memory_recall",
     "yui_general_memory_capability",
+    "yui_identity_fact",
     "user_past_fact",
     "npc_fact",
     "tool_use",
@@ -178,6 +180,26 @@ TemporalScope = Literal[
 ]
 
 
+#: What kind of contact the proposition describes.
+#:
+#: YUI lives in her own world and the USER lives in theirs. She reads, sleeps
+#: and talks to the people around her like anyone else — that is not the
+#: constraint. The constraint is that nothing physical crosses between the two
+#: lives: they cannot be in the same room, and neither can hand the other
+#: anything.
+#:
+#: Classified rather than pattern-matched, because 「本を読んだ」 and
+#: 「USERの肩に触れた」 are both physical and only one is impossible. The old
+#: guard sorted by physicality and therefore caught the wrong sentences in both
+#: directions: it blocked her from having eaten lunch and had nothing to say
+#: about her sitting next to the USER.
+InteractionScopeLiteral = Literal[
+    "local_to_subject_world",
+    "shared_communication",
+    "cross_world_physical",
+]
+
+
 class SemanticClaimCandidate(BaseModel):
     """One proposition the reviewer found, as the reviewer understood it.
 
@@ -198,6 +220,9 @@ class SemanticClaimCandidate(BaseModel):
     #: downstream as "the reviewer is unavailable" — the fail-closed direction.
     category: RuntimeClaimKind = "yui_completed_action"
     modality: Modality = "assertion"
+    #: Where the described contact takes place. Defaults to the ordinary case:
+    #: something happening inside the subject's own life.
+    interaction_scope: InteractionScopeLiteral = "local_to_subject_world"
     temporal_scope: TemporalScope = "timeless"
     #: Evidence the reviewer believes supports this. Identifiers only.
     supporting_ids: tuple[str, ...] = ()
@@ -410,6 +435,23 @@ class EvidenceResolver:
             return ResolvedClaim(
                 candidate=candidate,
                 refusals=(f"legacy_category:{candidate.category}",),
+            )
+
+        # No evidence can establish a meeting between two people who are not in
+        # the same world. This is not "there is no record of it" — it is that
+        # there is no arrangement of records under which it could be true, so
+        # the check runs before the citations are looked at, the same way a
+        # self-contradictory category does.
+        #
+        # Only for claims that commit to something. She may still wish they
+        # could meet, or wonder what it would be like; a hypothetical is not an
+        # assertion that it happened.
+        if candidate.modality in COMMITTING_MODALITIES and not is_reachable(
+            candidate.interaction_scope
+        ):
+            return ResolvedClaim(
+                candidate=candidate,
+                refusals=(f"cross_world_physical:{candidate.category}",),
             )
 
         # A claim that commits to something being true has to say whose life it
@@ -644,6 +686,7 @@ def render_evidence(context: GroundingContext | None, limit: int = 40) -> str:
 __all__ = [
     "ClaimSubject",
     "EvidenceResolver",
+    "InteractionScopeLiteral",
     "Modality",
     "Admission",
     "PROMPT_ID",

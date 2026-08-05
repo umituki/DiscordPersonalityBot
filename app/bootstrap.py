@@ -1313,6 +1313,11 @@ class Application:
                     beliefs=belief_repo,
                     goals=goal_repo,
                     tools=tool_manager,
+                    # identity v2. Her name and, once the anchors are settled,
+                    # her age today — derived on every turn from one birth date
+                    # rather than stored anywhere that could drift.
+                    identity=identity,
+                    anchors=genesis_run_repo,
                     npcs=npc_repo,
                     npc_interactions=npc_interaction_repo,
                     state=state_repo,

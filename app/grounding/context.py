@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from typing import Any, Sequence
 
 from app.clock import Clock, SystemClock
+from app.grounding.identity_facts import identity_evidence
 from app.grounding.models import Evidence, GroundingContext
 from app.grounding.memory_semantics import AUTHORITATIVE_MEMORY_FACTS
 
@@ -56,6 +57,11 @@ class GroundingContextBuilder:
         beliefs: Any | None = None,
         goals: Any | None = None,
         tools: Any | None = None,
+        #: Static identity, for her name.
+        identity: Any | None = None,
+        #: The life anchors repository. Her birthday lives there and nowhere
+        #: else, and her age is derived from it rather than stored.
+        anchors: Any | None = None,
         npcs: Any | None = None,
         #: Audit finding 6 (round 2). The interactions, which are the evidence.
         #: Separate from `npcs`, which only supplies names — conflating the two
@@ -70,6 +76,8 @@ class GroundingContextBuilder:
         self._beliefs = beliefs
         self._goals = goals
         self._tools = tools
+        self._identity = identity
+        self._anchors = anchors
         self._npcs = npcs
         self._npc_interactions_repo = npc_interactions
         self._state = state
@@ -101,6 +109,9 @@ class GroundingContextBuilder:
             return evidence
 
         context = GroundingContext(
+            identity_facts=section(
+                "identity_facts", lambda: self._identity_facts(moment)
+            ),
             current_world=section("current_world", self._world_state),
             current_activity=section("current_activity", self._current_activity),
             completed_activities_today=section(
@@ -142,6 +153,22 @@ class GroundingContextBuilder:
         return dataclasses.replace(context, availability=availability)
 
     # --- sections -----------------------------------------------------------
+    def _identity_facts(self, now: datetime) -> tuple[Evidence, ...]:
+        """Her name and, when the anchors are settled, her age today.
+
+        Empty before FIRST BOOT rather than guessed. A life whose beginning has
+        not been decided has no age, and inventing one here would be the exact
+        shape of fabrication this module exists to prevent.
+        """
+        return identity_evidence(
+            identity=self._identity, anchors=self._life_anchors(), now=now
+        )
+
+    def _life_anchors(self):
+        if self._anchors is None:
+            return None
+        return _safe(self._anchors.current)
+
     def _world_state(self) -> tuple[Evidence, ...]:
         if self._state is None:
             return ()

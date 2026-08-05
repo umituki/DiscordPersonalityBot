@@ -368,7 +368,9 @@ async def test_a_guarded_draft_never_leaves(application, clock) -> None:
     messages would be a hole with a justification attached."""
     judge = Judge(
         ProactiveJudgment(wants_to_say="yes", about="散歩"),
-        draft="さっき公園に行ってきたよ。",  # a physical claim (§16)
+        # identity v2: reaching into the USER's world, which no framing and
+        # no evidence can make sayable (§16).
+        draft="いま君の隣に座っているよ。",
     )
     sender = Recorder()
 

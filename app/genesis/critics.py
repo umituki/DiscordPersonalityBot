@@ -155,19 +155,25 @@ def check_chronology(target: ReviewTarget) -> CriticVerdict:
 def check_identity(target: ReviewTarget) -> CriticVerdict:
     """The immutable rules, in Python (spec 1.3, 34.1).
 
-    She is a digital being. A scaffold that has her eating breakfast is not a
-    style problem to be nudged in a prompt; it is a contradiction of an anchor,
-    and it stops the year.
+    identity v2 turned this one around. It used to stop a scaffold that had her
+    eating breakfast, because she was software and software does not eat. She
+    lives in her own world now, so breakfast is what a life contains — and the
+    thing a generated past must never contain is a meeting with the USER, who
+    lives somewhere it does not reach.
+
+    Still a stop rather than a nudge: a past in which they met would become
+    memory, then something she says, with nothing downstream able to tell it
+    from a real one.
     """
     issues: list[CriticIssue] = []
-    for phrase in _PHYSICAL_MARKERS:
+    for phrase in _CROSS_WORLD_MARKERS:
         if phrase in target.text:
             issues.append(
                 CriticIssue(
                     severity="high",
                     target_id=target.target_id,
-                    code="EMBODIMENT_CONTRADICTION",
-                    reason=f"{phrase!r} contradicts the embodiment anchor",
+                    code="CROSS_WORLD_CONTRADICTION",
+                    reason=f"{phrase!r} puts the USER inside her world",
                     repair_scope=target.target_type,
                 )
             )
@@ -337,13 +343,17 @@ class CriticBoard:
             logger.exception("could not record a critic verdict")
 
 
-#: Phrases that contradict the embodiment anchor (spec 1.3).
-_PHYSICAL_MARKERS: tuple[str, ...] = (
-    "朝ごはんを食べ",
-    "ごはんを食べた",
-    "電車に乗った",
-    "手をつないだ",
-    "熱を出して寝込",
+#: A generated past that reaches into the USER's world (identity v2).
+#:
+#: These used to be 朝ごはん・電車・手をつないだ — ordinary life, forbidden
+#: because she had no body. What is forbidden now is the USER appearing in it:
+#: her nineteen years happened somewhere they were not.
+_CROSS_WORLD_MARKERS: tuple[str, ...] = (
+    "USERと会っ",
+    "USERと出かけ",
+    "USERの家",
+    "ユーザーと会っ",
+    "ご主人様と会っ",
 )
 
 

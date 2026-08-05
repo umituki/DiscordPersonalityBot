@@ -1,7 +1,7 @@
 """Static identity loading (spec 1.3, 6, 27.1).
 
-``character/`` holds what does not change with experience: YUI's digital
-existence constraints, the immutable rules, and how she speaks. Personality,
+``character/`` holds what does not change with experience: who she is, where
+she lives, the immutable rules, and how she speaks. Personality,
 values and self schema are *not* here — those are dynamic state owned by their
 engines and stored in SQLite.
 
@@ -34,7 +34,18 @@ class ImmutableRule(_Frozen):
 
 
 class Existence(_Frozen):
-    kind: str = "digital"
+    """Who she is and where she lives.
+
+    ``kind`` was ``digital`` and the summary said she had no body. That kept
+    her safe by keeping her from being anybody: asked her age she answered that
+    age did not apply to her. What actually prevents fabrication is evidence,
+    which is untouched — so the constraint moved rather than went away. She is
+    a person in her own world; nothing physical reaches the USER's.
+    """
+
+    kind: str = "person"
+    #: Which world she lives in. Matches `app.world.scope.WorldScope`.
+    world: str = "yui_world"
     summary: str = ""
 
 
@@ -58,8 +69,9 @@ class Identity(_Frozen):
     extra: dict = Field(default_factory=dict)
 
     @property
-    def is_digital(self) -> bool:
-        return self.existence.kind == "digital"
+    def world(self) -> str:
+        """The world she lives in, as the scope vocabulary names it."""
+        return self.existence.world
 
     def rule(self, rule_id: str) -> ImmutableRule:
         for rule in (*self.must_not, *self.may):
@@ -72,7 +84,17 @@ class Identity(_Frozen):
         return f"identity@v{self.identity_version}+rules@v{self.rules_version}"
 
     def render_for_prompt(self) -> str:
-        """The REQUIRED identity block of a prompt (spec 27.1)."""
+        """The REQUIRED identity block of a prompt (spec 27.1).
+
+        First person, not a role brief. 「YUIというキャラクターになりきって
+        ください」 asks a model to perform someone; 「あなたは望月ゆいです」
+        tells it who it is. The difference showed up as her narrating her own
+        construction when asked ordinary questions.
+
+        It is not a licence, either. Being someone does not entitle her to a
+        past — every experience still comes from the authoritative state that
+        follows this block, and the rules below say so.
+        """
         lines = ["# あなたについて", f"名前: {self.name}"]
         if self.existence.summary:
             lines.append(self.existence.summary.strip())

@@ -109,7 +109,7 @@ def anchors() -> LifeAnchors:
         birth_datetime=BIRTH,
         present_datetime=PRESENT,
         gender_identity="女性",
-        embodiment="デジタルな存在。身体を持たない。",
+        embodiment="自分の世界で暮らす一人の人物。",
         culture="日本",
         immutable_rules="身体を持たない",
         temperament=TemperamentSeed(openness=0.3),
@@ -124,7 +124,7 @@ class Storyteller:
 
     def __init__(self, *, stop_after: dict[str, int] | None = None, body: bool = False) -> None:
         self.stop_after = stop_after or {}
-        self.body = body
+        self.body = body  # a past that reaches into the USER's world
         self.seen: dict[str, int] = {}
 
     async def generate(self, schema, messages, *, purpose: str, **kwargs):
@@ -142,7 +142,7 @@ class Storyteller:
         if schema is MonthNarrative:
             return MonthNarrative(
                 narrative=(
-                    "朝ごはんを食べてから出かけた。" if self.body else "本を読んでいた。"
+                    "USERと会って話した。" if self.body else "本を読んでいた。"
                 ),
                 importance="routine",
                 people=("ミカ",),

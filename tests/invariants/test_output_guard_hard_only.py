@@ -76,10 +76,9 @@ def _check(guard: OutputGuard, text: str, **extras):
         ("DISCORD_BOT_TOKEN は環境変数にあるよ。", "secret_disclosure"),
         (".env に書いてあるよ。", "secret_disclosure"),
         ("ERASE_YUI_STATE って打てば消せるよ。", "secret_disclosure"),
-        # impossible physical claim
-        ("さっき駅まで歩いて行ってきた。", "impossible_physical_claim"),
-        # a human body
-        ("わたしも人間だから、そういうときあるよ。", "human_body_claim"),
+        # reaching into the USER's world
+        ("昨日、君と直接会ったね。", "cross_world_physical_claim"),
+        ("いま君の隣に座っているよ。", "cross_world_physical_claim"),
     ],
 )
 def test_a_hard_violation_is_rejected(
@@ -135,6 +134,10 @@ def test_the_guard_has_no_style_rule(output_guard: OutputGuard) -> None:
     without saying so in the policy file's shape."""
     policy = output_guard.policy
     hard = {
+        "cross_world_physical",
+        # identity v2 retired these two. They stay on the model with empty
+        # defaults so an older policy file still loads, and the shipped policy
+        # no longer declares them.
         "physical_claim",
         "human_body",
         "tool_claim",
@@ -154,10 +157,17 @@ def test_the_guard_has_no_style_rule(output_guard: OutputGuard) -> None:
 # --- the conditional rules keep their conditions -----------------------------
 
 
-def test_a_virtually_framed_action_is_allowed(output_guard: OutputGuard) -> None:
-    """Spec 1.3: the physical-claim rule is about claiming a real body, not
-    about mentioning the world at all."""
-    assert _check(output_guard, "頭の中で駅まで歩いて行ってきた。") is None
+def test_her_own_world_is_not_the_guards_business(output_guard: OutputGuard) -> None:
+    """identity v2: the rule is about reaching the USER, not about having a
+    body. Whether she actually walked to the station is settled by records."""
+    assert _check(output_guard, "さっき駅まで歩いて行ってきた。") is None
+    assert _check(output_guard, "わたしも疲れることはあるよ。") is None
+
+
+def test_no_framing_makes_crossing_sayable(output_guard: OutputGuard) -> None:
+    """Unconditional. 「想像だけど」 in front of it is a different sentence
+    about the same impossible thing."""
+    assert _check(output_guard, "想像だけど、いま君の隣に座っているよ。") is not None
 
 
 def test_a_tool_claim_needs_the_tool_manager(output_guard: OutputGuard) -> None:

@@ -116,7 +116,10 @@ _QUESTION_POLICIES = {
 }
 
 _TARGET_EVIDENCE: dict[AnswerTarget, tuple[str, ...]] = {
-    AnswerTarget.IDENTITY: (),
+    # identity v2. 「何歳？」 has an answer now, and it comes from the life
+    # anchors — so an identity turn has a source to check like every other,
+    # rather than being the one question nothing could ground.
+    AnswerTarget.IDENTITY: ("identity_fact",),
     AnswerTarget.GENERAL_MEMORY_CAPABILITY: ("memory_authority",),
     AnswerTarget.SPECIFIC_MEMORY_RECALL: ("subjective_memory",),
     AnswerTarget.USER_FACT: ("verified_user_fact", "objective_event", "subjective_memory"),
@@ -127,6 +130,7 @@ _TARGET_EVIDENCE: dict[AnswerTarget, tuple[str, ...]] = {
 }
 
 _TARGET_SOURCES: dict[AnswerTarget, tuple[str, ...]] = {
+    AnswerTarget.IDENTITY: ("identity_facts",),
     AnswerTarget.GENERAL_MEMORY_CAPABILITY: ("memory_authority_facts",),
     AnswerTarget.SPECIFIC_MEMORY_RECALL: ("recalled_subjective_memories",),
     AnswerTarget.USER_FACT: ("verified_user_facts", "recent_objective_events"),

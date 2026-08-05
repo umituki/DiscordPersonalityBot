@@ -69,8 +69,14 @@ class OutputGuardPolicy(BaseModel):
 
     policy_version: int = 1
     limits: GuardLimits = GuardLimits()
-    physical_claim: RuleSet
-    human_body: RuleSet
+    #: identity v2. The boundary is the USER's world, not the existence of a
+    #: body: nothing YUI does reaches them, and everything she does in her own
+    #: life is settled by evidence rather than by pattern. `physical_claim` and
+    #: `human_body` were the previous spelling and are gone from the shipped
+    #: policy; they default to empty so an older policy file still loads.
+    cross_world_physical: RuleSet = RuleSet(reason_code="cross_world_physical_claim")
+    physical_claim: RuleSet = RuleSet(reason_code="impossible_physical_claim")
+    human_body: RuleSet = RuleSet(reason_code="human_body_claim")
     tool_claim: RuleSet
     system_leak: RuleSet
     #: Rebuild spec 16. Defaults so an older policy file still loads; the
@@ -83,6 +89,10 @@ class OutputGuardPolicy(BaseModel):
     def unconditional_rules(self) -> tuple[RuleSet, ...]:
         """Rules with no escape hatch: no framing makes these sayable."""
         return (
+            # No framing makes crossing sayable. 「仮想の」 in front of
+            # 「君の家に行った」 does not make it a different claim, which is
+            # why this is here rather than under the framed rules.
+            self.cross_world_physical,
             self.human_body,
             self.system_leak,
             self.reasoning_leak,

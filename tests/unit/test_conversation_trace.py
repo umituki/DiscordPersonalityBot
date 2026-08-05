@@ -301,7 +301,7 @@ async def test_an_ignored_message_is_traced_as_ignored(traced_service, traces, c
 async def test_a_suppressed_reply_is_traced_as_suppressed(
     traced_service, traces, clock
 ) -> None:
-    service = traced_service(['{"text": "コンビニに買い物に行ってきた。"}'] * 2)
+    service = traced_service(['{"text": "いま君の隣に座っているよ。"}'] * 2)
 
     result = await service.handle_inbound(inbound(clock, text="なにしてた?"))
 

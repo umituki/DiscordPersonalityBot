@@ -131,7 +131,7 @@ async def test_failed_send_is_recorded_and_not_treated_as_said(
 
 
 async def test_suppressed_reply_sends_nothing(service_factory, clock) -> None:
-    service = service_factory(['{"text": "さっき散歩に行ってきた。"}'] * 2)
+    service = service_factory(['{"text": "いま君の隣に座っているよ。"}'] * 2)
     gateway = DiscordGateway(service, token="fake-token", clock=clock)
     channel = FakeChannel()
     message = FakeMessage(
@@ -210,7 +210,7 @@ async def test_typing_stops_when_the_send_fails(service_factory, clock) -> None:
 
 
 async def test_typing_stops_when_the_reply_is_suppressed(service_factory, clock) -> None:
-    service = service_factory(['{"text": "さっき散歩に行ってきた。"}'] * 2)
+    service = service_factory(['{"text": "いま君の隣に座っているよ。"}'] * 2)
     gateway = DiscordGateway(service, token="fake-token", clock=clock)
     channel = TypingChannel()
     message = FakeMessage(

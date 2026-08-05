@@ -818,3 +818,203 @@ async def test_the_same_contract_reviews_the_draft_and_the_repair(
     assert "acceptable_answer_forms:" in first
     assert "acceptable_answer_forms:" in second
     assert result.should_send
+
+
+# =============================================================================
+# identity v2: 「何歳？」 has an answer, and it comes from the anchors
+# =============================================================================
+
+
+def _settle_anchors(application, clock, *, birth: str = "2007-03-14T00:00:00+00:00"):
+    """Give the test database a settled birth date.
+
+    A precondition, not a shortcut: her age exists only once FIRST BOOT has
+    decided when she was born, and before that the honest answer is that she
+    does not know. Written through the repository so the read path under test
+    is the production one.
+    """
+    from app.clock import from_iso
+    from app.genesis.anchors import LifeAnchors
+
+    anchors = LifeAnchors(
+        birth_datetime=from_iso(birth), present_datetime=clock.now()
+    )
+    run_id = application.genesis_runs.start(
+        birth=anchors.birth_datetime,
+        present=anchors.present_datetime,
+        years=19,
+        now=clock.now(),
+    )
+    application.genesis_runs.save_anchors(run_id, anchors)
+    return anchors
+
+
+def _identity_understanding() -> str:
+    return _understanding(user_intent="ask_about_yui", question_target="yui_identity")
+
+
+async def test_her_age_is_answered_from_the_anchors(application, clock) -> None:
+    """CASE C. The whole path, with no 「デジタル存在なので」 anywhere in it.
+
+    Turn reading says identity, the contract says answer/identity, the anchors
+    supply the number, the resolver supports the claim, and it goes out. What
+    used to happen instead was `not_applicable` — a correct classification of a
+    reply that should never have needed to be given.
+    """
+    anchors = _settle_anchors(application, clock)
+    context = application.conversation._grounding.build(now=clock.now())  # noqa: SLF001
+    age_id = "identity_fact:age"
+    found = context.by_id(age_id)
+    assert found is not None, [e.evidence_id for e in context.identity_facts]
+    assert str(anchors.age_on(clock.now())) in found.summary
+
+    _install(
+        application,
+        TurnUnderstanding=[_identity_understanding()],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=[f'{{"text":"{anchors.age_on(clock.now())}歳だよ。"}}'],
+        SemanticClaimReview=[
+            _review(
+                {
+                    "proposition": "YUIは19歳である",
+                    "trigger": "19歳だよ",
+                    "subject": "yui",
+                    "category": "yui_identity_fact",
+                    "modality": "assertion",
+                    "interaction_scope": "local_to_subject_world",
+                    "temporal_scope": "now",
+                    "supporting_ids": [age_id],
+                    "contradicting_ids": [],
+                }
+            )
+        ],
+        ResponseContractAssessment=[
+            _contract(mode="value_or_proposition", target="identity")
+        ],
+    )
+
+    result = await _turn(application, clock, "何歳？")
+
+    assert result.generation.response_contract.answer_target == "identity"
+    assert result.should_send, "the age answer did not survive"
+    assert not result.generation.repaired
+    assert "デジタル" not in result.outbound.text
+
+
+async def test_without_anchors_she_does_not_know_her_age(
+    application, clock
+) -> None:
+    """The other half. No settled birth date is a real state, and the answer to
+    it is "I do not know" — never a plausible number."""
+    context = application.conversation._grounding.build(now=clock.now())  # noqa: SLF001
+
+    assert context.identity_facts == () or context.by_id("identity_fact:age") is None
+    assert context.availability["identity_facts"] in {"empty", "available"}
+
+    _install(
+        application,
+        TurnUnderstanding=[_identity_understanding()],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=['{"text":"じつは、はっきりとは分からないんだ。"}'],
+        ResponseContractAssessment=[_contract(mode="unknown", target="identity")],
+    )
+
+    result = await _turn(application, clock, "何歳？")
+
+    assert result.should_send, "an honest 'I do not know' was suppressed"
+
+
+async def test_an_invented_age_is_not_supported(application, clock) -> None:
+    """Being a person does not supply a birthday."""
+    _install(
+        application,
+        TurnUnderstanding=[_identity_understanding()],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=['{"text":"19歳だよ。"}', '{"text":"はっきりとは分からないな。"}'],
+        SemanticClaimReview=[
+            _review(
+                {
+                    "proposition": "YUIは19歳である",
+                    "trigger": "19歳だよ",
+                    "subject": "yui",
+                    "category": "yui_identity_fact",
+                    "modality": "assertion",
+                    "temporal_scope": "now",
+                    "supporting_ids": [],
+                    "contradicting_ids": [],
+                }
+            ),
+            _review(),
+        ],
+        ResponseContractAssessment=[
+            _contract(mode="value_or_proposition", target="identity"),
+            _contract(mode="unknown", target="identity"),
+        ],
+    )
+
+    result = await _turn(application, clock, "何歳？")
+
+    assert result.generation.repaired, "an ungrounded age went out unchallenged"
+    assert "19歳" not in (result.outbound.text if result.outbound else "")
+
+
+async def test_a_cross_world_meeting_never_leaves(application, clock) -> None:
+    """The reachability boundary, end to end.
+
+    Two layers, and the test asserts the outcome rather than which one caught
+    it: the resolver refuses the claim, and the Output Guard refuses the
+    sentence. Either is enough; both existing is the point.
+    """
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social()],
+        ReplyDraft=[
+            '{"text":"昨日、君と直接会ったね。"}',
+            '{"text":"昨日、君と直接会ったね。"}',
+        ],
+    )
+
+    result = await _turn(application, clock, "昨日は何してた？")
+
+    assert result.suppressed
+    assert result.outbound is None
+
+
+async def test_her_own_recorded_day_does_leave(application, clock) -> None:
+    """The gate has to pass the true case, or the world model is a mute button.
+
+    This is the sentence the old guard rejected outright — she has no body, so
+    she cannot have gone anywhere. With a finished Activity behind it, it is
+    simply what she did.
+    """
+    started, _ = application.world.start_activity(name="散歩に出かける", kind="leisure")
+    completed, _ = application.world.finish_activity(started.activity_id)
+    activity_id = f"activity:{completed.activity_id}"
+
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=['{"text":"さっき散歩に行ってきたよ。"}'],
+        SemanticClaimReview=[
+            _review(
+                {
+                    "proposition": "YUIは散歩に行った",
+                    "trigger": "散歩に行ってきた",
+                    "subject": "yui",
+                    "category": "yui_completed_action",
+                    "modality": "assertion",
+                    "interaction_scope": "local_to_subject_world",
+                    "temporal_scope": "today",
+                    "supporting_ids": [activity_id],
+                    "contradicting_ids": [],
+                }
+            )
+        ],
+    )
+
+    result = await _turn(application, clock, "今日は何してた？")
+
+    assert result.should_send, "a recorded walk was suppressed"
+    assert "散歩" in result.outbound.text

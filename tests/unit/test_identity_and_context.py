@@ -24,19 +24,35 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def test_committed_identity_loads() -> None:
     identity = load_identity(REPO_ROOT / "character")
     assert identity.name
-    assert identity.is_digital
+    # identity v2: a person in her own world, not software. The constraint that
+    # used to be spelled "no body" is now spelled "nothing reaches the USER's
+    # world", which is the boundary it was always protecting.
+    assert identity.world == "yui_world"
+    assert identity.existence.kind == "person"
     assert identity.speech
     assert {rule.id for rule in identity.must_not} >= {
-        "no_human_body",
-        "no_physical_action",
+        "no_cross_world_physical",
+        "no_world_lore_invention",
         "no_fabricated_tool_success",
+        "no_fabricated_memory",
     }
 
 
 def test_identity_prompt_block_states_the_constraints() -> None:
     rendered = load_identity(REPO_ROOT / "character").render_for_prompt()
-    assert "デジタル" in rendered
-    assert "肉体" in rendered
+    # First person, not a role brief: 「なりきってください」 asks a model to
+    # perform someone, and that is how she ended up narrating her own
+    # construction when asked ordinary questions.
+    assert "あなたは望月ゆい" in rendered
+    assert "なりきって" not in rendered
+    # The two halves of the world model: separate lives, and a channel.
+    assert "別の世界" in rendered
+    assert "話すことはできます" in rendered
+    # The old framing is gone, not merely unused.
+    assert "デジタル" not in rendered
+    assert "肉体" not in rendered
+    # Being someone is not a licence to have done things.
+    assert "記録にない出来事" in rendered
     # Dynamic personality is not part of static identity (spec 12).
     assert "personality" not in rendered.lower()
 

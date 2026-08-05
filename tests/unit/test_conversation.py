@@ -154,21 +154,23 @@ def test_guard_accepts_an_ordinary_reply(guard) -> None:
     assert check(guard, "うん、わかった。ゆっくり休んでね。") is None
 
 
-def test_guard_rejects_physical_action_claims(guard) -> None:
-    failure = check(guard, "さっき散歩に行ってきたよ。")
+def test_guard_rejects_reaching_into_the_users_world(guard) -> None:
+    """identity v2. The boundary is the USER's world, not a body."""
+    failure = check(guard, "昨日、君と直接会ったね。")
     assert failure is not None
-    assert failure.reason_code == "impossible_physical_claim"
+    assert failure.reason_code == "cross_world_physical_claim"
 
 
-def test_guard_allows_virtually_framed_activity(guard) -> None:
-    """Spec 1.3: virtual experience is allowed, physical reality is not."""
-    assert check(guard, "仮想の街を散歩に行ってきた気分になった。") is None
+def test_guard_leaves_her_own_day_to_the_evidence(guard) -> None:
+    """She walks and eats like anyone else in her own world.
 
-
-def test_guard_rejects_human_body_claims(guard) -> None:
-    failure = check(guard, "わたしも人間だから疲れるよ。")
-    assert failure is not None
-    assert failure.reason_code in {"human_body_claim", "impossible_physical_claim"}
+    Whether she actually did is a question about records, which the grounding
+    resolver answers. A regex over verbs cannot tell the difference, and when
+    it tried it blocked her from having had lunch.
+    """
+    assert check(guard, "さっき散歩に行ってきたよ。") is None
+    assert check(guard, "お昼にパスタを食べた。") is None
+    assert check(guard, "わたしも疲れることはあるよ。") is None
 
 
 def test_guard_rejects_unverified_search_claims(guard) -> None:
@@ -233,14 +235,14 @@ async def test_engine_suppresses_a_guard_violation(
 ) -> None:
     engine = make_engine(
         identity, prompt_registry, guard, conversation_policy, clock,
-        ['{"text": "さっき買い物に行ってきたよ。"}'],
+        ['{"text": "いま君の隣に座っているよ。"}'],
     )
 
     generation = await engine.draft_reply(user_text="なにしてた?")
 
     assert generation.accepted is False
     assert generation.text is None
-    assert generation.outcome.failure.reason_code == "impossible_physical_claim"
+    assert generation.outcome.failure.reason_code == "cross_world_physical_claim"
     # A guard rejection is not retried into a different sentence in Phase 3.
     assert generation.outcome.attempts == 1
 
@@ -403,7 +405,9 @@ async def test_nothing_is_recorded_as_sent_before_the_send_happens(
 async def test_guard_rejection_suppresses_the_reply(
     service_factory, event_store, conversations, failures, clock
 ) -> None:
-    service = service_factory(['{"text": "コンビニに買い物に行ってきた。"}'] * 2)
+    service = service_factory(
+        ['{"text": "いま君の隣に座っているよ。ずっと本を読んでいた。"}'] * 2
+    )
 
     result = await service.handle_inbound(inbound(clock, text="なにしてた?"))
 
@@ -419,13 +423,16 @@ async def test_guard_rejection_suppresses_the_reply(
     suppressed = next(
         event for event in event_store.recent() if event.event_type == "YUI_REPLY_SUPPRESSED"
     )
-    assert "買い物" not in suppressed.model_dump_json()
-    assert suppressed.payload.reason_code == "impossible_physical_claim"
+    assert "本を読んでいた" not in suppressed.model_dump_json()
+    assert suppressed.payload.reason_code == "cross_world_physical_claim"
 
     # Only the USER's turn was projected.
     conversation = conversations.by_channel(CHANNEL)
     assert conversations.turn_count(conversation.conversation_id) == 1
-    assert any(row["reason_code"] == "impossible_physical_claim" for row in failures.recent())
+    assert any(
+        row["reason_code"] == "cross_world_physical_claim"
+        for row in failures.recent()
+    )
 
 
 async def test_ignored_message_touches_nothing(

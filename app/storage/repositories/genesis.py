@@ -9,6 +9,7 @@ from typing import Any
 
 from app import ids
 from app.clock import from_iso, to_iso
+from app.genesis.anchors import LifeAnchors, TemperamentSeed
 from app.storage.database import Database
 
 RUN = "gen"
@@ -144,6 +145,43 @@ class GenesisRunRepository:
     def anchors(self, run_id: str) -> sqlite3.Row | None:
         return self._db.query_one(
             "SELECT * FROM life_anchors WHERE genesis_run_id = ?", (run_id,)
+        )
+
+    def current(self) -> LifeAnchors | None:
+        """The anchors of the life she is living now, or ``None``.
+
+        The single read path for "when was she born" outside FIRST BOOT. Her
+        age is derived from this on every turn rather than stored anywhere, so
+        there is one birth date and no copy of it to drift.
+
+        ``None`` before the anchors are settled. That is a real state — a life
+        whose beginning has not been decided — and it grounds nothing.
+        """
+        row = self.latest()
+        if row is None:
+            return None
+        anchors = self.anchors(row["genesis_run_id"])
+        if anchors is None:
+            return None
+        try:
+            temperament = TemperamentSeed(
+                **json.loads(anchors["temperament_json"] or "{}")
+            )
+        except Exception:  # noqa: BLE001 - a malformed blob is simply absent
+            temperament = TemperamentSeed()
+        return LifeAnchors(
+            birth_datetime=from_iso(anchors["birth_datetime"]),
+            present_datetime=from_iso(anchors["present_datetime"]),
+            gender_identity=anchors["gender_identity"],
+            embodiment=anchors["embodiment"],
+            language=anchors["language"],
+            culture=anchors["culture"],
+            home=anchors["home"],
+            family=anchors["family"],
+            social=anchors["social"],
+            education=anchors["education"],
+            immutable_rules=anchors["immutable_rules"],
+            temperament=temperament,
         )
 
 

@@ -851,7 +851,8 @@ def _anchors_from(application: Application, birth: str, present: str):
         birth_datetime=from_iso(birth),
         present_datetime=from_iso(present) if present else application.clock.now(),
         gender_identity=getattr(identity, "gender", "") or "",
-        embodiment=getattr(identity, "embodiment", "") or "デジタルな存在。",
+        embodiment=getattr(identity, "embodiment", "")
+        or "自分の世界で暮らす一人の人物。",
         language="ja",
     )
 

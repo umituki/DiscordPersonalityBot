@@ -87,7 +87,7 @@ def anchors() -> LifeAnchors:
         birth_datetime=BIRTH,
         present_datetime=PRESENT,
         gender_identity="女性",
-        embodiment="デジタルな存在。物理的な身体を持たない。",
+        embodiment="自分の世界で暮らす一人の人物。",
         culture="日本",
         home="自室",
         family="そういうことになっている家族",
@@ -272,15 +272,30 @@ def test_a_correct_age_passes() -> None:
     assert verdict.passed
 
 
-def test_the_identity_critic_catches_a_body() -> None:
-    """She is a digital being. A scaffold with her eating breakfast is not a
-    style problem to nudge in a prompt."""
+def test_the_identity_critic_catches_the_user_in_her_past() -> None:
+    """identity v2. A generated life that includes the USER is not a style
+    problem to nudge in a prompt — it would become memory, then something she
+    says, with nothing downstream able to tell it from a real one."""
     verdict = check_identity(
-        ReviewTarget(target_type="month", target_id="m1", text="朝ごはんを食べてから出かけた。")
+        ReviewTarget(target_type="month", target_id="m1", text="USERと会って話した。")
     )
 
     assert not verdict.passed
-    assert verdict.issues[0].code == "EMBODIMENT_CONTRADICTION"
+    assert verdict.issues[0].code == "CROSS_WORLD_CONTRADICTION"
+
+
+def test_the_identity_critic_leaves_an_ordinary_life_alone() -> None:
+    """Breakfast used to be the canonical violation, because she had no body.
+
+    A life she can actually have lived is the whole point of generating one.
+    """
+    verdict = check_identity(
+        ReviewTarget(
+            target_type="month", target_id="m1", text="朝ごはんを食べてから出かけた。"
+        )
+    )
+
+    assert verdict.passed
 
 
 async def test_a_blocking_issue_stops_the_year(application, anchors) -> None:
@@ -711,7 +726,7 @@ async def test_a_real_user_message_fails_the_audit(
     assert not application.genesis_runs.reached(progress.run_id, "final_audits_done")
 
 
-async def test_a_body_in_the_record_fails_the_identity_audit(
+async def test_the_user_in_the_record_fails_the_identity_audit(
     application, anchors
 ) -> None:
     runner = _runner(application, Storyteller())
@@ -720,7 +735,7 @@ async def test_a_body_in_the_record_fails_the_identity_audit(
     month = application.life_records.months(year["year_id"])[0]
     application.db.execute(
         "UPDATE life_months SET narrative = ? WHERE month_id = ?",
-        ("その日は朝ごはんを食べてから出かけた。", month["month_id"]),
+        ("その日はUSERと会って話した。", month["month_id"]),
     )
 
     results = await runner.first_boot_audits(progress.run_id, anchors)
