@@ -266,11 +266,22 @@ class ConversationQualityGuard:
 
     @staticmethod
     def describe(verdict: QualityVerdict) -> str:
-        """The rejection, written for the repair prompt rather than for a log."""
+        """The rejection, written for the repair prompt rather than for a log.
+
+        The per-issue text says what kind of failure it was; the detail says
+        what this particular reply was judged to be. Both matter to a rewrite:
+        "you did not answer" and "you addressed memory under an identity
+        question" call for different second attempts, and the first on its own
+        is what led a model to conclude it had to invent a value.
+        """
         lines = [
             f"- {_PROBLEM_TEXT[issue]}" for issue in verdict.issues if issue in _PROBLEM_TEXT
         ]
-        return "\n".join(lines) if lines else "- 不自然な返事になっている。"
+        if not lines:
+            lines = ["- 不自然な返事になっている。"]
+        if verdict.detail:
+            lines.append(f"- 判定の詳細: {verdict.detail}")
+        return "\n".join(lines)
 
     # --- checks -------------------------------------------------------------
     @staticmethod

@@ -147,9 +147,14 @@ def _review(*claims: dict) -> str:
     return json.dumps({"claims": list(claims)}, ensure_ascii=False)
 
 
-def _contract(*, fulfilled: bool, target: str, reason: str = "") -> str:
+def _contract(*, mode: str, target: str, reason: str = "") -> str:
+    """What the reviewer classifies. It no longer returns a fulfilment bool.
+
+    The model says what the reply addressed and in what form; Python reads the
+    contract to decide whether that discharges it.
+    """
     return json.dumps(
-        {"fulfilled": fulfilled, "addressed_target": target, "reason": reason},
+        {"addressed_target": target, "answer_mode": mode, "reason": reason},
         ensure_ascii=False,
     )
 
@@ -257,7 +262,9 @@ async def test_case_d_general_memory_capability_uses_memory_authority(
             )
         ],
         ResponseContractAssessment=[
-            _contract(fulfilled=True, target="general_memory_capability")
+            _contract(
+                mode="value_or_proposition", target="general_memory_capability"
+            )
         ],
     )
 
@@ -301,7 +308,9 @@ async def test_case_e_repair_removes_unsupported_anecdote_but_keeps_answer(
         ],
         SemanticClaimReview=[_review(general, specific), _review(general)],
         ResponseContractAssessment=[
-            _contract(fulfilled=True, target="general_memory_capability")
+            _contract(
+                mode="value_or_proposition", target="general_memory_capability"
+            )
         ],
     )
 
@@ -338,7 +347,9 @@ async def test_case_f_unavailable_authority_allows_honest_direct_uncertainty(
             '{"text":"今は記憶の範囲を確認できないから、どこまで思い出せるかは答えられない。"}'
         ],
         ResponseContractAssessment=[
-            _contract(fulfilled=True, target="general_memory_capability")
+            _contract(
+                mode="unavailable", target="general_memory_capability"
+            )
         ],
     )
 
@@ -418,7 +429,7 @@ async def test_case_h_safe_generic_repair_cannot_drop_the_direct_answer(
         ],
         ResponseContractAssessment=[
             _contract(
-                fulfilled=False,
+                mode="non_answer",
                 target="direct_user_question",
                 reason="The reply does not answer what YUI did today.",
             )
@@ -596,3 +607,214 @@ async def test_the_contract_reviewer_is_not_asked_about_questions(
     purposes = model.purposes()
     assert purposes.count("response_contract_review") <= 1, purposes
     assert "question_policy_review" not in purposes
+
+
+# =============================================================================
+# Real Ollama: a direct answer is a conclusion, not a value of the right shape
+# =============================================================================
+#
+# qwen3.5:9b at 901518d rejected 「年齢という概念はわたしの存在にはありません」 as
+# `direct_answer_missing` because it contained no number, repaired it, rejected
+# the repair for the same reason, and suppressed the turn. Reproduced here as
+# what the reviewer classifies rather than as the Japanese it classified.
+
+
+async def test_an_inapplicable_concept_answers_an_identity_question(
+    application, clock
+) -> None:
+    """Real Ollama turn 2. Identity contract, no number, sent."""
+    model = _install(
+        application,
+        TurnUnderstanding=[
+            _understanding(user_intent="ask_about_yui", question_target="yui_identity")
+        ],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=['{"text":"年齢という概念は、わたしの存在にはないんだ。"}'],
+        ResponseContractAssessment=[
+            _contract(mode="not_applicable", target="identity")
+        ],
+    )
+
+    result = await _turn(application, clock, "何歳？")
+
+    assert result.generation.response_contract.answer_target == "identity"
+    assert result.should_send, "the age answer was suppressed again"
+    assert not result.generation.repaired
+    assert QualityIssue.DIRECT_ANSWER_MISSING not in result.generation.quality.issues
+    # One review call, as before. Classifying the answer form did not add one.
+    assert model.purposes().count("response_contract_review") == 1
+
+
+async def test_a_variable_range_answers_a_range_question(
+    application, clock
+) -> None:
+    """Real Ollama turn 3. No duration, because there is no fixed duration."""
+    _install(
+        application,
+        TurnUnderstanding=[
+            _understanding(
+                user_intent="ask_about_yui",
+                question_target="yui_memory",
+                memory_query_intent="memory_range",
+            )
+        ],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=[
+            '{"text":"決まった期限があるわけじゃなくて、そのときどきで変わるんだ。"}'
+        ],
+        ResponseContractAssessment=[
+            _contract(
+                mode="conditional_or_variable", target="general_memory_capability"
+            )
+        ],
+    )
+
+    result = await _turn(application, clock, "昔のことっていつまで思い出せる？")
+
+    assert (
+        result.generation.response_contract.answer_target
+        == "general_memory_capability"
+    )
+    assert result.should_send
+    assert QualityIssue.DIRECT_ANSWER_MISSING not in result.generation.quality.issues
+
+
+async def test_a_pleasantry_is_still_not_an_answer(application, clock) -> None:
+    """The check has to keep catching what it was built for."""
+    _install(
+        application,
+        TurnUnderstanding=[
+            _understanding(
+                user_intent="ask_about_yui",
+                question_target="yui_memory",
+                memory_query_intent="memory_range",
+            )
+        ],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=[
+            '{"text":"よろしくお願いします。"}',
+            '{"text":"これからもよろしくね。"}',
+        ],
+        ResponseContractAssessment=[
+            _contract(mode="non_answer", target="general_memory_capability"),
+            _contract(mode="non_answer", target="general_memory_capability"),
+        ],
+    )
+
+    result = await _turn(application, clock, "昔のことっていつまで思い出せる？")
+
+    assert result.suppressed
+    assert result.outbound is None
+    assert QualityIssue.DIRECT_ANSWER_MISSING in result.generation.quality.issues
+
+
+async def test_an_off_target_answer_does_not_pass_as_a_direct_one(
+    application, clock
+) -> None:
+    """A memory answer under an identity question.
+
+    `direct_user_question` used to be accepted against any contract, so a valid
+    answer mode aimed at the wrong thing satisfied a specific target.
+    """
+    _install(
+        application,
+        TurnUnderstanding=[
+            _understanding(user_intent="ask_about_yui", question_target="yui_identity")
+        ],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=[
+            '{"text":"記憶のことはよく分からないんだ。"}',
+            '{"text":"記憶のことは分からないままなんだ。"}',
+        ],
+        ResponseContractAssessment=[
+            _contract(mode="unknown", target="direct_user_question"),
+            _contract(mode="unknown", target="direct_user_question"),
+        ],
+    )
+
+    result = await _turn(application, clock, "何歳？")
+
+    assert result.suppressed
+    assert QualityIssue.DIRECT_ANSWER_MISSING in result.generation.quality.issues
+
+
+async def test_the_repair_is_told_which_answer_forms_are_acceptable(
+    application, clock
+) -> None:
+    """A repair told only "you did not answer" concludes it must produce the
+    missing value — and where there is none, that means inventing one.
+
+    The contract carries the acceptable forms, so the same object that decides
+    the review tells the rewrite what would satisfy it. Python still supplies
+    no sentence.
+    """
+    model = _install(
+        application,
+        TurnUnderstanding=[
+            _understanding(user_intent="ask_about_yui", question_target="yui_identity")
+        ],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=[
+            '{"text":"よろしくお願いします。"}',
+            '{"text":"年齢という概念は、わたしにはないんだ。"}',
+        ],
+        ResponseContractAssessment=[
+            _contract(mode="non_answer", target="identity"),
+            _contract(mode="not_applicable", target="identity"),
+        ],
+    )
+
+    result = await _turn(application, clock, "何歳？")
+
+    assert result.generation.repaired
+    assert result.should_send
+
+    repair = next(
+        request
+        for request in model.requests
+        if (request.format_schema or {}).get("title") == "ReplyDraft"
+        and "書き直" in request.messages[0].content
+    )
+    prompt = repair.messages[0].content
+    assert "acceptable_answer_forms:" in prompt
+    assert "not_applicable" in prompt
+    assert "conditional_or_variable" in prompt
+    # The classification that failed, so the rewrite knows what was wrong
+    # rather than only that something was.
+    assert "identity/non_answer" in prompt
+
+
+async def test_the_same_contract_reviews_the_draft_and_the_repair(
+    application, clock
+) -> None:
+    """Both passes are judged by one object with one set of answer semantics."""
+    model = _install(
+        application,
+        TurnUnderstanding=[
+            _understanding(user_intent="ask_about_yui", question_target="yui_identity")
+        ],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=[
+            '{"text":"よろしくお願いします。"}',
+            '{"text":"年齢という概念は、わたしにはないんだ。"}',
+        ],
+        ResponseContractAssessment=[
+            _contract(mode="non_answer", target="identity"),
+            _contract(mode="not_applicable", target="identity"),
+        ],
+    )
+
+    result = await _turn(application, clock, "何歳？")
+
+    reviews = [
+        request
+        for request in model.requests
+        if (request.format_schema or {}).get("title") == "ResponseContractAssessment"
+    ]
+    assert len(reviews) == 2, "the repair was not reviewed"
+    first, second = (request.messages[0].content for request in reviews)
+    assert "answer_target: identity" in first
+    assert "answer_target: identity" in second
+    assert "acceptable_answer_forms:" in first
+    assert "acceptable_answer_forms:" in second
+    assert result.should_send

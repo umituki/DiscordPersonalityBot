@@ -786,7 +786,12 @@ class ConversationEngine:
         return self._quality.with_contract_result(
             verdict,
             fulfilled=result.fulfilled,
-            detail=result.detail,
+            # The classification, not just the prose reason: what the reply was
+            # judged to address and in what form is the whole basis of the
+            # verdict, and a trace that omits it cannot say why a reply was
+            # held. It is also what repair needs — "you addressed memory under
+            # an identity question" is actionable, "you did not answer" is not.
+            detail=result.describe(),
         )
 
     async def _check_grounding(

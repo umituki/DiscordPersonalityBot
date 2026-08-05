@@ -42,6 +42,61 @@ class QuestionPolicy(StrEnum):
     REQUIRED = "required"
 
 
+class AnswerMode(StrEnum):
+    """*How* a reply responds to the question, not whether it is true.
+
+    A direct answer is not "returns a value of the expected shape". It is
+    "returns a conclusion about what was asked". On real hardware the reviewer
+    invented the first rule for itself:
+
+        USER: 何歳？
+        YUI:  年齢という概念はわたしの存在にはありません。
+
+    — which addresses the question completely, and was rejected as
+    `direct_answer_missing` because it contained no number. Repaired, rejected
+    again for the same reason, suppressed. The same shape took out
+    「昔のことっていつまで思い出せる？」, where the honest answer is that there
+    is no fixed limit and the reviewer wanted a duration.
+
+    So the model no longer decides fulfilment. It classifies the *form* of the
+    response against this closed set, and Python decides whether that form
+    satisfies the contract.
+    """
+
+    #: A value, a yes/no, a name, a state, an explanation — the asked-for thing.
+    VALUE_OR_PROPOSITION = "value_or_proposition"
+    #: The concept in the question does not apply to its subject, said directly.
+    NOT_APPLICABLE = "not_applicable"
+    #: Directly says she does not know or cannot establish it.
+    UNKNOWN = "unknown"
+    #: Directly says the information needed to answer is not available.
+    UNAVAILABLE = "unavailable"
+    #: Directly says the current records cannot settle it.
+    AUTHORITY_LIMITED = "authority_limited"
+    #: Directly says there is no fixed value — it depends on conditions.
+    CONDITIONAL_OR_VARIABLE = "conditional_or_variable"
+    #: Asks back, changes the subject, greets, restates the question, or talks
+    #: around the topic without reaching a conclusion.
+    NON_ANSWER = "non_answer"
+
+
+#: Forms that reach a conclusion about the question. Everything except the one
+#: that does not, spelled as a set so adding a mode forces the decision.
+ANSWERING_MODES: frozenset[AnswerMode] = frozenset(
+    mode for mode in AnswerMode if mode is not AnswerMode.NON_ANSWER
+)
+
+#: Answering by declining to state the fact. Honest, and still an abstention —
+#: so a contract that forbids abstaining is not satisfied by one.
+#:
+#: `not_applicable` and `conditional_or_variable` are deliberately *not* here.
+#: 「年齢は存在しない」 and 「決まった上限はなく状況による」 are substantive
+#: answers about the subject of the question; nothing is being withheld.
+ABSTAINING_MODES: frozenset[AnswerMode] = frozenset(
+    {AnswerMode.UNKNOWN, AnswerMode.UNAVAILABLE, AnswerMode.AUTHORITY_LIMITED}
+)
+
+
 class AnswerTarget(StrEnum):
     NONE = "none"
     DIRECT_USER_QUESTION = "direct_user_question"
@@ -101,12 +156,30 @@ class ResponseContract:
     def allows_question(self) -> bool:
         return self.question_policy is not QuestionPolicy.FORBIDDEN
 
+    @property
+    def acceptable_answer_modes(self) -> tuple[AnswerMode, ...]:
+        """The response forms that discharge this contract.
+
+        Carried on the contract rather than known only to the reviewer, so the
+        realizer and the repair see the same list the review will apply. The
+        failure this closes is a repair told only "you did not answer",
+        concluding it must invent a value it does not have.
+        """
+        modes = ANSWERING_MODES
+        if not self.may_abstain:
+            modes = modes - ABSTAINING_MODES
+        return tuple(mode for mode in AnswerMode if mode in modes)
+
     def render(self) -> str:
         evidence = ", ".join(self.allowed_evidence_kinds) or "none"
         preserve = "; ".join(self.must_preserve) or "none"
         availability = ", ".join(
             f"{name}={state}" for name, state in self.source_availability
         ) or "unknown"
+        lines = [
+            f"acceptable_answer_forms: "
+            + ", ".join(mode.value for mode in self.acceptable_answer_modes)
+        ] if self.requires_answer else []
         return "\n".join(
             (
                 f"response_obligation: {self.response_obligation.value}",
@@ -118,6 +191,7 @@ class ResponseContract:
                 f"must_preserve: {preserve}",
                 f"may_abstain: {'true' if self.may_abstain else 'false'}",
                 f"source_availability: {availability}",
+                *lines,
             )
         )
 
@@ -243,12 +317,25 @@ def _source_status(grounding: Any, section: str) -> str:
 
 
 class ResponseContractAssessment(BaseModel):
-    """Quality-only review: did the reply do the job the contract requires?"""
+    """What the reply responds to, and in what form. Not whether that suffices.
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    There is deliberately no ``fulfilled`` field. The model used to return one,
+    and it wrote its own answer requirements into it — "no number, so not
+    fulfilled" — which no prompt asked for and nothing could override. What is
+    asked for now is a classification against two closed vocabularies, and
+    Python reads the contract to decide what they add up to.
 
-    fulfilled: bool
+    ``extra="ignore"`` rather than ``forbid`` so a model that still emits
+    ``fulfilled`` is not a schema failure: the key is simply dropped, which is
+    the same thing as having no authority.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    #: What the reply actually addressed.
     addressed_target: AnswerTarget = AnswerTarget.OTHER
+    #: How it responded to it.
+    answer_mode: AnswerMode = AnswerMode.NON_ANSWER
     reason: str = Field(default="", max_length=240)
 
 
@@ -257,6 +344,68 @@ class ContractReviewOutcome:
     fulfilled: bool
     detail: str = ""
     unavailable: bool = False
+    #: The classification behind the verdict, for the trace. Absent when the
+    #: reviewer did not run.
+    addressed_target: AnswerTarget | None = None
+    answer_mode: AnswerMode | None = None
+
+    def describe(self) -> str:
+        if self.addressed_target is None or self.answer_mode is None:
+            return self.detail
+        head = f"{self.addressed_target.value}/{self.answer_mode.value}"
+        return f"{head}: {self.detail}" if self.detail else head
+
+
+#: Targets that name a specific thing the reply has to be about.
+SPECIFIC_ANSWER_TARGETS: frozenset[AnswerTarget] = frozenset(
+    {
+        AnswerTarget.IDENTITY,
+        AnswerTarget.GENERAL_MEMORY_CAPABILITY,
+        AnswerTarget.SPECIFIC_MEMORY_RECALL,
+        AnswerTarget.USER_FACT,
+        AnswerTarget.WORLD_FACT,
+    }
+)
+
+
+def target_matches(contract: ResponseContract, addressed: AnswerTarget) -> bool:
+    """Whether the reply addressed the thing the contract is about.
+
+    ``direct_user_question`` is the fallback for "this answered the USER and
+    does not sort into a narrower category". It used to be accepted against
+    *any* contract, including the specific ones — so a memory answer under an
+    identity contract passed as long as the model called it a direct answer.
+    A contract that names a specific target now requires that target; the
+    fallback only helps where nothing more specific was demanded.
+    """
+    if addressed is contract.answer_target:
+        return True
+    if contract.answer_target in SPECIFIC_ANSWER_TARGETS:
+        return False
+    # A generic contract — direct_user_question, other, none. Anything that
+    # addressed something counts; `none` addressed nothing.
+    return addressed is not AnswerTarget.NONE
+
+
+def fulfils(contract: ResponseContract, assessment: ResponseContractAssessment) -> bool:
+    """Python's decision, from the model's classification and the contract.
+
+    Three questions, in order, and none of them is "did the reply contain a
+    value":
+
+        did it reach a conclusion at all
+        was the conclusion about the right thing
+        is this kind of conclusion one the contract accepts
+    """
+    if assessment.answer_mode is AnswerMode.NON_ANSWER:
+        return False
+    if not target_matches(contract, assessment.addressed_target):
+        return False
+    if assessment.answer_mode in ABSTAINING_MODES and not contract.may_abstain:
+        # 「分からない」 is honest and it is still not the fact that was asked
+        # for. A turn that forbids abstaining is not discharged by one.
+        return False
+    return True
 
 
 class ResponseContractReviewer:
@@ -307,19 +456,21 @@ class ResponseContractReviewer:
                 unavailable=True,
             )
         value = outcome.value
-        target_matches = value.addressed_target in (
-            contract.answer_target,
-            AnswerTarget.DIRECT_USER_QUESTION,
-        )
         return ContractReviewOutcome(
-            fulfilled=bool(value.fulfilled and target_matches),
+            fulfilled=fulfils(contract, value),
             detail=value.reason[:240],
+            addressed_target=value.addressed_target,
+            answer_mode=value.answer_mode,
         )
 
 
 __all__ = [
+    "ABSTAINING_MODES",
+    "ANSWERING_MODES",
+    "AnswerMode",
     "AnswerTarget",
     "ContractReviewOutcome",
+    "SPECIFIC_ANSWER_TARGETS",
     "PROMPT_ID",
     "PURPOSE",
     "QuestionPolicy",
@@ -328,4 +479,6 @@ __all__ = [
     "ResponseContractReviewer",
     "ResponseObligation",
     "build_response_contract",
+    "fulfils",
+    "target_matches",
 ]

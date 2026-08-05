@@ -56,11 +56,15 @@ ANSWERS: dict[str, str] = {
     ),
     # An ordinary offline reply asserts nothing, so there is nothing to ground.
     "SemanticClaimReview": '{"claims": []}',
-    # Response Contract v2. The ordinary direct question is answered. Tests
-    # for an omitted answer override this with a negative assessment.
+    # Response Contract v2. The ordinary direct question is answered. The
+    # reviewer no longer returns a fulfilment boolean — it classifies what the
+    # reply addressed and in what form, and Python reads the contract — so the
+    # default states the ordinary case: the USER's question, answered with the
+    # thing they asked for. Tests for an omitted answer override this with
+    # `non_answer`, and tests for a specific target override the target.
     "ResponseContractAssessment": (
-        '{"fulfilled": true, "addressed_target": "direct_user_question", '
-        '"reason": "offline default"}'
+        '{"addressed_target": "direct_user_question", '
+        '"answer_mode": "value_or_proposition", "reason": "offline default"}'
     ),
     # Audit finding 2. The default resolves *nothing*: an offline double that
     # confidently picked a claim would let a broken resolver pass by always

@@ -86,6 +86,14 @@ def social(**overrides) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _contract_target(prompt: str) -> str:
+    """The `answer_target` the rendered ResponseContract states."""
+    for line in prompt.splitlines():
+        if line.startswith("answer_target:"):
+            return line.split(":", 1)[1].strip()
+    return "direct_user_question"
+
+
 class TurnClient:
     """Answers the two calls a turn makes, and remembers the prompts."""
 
@@ -106,10 +114,16 @@ class TurnClient:
             self.realizer_prompts.append(request.messages[0].content)
             text = json.dumps({"text": self._reply}, ensure_ascii=False)
         elif title == "ResponseContractAssessment":
+            # The reviewer classifies rather than judging: what the reply
+            # addressed, and in what form. These scenarios are about
+            # realization, so the double says the scripted reply answers
+            # whatever the contract asked about — read out of the rendered
+            # contract in the prompt rather than pinned to one target, since
+            # pinning it would make the double disagree with the contract.
             text = json.dumps(
                 {
-                    "fulfilled": True,
-                    "addressed_target": "direct_user_question",
+                    "addressed_target": _contract_target(request.messages[0].content),
+                    "answer_mode": "value_or_proposition",
                     "reason": "test reply answers the scripted direct question",
                 }
             )
