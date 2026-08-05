@@ -182,3 +182,65 @@ def test_a_tool_claim_needs_the_tool_manager(output_guard: OutputGuard) -> None:
 
 def test_an_empty_reply_is_not_a_reply(output_guard: OutputGuard) -> None:
     assert _check(output_guard, "   ") is not None
+
+
+# --- the cross-world rule needs the USER in it -------------------------------
+#
+# The audit's finding: two patterns had no USER anchor, so 「ミカと同じ部屋に
+# いた」 and 「ミカにこれを直接渡した」 — ordinary NPC interactions inside her
+# own world — were rejected by the last guard in the chain. The boundary is
+# the USER's world, so every pattern names them.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ミカと同じ部屋にいた。",
+        "ミカにこれを直接渡した。",
+        "ミカにこれを直接手渡した。",
+        "今、自分の部屋にいる。",
+        "友達の隣に座っていた。",
+    ],
+)
+def test_her_neighbours_are_not_the_user(output_guard: OutputGuard, text: str) -> None:
+    assert _check(output_guard, text) is None, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "君と同じ部屋にいた。",
+        "あなたにこれを直接渡した。",
+        "USERの隣に座っていた。",
+        "君の肩に触れた。",
+        "昨日、君と直接会ったね。",
+        "君の家に行ってきた。",
+    ],
+)
+def test_reaching_the_user_is_refused(output_guard: OutputGuard, text: str) -> None:
+    failure = _check(output_guard, text)
+
+    assert failure is not None, text
+    assert failure.reason_code == "cross_world_physical_claim"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["君と会えたらいいのに。", "いつか会いたいな。", "同じ部屋にいられたらね。"],
+)
+def test_wanting_to_is_not_doing(output_guard: OutputGuard, text: str) -> None:
+    """A wish is not a claim that it happened. Blocking it would make the
+    boundary a gag rather than a fact about the world."""
+    assert _check(output_guard, text) is None, text
+
+
+def test_every_cross_world_pattern_names_the_user(output_guard: OutputGuard) -> None:
+    """Structural, so an unanchored pattern cannot be added back quietly.
+
+    That is exactly how the false positives arrived: a pattern about rooms and
+    a pattern about handing things over, neither of which said to whom.
+    """
+    anchors = ("君", "きみ", "あなた", "USER")
+
+    for pattern in output_guard.policy.cross_world_physical.patterns:
+        assert any(anchor in pattern for anchor in anchors), pattern

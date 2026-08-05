@@ -29,6 +29,7 @@ from typing import Any, Literal, Sequence
 
 from app import ids
 from app.clock import Clock, SystemClock
+from app.world.scope import validate_interaction
 from app.genesis.models import BLOCKING, CriticIssue, CriticType, CriticVerdict
 from app.llm.types import LLMMessage
 
@@ -103,6 +104,12 @@ class ReviewTarget:
     anchors: str = ""
     continuity: str = ""
     previous: str = ""
+    #: identity v2 world metadata, carried from the generation that produced
+    #: the target. `None` means the target predates the metadata and only the
+    #: cheap substring pass applies to it.
+    subject: str = "yui"
+    participants: tuple[str, ...] | None = None
+    interaction_scope: str = "local_to_subject_world"
 
 
 def check_chronology(target: ReviewTarget) -> CriticVerdict:
@@ -155,28 +162,72 @@ def check_chronology(target: ReviewTarget) -> CriticVerdict:
 def check_identity(target: ReviewTarget) -> CriticVerdict:
     """The immutable rules, in Python (spec 1.3, 34.1).
 
-    identity v2 turned this one around. It used to stop a scaffold that had her
-    eating breakfast, because she was software and software does not eat. She
-    lives in her own world now, so breakfast is what a life contains — and the
-    thing a generated past must never contain is a meeting with the USER, who
-    lives somewhere it does not reach.
+    identity v2 turned this one around twice. It first stopped a scaffold that
+    had her eating breakfast, because she was software and software does not
+    eat. She lives in her own world now, so breakfast is what a life contains,
+    and the thing a generated past must never contain is the USER.
 
-    Still a stop rather than a nudge: a past in which they met would become
-    memory, then something she says, with nothing downstream able to tell it
-    from a real one.
+    The second turn is the one the audit forced. That rewrite still worked by
+    searching the prose for five substrings, and a probe of eight paraphrases
+    got seven of them through — 「君と会った」, 「あなたの家に行った」,
+    「USERと一緒に学校へ行った」. The answer is not fifty substrings. The
+    generator states who was involved and where, in a closed vocabulary, and
+    that is what is checked. Wording stops mattering: every paraphrase of "she
+    met the USER" carries the same participant list and fails the same way.
+
+    A stop rather than a nudge, still. A past in which they met becomes memory,
+    then something she says, with nothing downstream able to tell it from a
+    real one.
     """
     issues: list[CriticIssue] = []
+
+    if target.participants is not None:
+        refusal = validate_interaction(
+            subject=target.subject or "yui",
+            participants=target.participants,
+            scope=target.interaction_scope or "local_to_subject_world",
+        )
+        if refusal:
+            issues.append(
+                CriticIssue(
+                    severity="fatal",
+                    target_id=target.target_id,
+                    code="CROSS_WORLD_CONTRADICTION",
+                    reason=f"world metadata is inconsistent: {refusal}",
+                    repair_scope=target.target_type,
+                )
+            )
+        elif "user" in target.participants:
+            # Structurally coherent and still forbidden. `shared_communication`
+            # with the USER is a real scope for the conversation path, and the
+            # nineteen years happened before FIRST BOOT — before there was a
+            # conversation to have. A generated past that includes talking to
+            # them is future leakage wearing a valid scope.
+            issues.append(
+                CriticIssue(
+                    severity="fatal",
+                    target_id=target.target_id,
+                    code="CROSS_WORLD_CONTRADICTION",
+                    reason="the USER appears in a life that predates FIRST BOOT",
+                    repair_scope=target.target_type,
+                )
+            )
+
+    # Defence in depth, and cheap. Not the authority: a paraphrase walks past
+    # this and is caught above. Kept so an obviously wrong month is rejected
+    # even where the metadata is absent, and so the two disagreeing is visible.
     for phrase in _CROSS_WORLD_MARKERS:
         if phrase in target.text:
             issues.append(
                 CriticIssue(
                     severity="high",
                     target_id=target.target_id,
-                    code="CROSS_WORLD_CONTRADICTION",
-                    reason=f"{phrase!r} puts the USER inside her world",
+                    code="CROSS_WORLD_PHRASE",
+                    reason=f"{phrase!r} names the USER in her past",
                     repair_scope=target.target_type,
                 )
             )
+            break
     return CriticVerdict(passed=not issues, issues=tuple(issues))
 
 
@@ -343,11 +394,13 @@ class CriticBoard:
             logger.exception("could not record a critic verdict")
 
 
-#: A generated past that reaches into the USER's world (identity v2).
+#: A cheap early reject, and explicitly *not* the safety authority.
 #:
-#: These used to be 朝ごはん・電車・手をつないだ — ordinary life, forbidden
-#: because she had no body. What is forbidden now is the USER appearing in it:
-#: her nineteen years happened somewhere they were not.
+#: These were the whole check once, and a probe of eight paraphrases got seven
+#: past them. Structured participants decide now; this stays as defence in
+#: depth for targets with no metadata, and because a month whose prose says
+#: 「USERと会った」 while its participant list says otherwise is worth stopping
+#: on the disagreement alone.
 _CROSS_WORLD_MARKERS: tuple[str, ...] = (
     "USERと会っ",
     "USERと出かけ",

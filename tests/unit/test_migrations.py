@@ -267,9 +267,8 @@ def test_a_schema_34_database_upgrades_without_losing_rows(
 
         result = migrate(database, clock=clock)
 
-        assert result.applied == (35,)
-        assert result.schema_version == 35
-        assert schema_version(database) == 35
+        assert result.applied == (35, 36)
+        assert schema_version(database) == LATEST_VERSION
         assert _unique_index_columns(database, "idx_semantic_statement") == [
             "statement",
             "origin",
@@ -299,8 +298,8 @@ def test_a_schema_33_database_applies_both_migrations(
 
         result = migrate(database, clock=clock)
 
-        assert result.applied == (34, 35)
-        assert schema_version(database) == 35
+        assert result.applied == (34, 35, 36)
+        assert schema_version(database) == LATEST_VERSION
         row = database.query_one(
             "SELECT subject FROM semantic_memories WHERE statement = '移行前の知識'"
         )
@@ -312,7 +311,7 @@ def test_a_schema_33_database_applies_both_migrations(
         database.close()
 
 
-def test_no_migration_before_35_was_edited() -> None:
+def test_no_migration_before_the_latest_was_edited() -> None:
     """D. Checksums are how drift is detected, so fixing 34's consequences by
     rewriting 34 would turn every database that already ran it into an error.
 
@@ -324,6 +323,7 @@ def test_no_migration_before_35_was_edited() -> None:
     assert checksums[4].startswith("8e50185cc5e1"), "migration 4 was edited"
     assert checksums[33].startswith("be97b2c35e5a"), "migration 33 was edited"
     assert checksums[34].startswith("af83c6ad2b13"), "migration 34 was edited"
-    assert LATEST_VERSION == 35
-    assert MIGRATIONS[-1].version == 35
-    assert MIGRATIONS[-1].name == "semantic_memory_identity"
+    assert checksums[35].startswith("56eef5bd5488"), "migration 35 was edited"
+    assert LATEST_VERSION == 36
+    assert MIGRATIONS[-1].version == 36
+    assert MIGRATIONS[-1].name == "genesis_world_metadata"

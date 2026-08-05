@@ -66,13 +66,47 @@ class AnnualScaffold(BaseModel):
     notable: tuple[str, ...] = ()
 
 
+#: The closed subject vocabulary a generated month may name, shared with
+#: `app.world.scope` so there is one word for "the USER" in the whole system.
+WorldParticipant = Literal["yui", "npc", "user", "world", "unknown"]
+
+#: Where a generated month's contact took place. The same three scopes the
+#: conversation path uses; a generated past is checked by the same rule.
+GenesisInteractionScope = Literal[
+    "local_to_subject_world",
+    "shared_communication",
+    "cross_world_physical",
+]
+
+
 class MonthNarrative(BaseModel):
-    """Stage B output for one month."""
+    """Stage B output for one month.
+
+    ``participants`` and ``interaction_scope`` are the world metadata, produced
+    by the same call that writes the prose rather than by a second review — a
+    nineteen-year Genesis cannot afford an extra model call per month, and the
+    generator is the thing that already knows who was in the story.
+
+    Both are required. The safety they carry used to be a list of five
+    substrings; a probe of eight paraphrases got seven of them past it, and the
+    fix is not fifty substrings. `people` is free text and stays free text —
+    that is what the continuity ledger reads. These are the closed vocabulary
+    Python can actually check.
+    """
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     narrative: str = Field(default="", max_length=4000)
     importance: ImportanceClass = "routine"
+    #: Whose life this month is — always hers, stated so the validator has a
+    #: subject to compare participants against rather than an assumption.
+    subject: WorldParticipant = "yui"
+    #: Who else the month involved, in the closed subject vocabulary. Empty for
+    #: a month spent alone. The USER must never appear: her nineteen years
+    #: happened somewhere they were not.
+    participants: tuple[WorldParticipant, ...]
+    #: Where the month's contact took place.
+    interaction_scope: GenesisInteractionScope
     people: tuple[str, ...] = ()
     interests: tuple[str, ...] = ()
     threads: tuple[str, ...] = ()

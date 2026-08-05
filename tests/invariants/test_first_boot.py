@@ -140,11 +140,15 @@ class Storyteller:
                 summary="静かな年だった。", people=("ミカ",), interests=("本",)
             )
         if schema is MonthNarrative:
+            # identity v2: the world metadata is what the critic checks, so a
+            # storyteller producing a forbidden past has to produce it here.
             return MonthNarrative(
                 narrative=(
                     "USERと会って話した。" if self.body else "本を読んでいた。"
                 ),
                 importance="routine",
+                participants=("user",) if self.body else (),
+                interaction_scope="local_to_subject_world",
                 people=("ミカ",),
             )
         if schema is AnnualSynthesis:

@@ -49,7 +49,11 @@ from app.grounding.ownership import (
     may_support,
     refusal_reason,
 )
-from app.world.scope import InteractionScope, is_reachable
+from app.world.scope import (
+    InteractionScope,
+    is_reachable,
+    validate_interaction,
+)
 from app.llm.prompts import PromptRegistry
 from app.llm.structured import StructuredGenerator
 from app.llm.types import LLMMessage
@@ -220,14 +224,49 @@ class SemanticClaimCandidate(BaseModel):
     #: downstream as "the reviewer is unavailable" — the fail-closed direction.
     category: RuntimeClaimKind = "yui_completed_action"
     modality: Modality = "assertion"
-    #: Where the described contact takes place. Defaults to the ordinary case:
-    #: something happening inside the subject's own life.
-    interaction_scope: InteractionScopeLiteral = "local_to_subject_world"
+    #: Where the described contact takes place. **Required, with no default.**
+    #:
+    #: It defaulted to `local_to_subject_world`, and that made the world
+    #: boundary fail open: a reviewer that omitted the field — an older model,
+    #: a truncated response, a schema it had not been shown — had
+    #: 「YUIがUSERと直接会った」 silently classified as something happening in
+    #: her own room, and a YUI-owned activity then supported it. A hard
+    #: boundary whose absent value is its permissive value is not a boundary.
+    #:
+    #: Omitting it now fails schema validation, which reads downstream as "the
+    #: reviewer is unavailable" — the fail-closed direction.
+    interaction_scope: InteractionScopeLiteral
+    #: Who else the proposition involves, in the same closed subject vocabulary.
+    #: Empty for a single-subject action: 「本を読んだ」 involves nobody.
+    #:
+    #: Required for the same reason, and load-bearing for a different one: one
+    #: classified field is one point of failure, so Python checks this against
+    #: the scope rather than trusting either alone.
+    participants: tuple[ClaimSubject, ...]
     temporal_scope: TemporalScope = "timeless"
     #: Evidence the reviewer believes supports this. Identifiers only.
     supporting_ids: tuple[str, ...] = ()
     #: Evidence the reviewer believes this contradicts.
     contradicting_ids: tuple[str, ...] = ()
+
+
+class StoredSemanticClaim(SemanticClaimCandidate):
+    """A claim read back from a Common Ground row.
+
+    Same shape, different provenance, and that changes which fields may be
+    absent. `interaction_scope` and `participants` are required of a *new*
+    classification — a reviewer that omits them has not answered, and the world
+    boundary must not read silence as permission. A row written before those
+    fields existed is a different case entirely: it is being read, not
+    classified, and refusing it would send the re-verification path back to the
+    legacy regex parser for every claim recorded before this change.
+
+    So the defaults live here and only here. Nothing the model produces is
+    validated against this class.
+    """
+
+    interaction_scope: InteractionScopeLiteral = "local_to_subject_world"
+    participants: tuple[ClaimSubject, ...] = ()
 
 
 class SemanticClaimReview(BaseModel):
@@ -437,22 +476,33 @@ class EvidenceResolver:
                 refusals=(f"legacy_category:{candidate.category}",),
             )
 
-        # No evidence can establish a meeting between two people who are not in
-        # the same world. This is not "there is no record of it" — it is that
-        # there is no arrangement of records under which it could be true, so
-        # the check runs before the citations are looked at, the same way a
-        # self-contradictory category does.
+        # Where the interaction happened, and with whom, have to agree with each
+        # other before either is believed. This is not "there is no record of
+        # it" — it is that there is no arrangement of records under which the
+        # claim could be true, so it runs before the citations are looked at,
+        # the same way a self-contradictory category does.
+        #
+        # The audit's reproduction: scope said `local_to_subject_world` for
+        # 「YUIがUSERと直接会った」, a YUI-owned activity was cited, and the
+        # claim resolved as supported. The scope was the only thing standing
+        # there. Now the participants stand beside it, and a scope that says
+        # "in her own world" while naming the USER is a contradiction Python
+        # can see without reading Japanese.
         #
         # Only for claims that commit to something. She may still wish they
         # could meet, or wonder what it would be like; a hypothetical is not an
         # assertion that it happened.
-        if candidate.modality in COMMITTING_MODALITIES and not is_reachable(
-            candidate.interaction_scope
-        ):
-            return ResolvedClaim(
-                candidate=candidate,
-                refusals=(f"cross_world_physical:{candidate.category}",),
+        if candidate.modality in COMMITTING_MODALITIES:
+            refusal = validate_interaction(
+                subject=candidate.subject,
+                participants=candidate.participants,
+                scope=candidate.interaction_scope,
             )
+            if refusal:
+                return ResolvedClaim(
+                    candidate=candidate,
+                    refusals=(f"{refusal}:{candidate.category}",),
+                )
 
         # A claim that commits to something being true has to say whose life it
         # is about. `unknown` is not a neutral answer here: it is the one value
@@ -697,6 +747,7 @@ __all__ = [
     "SemanticClaimCandidate",
     "SemanticClaimReview",
     "SemanticClaimReviewer",
+    "StoredSemanticClaim",
     "SemanticReviewOutcome",
     "TemporalScope",
     "admit",

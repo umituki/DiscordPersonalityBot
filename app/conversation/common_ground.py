@@ -25,7 +25,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from app.dialogue.semantic_claims import EvidenceResolver, SemanticClaimCandidate
+from app.dialogue.semantic_claims import (
+    EvidenceResolver,
+    SemanticClaimCandidate,
+    StoredSemanticClaim,
+)
 from app.grounding.claims import ClaimExtractor, ClaimGroundingGuard
 from app.grounding.models import GroundingContext
 
@@ -383,12 +387,17 @@ def _stored_claim(claim: CommonGroundClaim) -> SemanticClaimCandidate | None:
 
     Absent on rows the legacy extractor produced, which is why the caller keeps
     a fallback rather than treating a missing blob as "unsupported".
+
+    Read through `StoredSemanticClaim`, which tolerates the world fields being
+    absent. They are required of a new classification and cannot be required of
+    a row written before they existed — insisting would push every such row
+    back onto the legacy parser, which is the thing the stored blob replaced.
     """
     raw = getattr(claim, "semantic_json", "") or ""
     if not raw:
         return None
     try:
-        return SemanticClaimCandidate.model_validate_json(raw)
+        return StoredSemanticClaim.model_validate_json(raw)
     except Exception:  # noqa: BLE001 - a malformed blob is simply absent
         logger.info("stored semantic claim for %s could not be read", claim.claim_id)
         return None

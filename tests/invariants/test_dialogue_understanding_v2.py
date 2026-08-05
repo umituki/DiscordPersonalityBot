@@ -126,6 +126,8 @@ def test_a_user_event_cannot_support_a_claim_about_her(category) -> None:
         subject="yui",
         category=category,
         supporting_ids=(evidence.evidence_id,),
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
 
     resolved = EvidenceResolver().resolve(candidate, context)
@@ -145,6 +147,8 @@ def test_her_own_event_does_support_the_same_claim() -> None:
         subject="yui",
         category="yui_completed_action",
         supporting_ids=(evidence.evidence_id,),
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
 
     resolved = EvidenceResolver().resolve(candidate, context)
@@ -171,6 +175,8 @@ def test_an_invented_evidence_id_supports_nothing() -> None:
         subject="yui",
         category="yui_completed_action",
         supporting_ids=("activity:act_walk_today",),
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
 
     resolved = EvidenceResolver().resolve(candidate, context)
@@ -189,6 +195,8 @@ def test_evidence_of_the_wrong_kind_is_refused() -> None:
         subject="yui",
         category="yui_completed_action",
         supporting_ids=(tool.evidence_id,),
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
 
     resolved = EvidenceResolver().resolve(candidate, context)
@@ -203,6 +211,8 @@ def test_citing_nothing_is_recorded_as_citing_nothing() -> None:
         trigger="読んだよ",
         subject="yui",
         category="yui_completed_action",
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
 
     resolved = EvidenceResolver().resolve(candidate, GroundingContext())
@@ -224,6 +234,8 @@ def test_a_non_assertion_needs_no_evidence() -> None:
             subject="yui",
             category="yui_completed_action",
             modality=modality,
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(candidate, GroundingContext())
@@ -408,6 +420,8 @@ def test_repair_is_told_why_each_claim_failed() -> None:
                     subject="yui",
                     category="yui_completed_action",
                     supporting_ids=("objective_event:evt_1",),
+                    interaction_scope="local_to_subject_world",
+                    participants=(),
                 ),
                 GroundingContext(recent_objective_events=(_user("詩を詠んだ"),)),
             ),
@@ -429,6 +443,8 @@ def test_an_invented_citation_is_named_as_one_in_repair() -> None:
                     subject="yui",
                     category="yui_completed_action",
                     supporting_ids=("activity:made_up",),
+                    interaction_scope="local_to_subject_world",
+                    participants=(),
                 ),
                 GroundingContext(),
             ),

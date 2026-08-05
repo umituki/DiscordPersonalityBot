@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
-from typing import Any
+from typing import Any, Sequence
 
 from app import ids
 from app.clock import from_iso, to_iso
@@ -263,6 +263,8 @@ class LifeRecordRepository:
         importance_class: str,
         prompt_version: str,
         model_version: str,
+        participants: Sequence[str] = (),
+        interaction_scope: str = "local_to_subject_world",
     ) -> str:
         existing = self.month(year_id, month_number)
         if existing is not None:
@@ -273,13 +275,15 @@ class LifeRecordRepository:
             INSERT INTO life_months
                 (month_id, year_id, month_number, month_start, month_end,
                  age_start, age_end, narrative, importance_class, status,
-                 prompt_version, model_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'drafted', ?, ?)
+                 prompt_version, model_version, participants_json,
+                 interaction_scope)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'drafted', ?, ?, ?, ?)
             """,
             (
                 month_id, year_id, month_number, to_iso(month_start),
                 to_iso(month_end), age_start, age_end, narrative,
                 importance_class, prompt_version, model_version,
+                json.dumps(list(participants)), interaction_scope,
             ),
         )
         return month_id

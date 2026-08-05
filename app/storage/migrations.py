@@ -2204,6 +2204,27 @@ _0035_SEMANTIC_MEMORY_IDENTITY = Migration(
 )
 
 
+_0036_GENESIS_WORLD_METADATA = Migration(
+    version=36,
+    name="genesis_world_metadata",
+    statements=(
+        # identity v2 world safety. A generated month now states who it
+        # involved and where, in the closed vocabulary — so the final identity
+        # audit reads structure rather than searching the prose for five
+        # substrings that a paraphrase walks straight past.
+        #
+        # Existing rows default to an empty participant list and a local scope:
+        # they were generated under the old rules, where the USER appearing was
+        # already the thing the substring critic was looking for. Nothing is
+        # backfilled from the text, because inferring participants from
+        # Japanese is the structure this replaces.
+        "ALTER TABLE life_months ADD COLUMN participants_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE life_months ADD COLUMN interaction_scope TEXT NOT NULL "
+        "DEFAULT 'local_to_subject_world'",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -2240,6 +2261,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0033_DIALOGUE_AUDIT,
     _0034_SEMANTIC_MEMORY_SUBJECT,
     _0035_SEMANTIC_MEMORY_IDENTITY,
+    _0036_GENESIS_WORLD_METADATA,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

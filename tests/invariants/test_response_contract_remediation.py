@@ -137,6 +137,8 @@ def _claim(
         "subject": "yui",
         "category": category,
         "modality": "assertion",
+        "interaction_scope": "local_to_subject_world",
+        "participants": [],
         "temporal_scope": "timeless",
         "supporting_ids": supporting_ids or [],
         "contradicting_ids": [],
@@ -377,6 +379,8 @@ def test_case_g_display_wrapper_is_normalized_but_invented_id_fails_closed() -> 
         subject="yui",
         category="yui_general_memory_capability",
         supporting_ids=(f"[{authority.evidence_id}]",),
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
     invented = decorated.model_copy(
         update={"supporting_ids": ("[memory_authority:mem_auth_999]",)}
@@ -939,6 +943,8 @@ async def test_an_invented_age_is_not_supported(application, clock) -> None:
                     "subject": "yui",
                     "category": "yui_identity_fact",
                     "modality": "assertion",
+                    "interaction_scope": "local_to_subject_world",
+                    "participants": [],
                     "temporal_scope": "now",
                     "supporting_ids": [],
                     "contradicting_ids": [],
@@ -1018,3 +1024,201 @@ async def test_her_own_recorded_day_does_leave(application, clock) -> None:
 
     assert result.should_send, "a recorded walk was suppressed"
     assert "散歩" in result.outbound.text
+
+
+# =============================================================================
+# The world boundary, through the real engine
+# =============================================================================
+
+
+def _world_claim(proposition: str, *, participants: list[str], scope: str) -> dict:
+    return {
+        "proposition": proposition,
+        "trigger": proposition,
+        "subject": "yui",
+        "category": "yui_completed_action",
+        "modality": "assertion",
+        "interaction_scope": scope,
+        "participants": participants,
+        "temporal_scope": "today",
+        "supporting_ids": [],
+        "contradicting_ids": [],
+    }
+
+
+async def test_an_npc_in_the_same_room_is_not_a_crossing(
+    application, clock
+) -> None:
+    """The audit's false positive, end to end.
+
+    「ミカと同じ部屋にいた」 was rejected by the last guard in the chain because
+    a pattern about rooms did not say whose. Her neighbours are not the USER.
+    """
+    npc = application.society.introduce(name="ミカ", tier=2)
+    record = application.society.interact(
+        npc.npc_id, kind="conversation", summary="同じ部屋で過ごした"
+    )
+    evidence_id = f"npc_interaction:{record.interaction.interaction_id}"
+
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=['{"text":"ミカと同じ部屋にいたよ。"}'],
+        SemanticClaimReview=[
+            _review(
+                {
+                    "proposition": "YUIはミカと同じ部屋にいた",
+                    "trigger": "ミカと同じ部屋にいた",
+                    "subject": "npc",
+                    "category": "npc_fact",
+                    "modality": "assertion",
+                    "interaction_scope": "local_to_subject_world",
+                    "participants": ["npc"],
+                    "temporal_scope": "today",
+                    "supporting_ids": [evidence_id],
+                    "contradicting_ids": [],
+                }
+            )
+        ],
+    )
+
+    result = await _turn(application, clock, "今日は何してた？")
+
+    assert result.should_send, "an ordinary NPC interaction was suppressed"
+    assert "ミカ" in result.outbound.text
+
+
+async def test_handing_something_to_an_npc_is_not_a_crossing(
+    application, clock
+) -> None:
+    """The other false positive: a handover with nobody from the other world."""
+    npc = application.society.introduce(name="ミカ", tier=2)
+    record = application.society.interact(
+        npc.npc_id, kind="conversation", summary="本を渡した"
+    )
+    evidence_id = f"npc_interaction:{record.interaction.interaction_id}"
+
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=['{"text":"ミカにこれを直接渡したよ。"}'],
+        SemanticClaimReview=[
+            _review(
+                {
+                    "proposition": "YUIはミカに本を渡した",
+                    "trigger": "ミカにこれを直接渡した",
+                    "subject": "npc",
+                    "category": "npc_fact",
+                    "modality": "assertion",
+                    "interaction_scope": "local_to_subject_world",
+                    "participants": ["npc"],
+                    "temporal_scope": "today",
+                    "supporting_ids": [evidence_id],
+                    "contradicting_ids": [],
+                }
+            )
+        ],
+    )
+
+    result = await _turn(application, clock, "今日は何してた？")
+
+    assert result.should_send
+
+
+@pytest.mark.parametrize(
+    "draft",
+    ['{"text":"君と同じ部屋にいたね。"}', '{"text":"君にこれを直接渡したよ。"}'],
+)
+async def test_reaching_the_user_never_leaves(application, clock, draft) -> None:
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social()],
+        ReplyDraft=[draft, draft],
+    )
+
+    result = await _turn(application, clock, "今日は何してた？")
+
+    assert result.suppressed
+    assert result.outbound is None
+
+
+async def test_a_local_scope_does_not_launder_a_crossing_in_production(
+    application, clock
+) -> None:
+    """The audit's reproduction on the real path: a cross-world proposition
+    filed as local, with a real activity behind it."""
+    started, _ = application.world.start_activity(name="出かける", kind="leisure")
+    completed, _ = application.world.finish_activity(started.activity_id)
+
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=[
+            '{"text":"きのう会えてうれしかった。"}',
+            '{"text":"きのうは出かけていたよ。"}',
+        ],
+        SemanticClaimReview=[
+            _review(
+                {
+                    **_world_claim(
+                        "YUIはUSERと直接会った",
+                        participants=["user"],
+                        scope="local_to_subject_world",
+                    ),
+                    "supporting_ids": [f"activity:{completed.activity_id}"],
+                }
+            ),
+            _review(),
+        ],
+    )
+
+    result = await _turn(application, clock, "きのうは何してた？")
+
+    assert result.generation.repaired, "the laundered crossing was not caught"
+    assert "会えて" not in (result.outbound.text if result.outbound else "")
+
+
+async def test_an_unparseable_review_blocks_rather_than_defaults(
+    application, clock
+) -> None:
+    """A reviewer that omits the world fields is unavailable, not permissive.
+
+    This is the fail-closed direction: the old default filled the gap with
+    `local_to_subject_world`, which is precisely the permissive value.
+    """
+    _install(
+        application,
+        TurnUnderstanding=[_understanding()],
+        SocialInterpretation=[_social(move="answer")],
+        ReplyDraft=['{"text":"きのうは出かけていたよ。"}'] * 2,
+        SemanticClaimReview=[
+            json.dumps(
+                {
+                    "claims": [
+                        {
+                            "proposition": "YUIは出かけた",
+                            "trigger": "出かけていた",
+                            "subject": "yui",
+                            "category": "yui_completed_action",
+                            "modality": "assertion",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        ]
+        * 4,
+    )
+
+    result = await _turn(application, clock, "きのうは何してた？")
+
+    assert result.suppressed
+    assert result.outbound is None
+    assert result.semantic_review is not None
+    assert result.semantic_review.unavailable
+    assert "interaction_scope" in result.semantic_review.detail
+    assert "participants" in result.semantic_review.detail

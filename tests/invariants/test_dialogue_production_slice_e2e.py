@@ -441,6 +441,8 @@ async def test_the_stored_claim_is_what_a_correction_reads(
             "subject": "yui",
             "category": "yui_completed_action",
             "modality": "assertion",
+            "interaction_scope": "local_to_subject_world",
+            "participants": [],
         },
         subject="yui",
         modality="assertion",
@@ -486,6 +488,8 @@ def test_a_delivered_claim_stores_its_verified_representation(
                     subject="yui",
                     category="yui_completed_action",
                     supporting_ids=(evidence.evidence_id,),
+                    interaction_scope="local_to_subject_world",
+                    participants=(),
                 ),
                 GroundingContext(completed_activities_today=(evidence,)),
             ),
@@ -629,6 +633,8 @@ def _npc_claim(evidence_id: str):
         subject="npc",
         category="npc_fact",
         supporting_ids=(evidence_id,),
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
 
 
@@ -756,6 +762,8 @@ async def test_a_contradicted_claim_does_not_reach_the_user(
                             "subject": "yui",
                             "category": "yui_completed_action",
                             "modality": "assertion",
+                            "interaction_scope": "local_to_subject_world",
+                            "participants": [],
                             "temporal_scope": "today",
                             "supporting_ids": [support_id],
                             "contradicting_ids": [against_id],
@@ -809,6 +817,8 @@ def _resolve(category: str, evidence, context, *, subject: str):
             subject=subject,
             category=category,
             supporting_ids=(evidence.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         ),
         context,
     )

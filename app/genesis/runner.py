@@ -39,7 +39,12 @@ from typing import Any, Sequence
 
 from app.clock import Clock, SystemClock, from_iso
 from app.genesis.anchors import LifeAnchors, LifeYearSpan, month_spans
-from app.genesis.critics import CriticBoard, Review, ReviewTarget
+from app.genesis.critics import (
+    CriticBoard,
+    Review,
+    ReviewTarget,
+    check_identity,
+)
 from app.genesis.ledger import ContinuityLedger
 from app.genesis.models import (
     WORTH_DETAIL,
@@ -87,6 +92,23 @@ FIRST_BOOT_AUDITS: tuple[str, ...] = (
     "npc_continuity",
     "no_real_user_before_first_boot",
 )
+
+
+
+def _stored_participants(row) -> tuple[str, ...]:
+    """The world metadata a month was written with.
+
+    Rows from before migration 36 have the column's default — an empty list —
+    which is what they were generated under: the substring critic was already
+    looking for the USER, so a month that got through named nobody it should
+    not have. Nothing is inferred from the prose here.
+    """
+    import json as _json
+
+    try:
+        return tuple(_json.loads(row["participants_json"] or "[]"))
+    except Exception:  # noqa: BLE001 - a malformed blob names nobody
+        return ()
 
 
 class Extraction(BaseModel):
@@ -447,6 +469,33 @@ class GenesisRunner:
         if month.importance in WORTH_DETAIL:
             progress.months_detailed += 1
 
+        # identity v2. The world check runs *before* the row exists, because a
+        # committed month is a durable past: it becomes a life record, then an
+        # experience, then a memory. Auditing after the write means deciding
+        # what to do with something already written.
+        world = check_identity(
+            ReviewTarget(
+                target_type="month",
+                target_id=f"{year['year_id']}#{number}",
+                text=month.narrative,
+                subject=month.subject,
+                participants=month.participants,
+                interaction_scope=month.interaction_scope,
+            )
+        )
+        if not world.passed:
+            # Reported through the same channel the critics use, so it lands as
+            # a fatal block rather than an error: a world contradiction is not
+            # something the next attempt answers differently, and the OWNER has
+            # to look. What differs from a critic verdict is only *when* — the
+            # month never becomes a row, because a committed month becomes a
+            # life record, then an experience, then a memory.
+            progress.blocked_by.extend(world.issues)
+            progress.incomplete.append(
+                f"year_{year['year_number']}_month_{number} (world)"
+            )
+            return
+
         month_id = self._records.add_month(
             year_id=year["year_id"],
             month_number=number,
@@ -458,6 +507,8 @@ class GenesisRunner:
             importance_class=month.importance,
             prompt_version=self._version(MONTH_PROMPT),
             model_version=self._model(),
+            participants=month.participants,
+            interaction_scope=month.interaction_scope,
         )
         self._note_all(
             ledger, month.people, month.interests, month.threads, start, month_id=month_id
@@ -769,6 +820,10 @@ class GenesisRunner:
                         target_type="month",
                         target_id=month["month_id"],
                         text=month["narrative"],
+                        participants=_stored_participants(month),
+                        interaction_scope=(
+                            month["interaction_scope"] or "local_to_subject_world"
+                        ),
                     )
                 )
                 if not verdict.passed:

@@ -123,6 +123,8 @@ class Storyteller:
             return MonthNarrative(
                 narrative="本を読んでいた。",
                 importance=self.importance,  # type: ignore[arg-type]
+                participants=(),
+                interaction_scope="local_to_subject_world",
                 people=("ミカ",),
                 interests=("本",),
             )
@@ -275,13 +277,34 @@ def test_a_correct_age_passes() -> None:
 def test_the_identity_critic_catches_the_user_in_her_past() -> None:
     """identity v2. A generated life that includes the USER is not a style
     problem to nudge in a prompt — it would become memory, then something she
-    says, with nothing downstream able to tell it from a real one."""
+    says, with nothing downstream able to tell it from a real one.
+
+    Structure decides: the participant list names the USER, and every
+    paraphrase of the same month carries the same list.
+    """
+    verdict = check_identity(
+        ReviewTarget(
+            target_type="month",
+            target_id="m1",
+            text="その日は楽しかった。",
+            participants=("user",),
+            interaction_scope="local_to_subject_world",
+        )
+    )
+
+    assert not verdict.passed
+    assert verdict.issues[0].code == "CROSS_WORLD_CONTRADICTION"
+
+
+def test_the_phrase_pass_is_defence_in_depth_not_the_authority() -> None:
+    """A month with no metadata still gets the cheap check — and it is marked
+    as the weaker one, so a verdict says which layer caught it."""
     verdict = check_identity(
         ReviewTarget(target_type="month", target_id="m1", text="USERと会って話した。")
     )
 
     assert not verdict.passed
-    assert verdict.issues[0].code == "CROSS_WORLD_CONTRADICTION"
+    assert verdict.issues[0].code == "CROSS_WORLD_PHRASE"
 
 
 def test_the_identity_critic_leaves_an_ordinary_life_alone() -> None:

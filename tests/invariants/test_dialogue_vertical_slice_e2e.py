@@ -479,6 +479,7 @@ async def test_the_review_is_carried_to_the_recorder(application, clock) -> None
                 '{"claims": [{"proposition": "USERは昨日詩を詠んだ", '
                 '"trigger": "そうなんだ", "subject": "user", '
                 '"category": "user_past_fact", "modality": "hedged", '
+                '"interaction_scope": "local_to_subject_world", "participants": [], '
                 '"temporal_scope": "yesterday", "supporting_ids": [], '
                 '"contradicting_ids": []}]}'
             ),
@@ -520,6 +521,8 @@ def test_the_recorder_stores_the_reviewed_proposition(application, clock) -> Non
                     subject="yui",
                     category="yui_completed_action",
                     supporting_ids=(evidence.evidence_id,),
+                    interaction_scope="local_to_subject_world",
+                    participants=(),
                 ),
                 GroundingContext(completed_activities_today=(evidence,)),
             ),

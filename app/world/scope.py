@@ -32,6 +32,7 @@ the subject stands to it. A world scope never substitutes for a subject check.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Sequence
 
 
 class WorldScope(StrEnum):
@@ -103,6 +104,12 @@ def refusal_reason(scope: InteractionScope | str) -> str:
     return "" if is_reachable(scope) else "cross_world_physical"
 
 
+#: The subject vocabulary a claim or a generated month may name.
+#: Deliberately the same closed set the ownership matrix uses, so there is one
+#: word for "the USER" everywhere rather than one per subsystem.
+PARTICIPANT_SUBJECTS: frozenset[str] = frozenset(SUBJECT_WORLDS)
+
+
 def worlds_are_separate(first: str, second: str) -> bool:
     """Whether two subjects live in different worlds.
 
@@ -125,3 +132,70 @@ __all__ = [
     "world_of",
     "worlds_are_separate",
 ]
+
+
+# --- the cross-check ---------------------------------------------------------
+#
+# The audit's finding: a single classified field is a single point of failure.
+# `interaction_scope` said `local_to_subject_world` for 「YUIがUSERと直接会った」
+# and, with a YUI-owned activity cited, the claim resolved as supported. The
+# scope was the only thing standing there, and it was wrong.
+#
+# So the reviewer now states *who was involved* as well, and Python checks the
+# two answers against each other. Neither is trusted alone: a scope that says
+# "in her own world" while naming the USER as a participant is a contradiction
+# the model produced without noticing, and Python can see it without reading a
+# word of Japanese.
+#
+# This is not a claim to have solved semantic classification. A model that gets
+# both fields wrong in the same direction still gets through here — see the
+# layers after this one.
+
+
+def validate_interaction(
+    *, subject: str, participants: Sequence[str], scope: InteractionScope | str
+) -> str:
+    """Whether the stated subject, participants and scope can all be true.
+
+    Returns a refusal reason, or ``""`` when they agree. Structural possibility
+    only: "could this have happened", never "did it". Evidence answers the
+    second question and this function does not touch it.
+    """
+    interaction = InteractionScope(scope)
+    others = tuple(participants)
+
+    if "unknown" in others:
+        # An interaction whose counterparty was not identified. Which world it
+        # crosses is exactly what is unknown, so there is nothing to check it
+        # against — and a committing claim about meeting somebody unspecified
+        # is not something to wave through.
+        return "unknown_participant"
+
+    unnamed = [name for name in others if name not in PARTICIPANT_SUBJECTS]
+    if unnamed:
+        return f"unknown_participant:{unnamed[0][:24]}"
+
+    crossing = [name for name in others if worlds_are_separate(subject, name)]
+
+    if interaction is InteractionScope.CROSS_WORLD_PHYSICAL:
+        if not crossing:
+            # 「ミカと同じ部屋にいた」 classified as a crossing. Everyone named
+            # lives in the same world, so this is a misreading rather than an
+            # impossible event — and letting it through as "correctly refused"
+            # would hide a classifier that cannot tell her neighbours from the
+            # USER.
+            return "cross_world_scope_without_crossing"
+        return "cross_world_physical"
+
+    if interaction is InteractionScope.LOCAL_TO_SUBJECT_WORLD and crossing:
+        # The audit's reproduction. Being local and involving somebody from
+        # another world are not both possible.
+        return f"interaction_scope_world_mismatch:{crossing[0]}"
+
+    # `shared_communication` is the one scope that is *supposed* to span the
+    # two worlds. It says they talked, which is the thing they can do — and it
+    # supports nothing physical, because the evidence kinds decide that.
+    return ""
+
+
+__all__ += ["PARTICIPANT_SUBJECTS", "validate_interaction"]

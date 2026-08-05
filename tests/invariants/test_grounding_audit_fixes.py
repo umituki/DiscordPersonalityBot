@@ -87,6 +87,8 @@ def _resolve(
         subject=subject if subject is not None else _declared_subject(category),
         category=category,
         supporting_ids=(evidence.evidence_id,),
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
     return EvidenceResolver().resolve(candidate, context)
 
@@ -273,6 +275,8 @@ def test_a_supposition_needs_no_evidence() -> None:
         trigger="わたしなら好きかも",
         category="yui_experience_habit",
         modality="hypothetical",
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
 
     assert not EvidenceResolver().resolve(candidate, GroundingContext()).blocking
@@ -288,6 +292,8 @@ def test_a_softened_statement_about_herself_still_needs_evidence() -> None:
         trigger="読むのが好きなようです",
         category="yui_experience_habit",
         modality="hedged_assertion",
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
 
     resolved = EvidenceResolver().resolve(candidate, GroundingContext())
@@ -306,6 +312,8 @@ def test_an_uncertain_recollection_still_needs_evidence() -> None:
         trigger="前に読んだ気がする",
         category="yui_specific_memory_recall",
         modality="uncertain_recall",
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
 
     assert EvidenceResolver().resolve(candidate, GroundingContext()).blocking
@@ -565,6 +573,8 @@ def test_reverification_reresolves_the_stored_claim_not_the_sentence(
                 "subject": "yui",
                 "category": "yui_completed_action",
                 "modality": "assertion",
+                "interaction_scope": "local_to_subject_world",
+                "participants": [],
                 "supporting_ids": [evidence.evidence_id],
             },
             now=clock.now(),
@@ -603,6 +613,8 @@ def test_reverification_reresolves_the_stored_claim_not_the_sentence(
                 "subject": "yui",
                 "category": "yui_completed_action",
                 "modality": "assertion",
+                "interaction_scope": "local_to_subject_world",
+                "participants": [],
                 "supporting_ids": ["activity:act_missing"],
             },
             now=clock.now(),
@@ -651,6 +663,8 @@ class TestCategorySubjectConsistency:
             subject="yui",
             category="user_past_fact",
             supporting_ids=(evidence.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(
@@ -674,6 +688,8 @@ class TestCategorySubjectConsistency:
             subject="user",
             category="yui_completed_action",
             supporting_ids=(evidence.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(
@@ -700,6 +716,8 @@ class TestCategorySubjectConsistency:
             subject="user",
             category="user_past_fact",
             supporting_ids=(evidence.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(
@@ -723,6 +741,8 @@ class TestCategorySubjectConsistency:
             category="yui_completed_action",
             modality="hypothetical",
             supporting_ids=(evidence.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(
@@ -742,6 +762,8 @@ class TestCategorySubjectConsistency:
             subject="yui",
             category="yui_completed_action",
             supporting_ids=(evidence.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         ).model_copy(update={"category": "a_category_nobody_defined"})
 
         resolved = EvidenceResolver().resolve(
@@ -785,6 +807,8 @@ class TestSpecificRecallAuthority:
             subject="yui",
             category="yui_specific_memory_recall",
             supporting_ids=(event.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(
@@ -807,6 +831,8 @@ class TestSpecificRecallAuthority:
             subject="yui",
             category="yui_specific_memory_recall",
             supporting_ids=(memory.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(
@@ -830,6 +856,8 @@ class TestSpecificRecallAuthority:
             subject="yui",
             category="yui_specific_memory_recall",
             supporting_ids=(memory.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(
@@ -872,6 +900,8 @@ class TestContradictionVerdict:
             category="yui_completed_action",
             supporting_ids=(good.evidence_id,),
             contradicting_ids=(bad.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(
@@ -893,6 +923,8 @@ class TestContradictionVerdict:
             trigger="読んだよ",
             subject="yui",
             category="yui_completed_action",
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
         context = GroundingContext(completed_activities_today=(good,))
 
@@ -927,6 +959,8 @@ class TestContradictionVerdict:
             category="yui_completed_action",
             supporting_ids=(good.evidence_id,),
             contradicting_ids=("activity:does_not_exist",),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(
@@ -954,6 +988,8 @@ class TestContradictionVerdict:
             category="yui_completed_action",
             supporting_ids=(good.evidence_id,),
             contradicting_ids=(theirs.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
 
         resolved = EvidenceResolver().resolve(
@@ -1051,6 +1087,8 @@ class TestLegacyMemoryCategoryIsolation:
                 trigger="覚えているよ",
                 subject="yui",
                 category="yui_memory_claim",
+                interaction_scope="local_to_subject_world",
+                participants=(),
             )
 
     def test_the_resolver_refuses_it_even_if_the_schema_is_bypassed(self) -> None:
@@ -1068,6 +1106,8 @@ class TestLegacyMemoryCategoryIsolation:
             subject="yui",
             category="yui_specific_memory_recall",
             supporting_ids=(memory.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         ).model_copy(update={"category": "yui_memory_claim"})
 
         resolved = EvidenceResolver().resolve(
@@ -1096,6 +1136,8 @@ class TestLegacyMemoryCategoryIsolation:
             subject="yui",
             category="yui_specific_memory_recall",
             supporting_ids=(event.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         ).model_copy(update={"category": "yui_memory_claim"})
 
         resolved = EvidenceResolver().resolve(
@@ -1148,6 +1190,8 @@ class TestLegacyMemoryCategoryIsolation:
                     subject="yui",
                     category="yui_specific_memory_recall",
                     supporting_ids=(evidence.evidence_id,),
+                    interaction_scope="local_to_subject_world",
+                    participants=(),
                 ),
                 context,
             )
@@ -1182,6 +1226,8 @@ class TestLegacyMemoryCategoryIsolation:
                     subject="yui",
                     category="yui_general_memory_capability",
                     supporting_ids=(evidence.evidence_id,),
+                    interaction_scope="local_to_subject_world",
+                    participants=(),
                 ),
                 context,
             )
@@ -1246,6 +1292,8 @@ class TestSubjectRequiredForCommittingClaims:
             category=category,
             modality=modality,
             supporting_ids=(evidence.evidence_id,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         ).model_copy(update={"subject": subject})
         return EvidenceResolver().resolve(
             candidate, GroundingContext(completed_activities_today=(evidence,))
@@ -1304,6 +1352,8 @@ class TestSubjectRequiredForCommittingClaims:
                 subject="yui",
                 category="yui_completed_action",
                 supporting_ids=(evidence.evidence_id,),
+                interaction_scope="local_to_subject_world",
+                participants=(),
             ).model_copy(update={"subject": subject})
 
             resolved = EvidenceResolver().resolve(candidate, context)
@@ -1325,6 +1375,8 @@ class TestSubjectRequiredForCommittingClaims:
                 subject="user",
                 category="user_past_fact",
                 supporting_ids=(evidence.evidence_id,),
+                interaction_scope="local_to_subject_world",
+                participants=(),
             ).model_copy(update={"subject": subject})
 
             resolved = EvidenceResolver().resolve(candidate, context)
@@ -1359,6 +1411,8 @@ def _supported_and_contradicted():
         category="yui_completed_action",
         supporting_ids=(support.evidence_id,),
         contradicting_ids=(against.evidence_id,),
+        interaction_scope="local_to_subject_world",
+        participants=(),
     )
     return EvidenceResolver().resolve(candidate, context)
 
@@ -1415,6 +1469,8 @@ class TestVerdictReachesTheVerdict:
                 subject="yui",
                 category="yui_completed_action",
                 supporting_ids=(support.evidence_id,),
+                interaction_scope="local_to_subject_world",
+                participants=(),
             ),
             GroundingContext(completed_activities_today=(support,)),
         )
@@ -1439,6 +1495,8 @@ class TestVerdictReachesTheVerdict:
                 subject="yui",
                 category="yui_completed_action",
                 modality="hypothetical",
+                interaction_scope="local_to_subject_world",
+                participants=(),
             ),
             GroundingContext(),
         )
@@ -1455,6 +1513,8 @@ class TestVerdictReachesTheVerdict:
                 subject="yui",
                 category="yui_completed_action",
                 modality="assertion",
+                interaction_scope="local_to_subject_world",
+                participants=(),
             ),
             GroundingContext(),
         )
@@ -1507,6 +1567,8 @@ class TestContradictionAdmissibility:
             category="yui_completed_action",
             supporting_ids=(self.SUPPORT.evidence_id,),
             contradicting_ids=(contradiction,),
+            interaction_scope="local_to_subject_world",
+            participants=(),
         )
         return EvidenceResolver().resolve(candidate, GroundingContext(**sections))
 

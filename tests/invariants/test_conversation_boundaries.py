@@ -51,13 +51,19 @@ CROSS_WORLD_CLAIMS = [
     "昨日、君と直接会ったね。",
     "いま君の隣に座っているよ。",
     "君の手を握ったよ。",
-    "同じ部屋にいるみたいだね。",
+    "君と同じ部屋にいるみたいだね。",
+    "あなたにこれを直接渡したよ。",
 ]
 
 #: These used to be rejected here, on the theory that she had no body. They are
 #: now the resolver's business, not the guard's.
 OWN_WORLD_CLAIMS = [
     "さっき散歩に行ってきたよ。",
+    # The audit's false positives: a room and a handover with nobody from the
+    # other world in them. Her neighbours are not the USER.
+    "ミカと同じ部屋にいた。",
+    "ミカにこれを直接渡した。",
+    "友達の隣に座っていた。",
     "お昼にパスタを食べた。",
     "電車に乗ってきたところ。",
     "コーヒーを飲んだから元気。",
