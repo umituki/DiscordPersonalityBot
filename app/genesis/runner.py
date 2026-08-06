@@ -46,10 +46,16 @@ from app.genesis.critics import (
     check_identity,
 )
 from app.genesis.experience_world import validate_experience
+from app.genesis.world_gate import (
+    month_metadata,
+    stale_months,
+    stored_summary_refusal,
+    validate_genesis_month,
+    validate_genesis_summary,
+)
 from app.world.scope import (
     CURRENT_WORLD_MODEL_VERSION,
     is_current_world_model,
-    validate_interaction,
 )
 from app.genesis.ledger import ContinuityLedger
 from app.genesis.models import (
@@ -135,52 +141,44 @@ def _int_column(row, name: str) -> int:
         return 0
 
 
-def _month_refusal(row) -> str:
-    """Why this stored month may not be used, if it may not.
+#: The Genesis month rule lives in `world_gate`, and every stage here calls it
+#: rather than keeping its own copy. The USER ban duplicated into seven call
+#: sites is seven places for it to drift.
+_month_refusal = validate_genesis_month
+_stale_months = stale_months
 
-    Provenance first, then the metadata itself. A month stamped current whose
-    `participants_json` will not parse is *not* a month with no participants —
-    reading a corrupt blob as "nobody was there" is the permissive direction,
-    and it is available to anything that edits the database by hand.
+
+def _all_month_participants(rows) -> tuple[str, ...]:
+    """Everyone the year's months had, for a derivation check."""
+    found: set[str] = set()
+    for row in rows:
+        found.update(month_metadata(row).participants)
+    return tuple(sorted(found))
+
+
+def _widest_month_scope(rows) -> str:
+    """The broadest contact any of the year's months had.
+
+    Only used to tell the summariser what it is compressing. The value it
+    returns is checked by `validate_genesis_summary` like any other, so a wrong
+    answer here narrows or widens a prompt line and never a stored row.
     """
-    if not is_current_world_model(_int_column(row, "world_model_version")):
-        return "month_world_model_unverified"
-    import json as _json
-
-    try:
-        participants = tuple(_json.loads(row["participants_json"] or "[]"))
-    except Exception:  # noqa: BLE001
-        return "month_world_metadata_unreadable"
-    scope = row["interaction_scope"] or ""
-    if not scope:
-        return "month_world_metadata_missing"
-    return validate_interaction(
-        subject="yui", participants=participants, scope=scope
-    )
-
-
-def _stale_months(rows) -> list[tuple[str, str]]:
-    """``(month_id, reason)`` for every month that may not be used."""
-    return [
-        (row["month_id"], refusal)
-        for row in rows
-        if (refusal := _month_refusal(row))
-    ]
+    scopes = {month_metadata(row).interaction_scope for row in rows}
+    if "shared_communication" in scopes:
+        return "shared_communication"
+    return "local_to_subject_world"
 
 
 def _stored_participants(row) -> tuple[str, ...]:
-    """The world metadata a month was written with, for a row already checked.
+    """The participants of a month, read strictly.
 
-    Callers run `_month_refusal` first; this is the read after that passed, so
-    an exception here would mean the two disagree. It returns nothing rather
-    than raising, and nothing is a refusal everywhere it is used.
+    Only meaningful after `_month_refusal` has passed; on a row that has not
+    been checked this returns nothing, and nothing is a refusal everywhere it
+    is used. The old version swallowed a JSON error into ``()``, which reads as
+    "nobody was involved" — the permissive answer, and the one a hand-edited
+    database gets for free.
     """
-    import json as _json
-
-    try:
-        return tuple(_json.loads(row["participants_json"] or "[]"))
-    except Exception:  # noqa: BLE001
-        return ()
+    return month_metadata(row).participants
 
 
 class Extraction(BaseModel):
@@ -405,6 +403,25 @@ class GenesisRunner:
         # Hardening 5: the previous year comes from the *record*, not from a
         # local variable. A resume that started mid-Stage-A would otherwise
         # hand year eight a `previous` of None and restart her life there.
+        previous = self._previous_year_text(run_id, span.year_number)
+        if previous is None:
+            # A stored summary that does not verify. Not replaced with the
+            # scaffold or with nothing: either would build this year on a
+            # premise the current rules never accepted.
+            progress.blocked_by.append(
+                CriticIssue(
+                    severity="fatal",
+                    target_id=f"year_{span.year_number}",
+                    code="YEAR_CONTEXT_WORLD_MODEL_UNVERIFIED",
+                    reason=(
+                        "the previous year's summary does not verify; "
+                        "rebuild_required_world_model_version"
+                    ),
+                    repair_scope="year",
+                )
+            )
+            progress.incomplete.append(f"year_{span.year_number}_scaffold (context)")
+            return
         scaffold = await self._generate(
             SCAFFOLD_PROMPT,
             AnnualScaffold,
@@ -412,7 +429,7 @@ class GenesisRunner:
             age_start=span.age_start,
             age_end=span.age_end,
             period=f"{span.start.date()} 〜 {span.end.date()}",
-            previous=self._previous_year_text(run_id, span.year_number),
+            previous=previous,
             continuity=ledger.render(span.start),
             temperament=str(anchors.temperament.as_dict()),
         )
@@ -452,6 +469,13 @@ class GenesisRunner:
         """
         year_id = year["year_id"]
         expected_months = span.months
+
+        # Before any checkpoint is consulted. A checkpoint records that work
+        # finished; it is not a proof that what the work produced is still
+        # trustworthy, and every stage below branches on one. A resume that
+        # reads `year_critics_done` and skips the months has confused the two.
+        if not self._resume_state_is_sound(run_id, year_id, span, progress):
+            return False
 
         if not self._runs.reached(run_id, "year_months_done", span.year_number):
             for number, start_at, end_at, age in month_spans(span, anchors.birth_datetime):
@@ -534,6 +558,79 @@ class GenesisRunner:
             )
         return True
 
+    def _resume_state_is_sound(
+        self, run_id: str, year_id: str, span: LifeYearSpan, progress: GenesisProgress
+    ) -> bool:
+        """Revalidate everything this year already has on disk.
+
+        Months, staged experiences and the annual summary — the three things a
+        resume would otherwise reuse on the strength of a checkpoint. One
+        invalid row stops the year before a single model call, because the
+        alternative is a life built forward from something nothing checked.
+        """
+        blocked: list[CriticIssue] = []
+
+        months = self._records.months(year_id)
+        for month_id, reason in _stale_months(months):
+            blocked.append(
+                CriticIssue(
+                    severity="fatal",
+                    target_id=month_id,
+                    code="MONTH_WORLD_MODEL_UNVERIFIED",
+                    reason=f"{reason}; rebuild_required_world_model_version",
+                    repair_scope="month",
+                )
+            )
+
+        if self._experiences is not None:
+            for row in self._experiences.for_year(run_id, span.year_number):
+                refusal = _replay_refusal(row)
+                if refusal:
+                    blocked.append(
+                        CriticIssue(
+                            severity="fatal",
+                            target_id=row["experience_id"],
+                            code="EXPERIENCE_WORLD_MODEL_UNVERIFIED",
+                            reason=f"{refusal}; rebuild_required_world_model_version",
+                            repair_scope="experience",
+                        )
+                    )
+
+        year_row = self._records.year(run_id, span.year_number)
+        if year_row is not None and year_row["final_summary"]:
+            refusal = stored_summary_refusal(
+                year_row,
+                month_participants=_all_month_participants(months)
+                if not blocked
+                else None,
+            )
+            if refusal:
+                # Not repaired by regenerating over it. A stored summary that
+                # does not verify is an integrity violation in the run, and
+                # overwriting it would destroy the evidence of what went wrong.
+                blocked.append(
+                    CriticIssue(
+                        severity="fatal",
+                        target_id=year_id,
+                        code="SUMMARY_WORLD_MODEL_UNVERIFIED",
+                        reason=f"{refusal}; rebuild_required_world_model_version",
+                        repair_scope="year",
+                    )
+                )
+
+        if not blocked:
+            return True
+        progress.blocked_by.extend(blocked)
+        progress.incomplete.append(
+            f"year_{span.year_number}_resume_integrity ({len(blocked)})"
+        )
+        logger.error(
+            "year %s cannot resume: %s",
+            span.year_number,
+            "; ".join(issue.reason for issue in blocked),
+        )
+        return False
+
     async def _month(
         self,
         run_id: str,
@@ -572,12 +669,32 @@ class GenesisRunner:
 
         # Hardening 5 again: the previous month is read back, so a resume that
         # restarts inside a year does not hand month seven an empty past.
+        previous = self._previous_month_text(run_id, year, number)
+        if previous is None:
+            # The month before this one did not verify. Generating on top of it
+            # would carry its content into a row that gets the current stamp.
+            progress.blocked_by.append(
+                CriticIssue(
+                    severity="fatal",
+                    target_id=f"{year['year_id']}#{number}",
+                    code="MONTH_CONTEXT_WORLD_MODEL_UNVERIFIED",
+                    reason=(
+                        "the previous month does not verify; "
+                        "rebuild_required_world_model_version"
+                    ),
+                    repair_scope="month",
+                )
+            )
+            progress.incomplete.append(
+                f"year_{year['year_number']}_month_{number} (context)"
+            )
+            return
         month = await self._generate(
             MONTH_PROMPT,
             MonthNarrative,
             anchors=anchors.describe(),
             scaffold=year["scaffold_text"],
-            previous=self._previous_month_text(run_id, year, number),
+            previous=previous,
             continuity=ledger.render(start),
             age=age,
             period=f"{start.date()} 〜 {end.date()}",
@@ -702,8 +819,6 @@ class GenesisRunner:
         self, run_id: str, anchors: LifeAnchors, span: LifeYearSpan, year_id: str
     ) -> bool:
         year = self._records.year(run_id, span.year_number)
-        if year is not None and year["final_summary"]:
-            return True  # a resume must not rewrite a finished synthesis
         months = self._records.months(year_id)
         if not months:
             return False
@@ -718,6 +833,25 @@ class GenesisRunner:
                 ", ".join(f"{month_id}:{reason}" for month_id, reason in stale),
             )
             return False
+
+        month_participants = _all_month_participants(months)
+        if year is not None and year["final_summary"]:
+            # The fast path, *after* the input has been checked. It used to
+            # come first, so a year with a stale month reported itself
+            # synthesised without reading a single month — and the summary is
+            # what the next year takes as its premise.
+            refusal = stored_summary_refusal(
+                year, month_participants=month_participants
+            )
+            if refusal:
+                logger.error(
+                    "stored summary for year %s does not verify: %s",
+                    span.year_number,
+                    refusal,
+                )
+                return False
+            return True  # a resume must not rewrite a verified synthesis
+
         synthesis = await self._generate(
             SYNTHESIS_PROMPT,
             AnnualSynthesis,
@@ -729,15 +863,38 @@ class GenesisRunner:
             ),
             age_start=span.age_start,
             age_end=span.age_end,
+            # What the months were validated as. The summary is a derivation
+            # of them, so the generator is told the boundary rather than being
+            # asked to rediscover it — and Python checks the answer anyway.
+            month_participants=", ".join(month_participants) or "（YUIひとり）",
+            month_interaction_scope=_widest_month_scope(months),
         )
         if synthesis is None or not synthesis.summary.strip():
             # Hardening 2: no summary means the year is not synthesised. Saying
             # otherwise would leave `final_summary` empty behind a status that
             # claims it is not.
             return False
+        refusal = validate_genesis_summary(
+            participants=synthesis.participants,
+            interaction_scope=synthesis.interaction_scope,
+            month_participants=month_participants,
+        )
+        if refusal:
+            # Never written. An invalid summary saved and deleted afterwards is
+            # a year that briefly existed, and the next resume would find it.
+            logger.error(
+                "refusing to save the year %s summary: %s", span.year_number, refusal
+            )
+            return False
+
         # 34.6: where they disagree, the months win. The scaffold stays on the
         # row so the disagreement remains visible.
-        self._records.synthesise(year_id, summary=synthesis.summary)
+        self._records.synthesise(
+            year_id,
+            summary=synthesis.summary,
+            participants=synthesis.participants,
+            interaction_scope=synthesis.interaction_scope,
+        )
         return True
 
     # --- 34.11: experiences, not sentences ----------------------------------
@@ -1042,15 +1199,25 @@ class GenesisRunner:
         for year in self._records.years(run_id):
             for month in self._records.months(year["year_id"]):
                 checked += 1
+                # Strict first. The audit used to read the participants with a
+                # helper that answered a malformed list with "nobody", so a row
+                # with corrupt metadata and harmless prose passed — which is
+                # the one shape a final audit exists to catch.
+                refusal = _month_refusal(month)
+                if refusal:
+                    return AuditResult(
+                        "identity",
+                        False,
+                        f"{month['month_id']}: {refusal}",
+                    )
+                metadata = month_metadata(month)
                 verdict = check_identity(
                     ReviewTarget(
                         target_type="month",
                         target_id=month["month_id"],
                         text=month["narrative"],
-                        participants=_stored_participants(month),
-                        interaction_scope=(
-                            month["interaction_scope"] or "local_to_subject_world"
-                        ),
+                        participants=metadata.participants,
+                        interaction_scope=metadata.interaction_scope,
                     )
                 )
                 if not verdict.passed:
@@ -1329,20 +1496,58 @@ class GenesisRunner:
         row = self._records.year(run_id, year_number - 1)
         if row is None:
             return "-"
-        return row["final_summary"] or row["scaffold_text"] or "-"
+        if not row["final_summary"]:
+            # No summary yet. The scaffold is provisional by design — it is
+            # what Stage A guessed, not what the year turned out to be — and
+            # using it as context is the existing behaviour.
+            return row["scaffold_text"] or "-"
+        refusal = stored_summary_refusal(row)
+        if refusal:
+            # `None` means stop, not "carry on with nothing". Falling back to
+            # the scaffold here would quietly replace a verified summary with a
+            # guess and generate the next year from it; falling back to "-"
+            # would restart her life mid-way. Either is a life built on
+            # something that did not verify.
+            logger.error(
+                "previous year %s summary does not verify: %s",
+                year_number - 1,
+                refusal,
+            )
+            return None
+        return row["final_summary"]
 
     def _previous_month_text(self, run_id: str, year: Any, month_number: int) -> str:
         """Last month, read back — including December of the year before."""
         if month_number > 1:
             row = self._records.month(year["year_id"], month_number - 1)
-            if row is not None and row["narrative"]:
-                return row["narrative"]
-            return "-"
+            if row is None or not row["narrative"]:
+                return "-"
+            return self._verified_narrative(row)
         earlier = self._records.year(run_id, year["year_number"] - 1)
         if earlier is None:
             return "-"
         months = self._records.months(earlier["year_id"])
-        return months[-1]["narrative"] if months else "-"
+        if not months:
+            return "-"
+        return self._verified_narrative(months[-1])
+
+    def _verified_narrative(self, row: Any) -> str | None:
+        """A stored month's prose, or ``None`` if it may not be used as context.
+
+        Persisted text is not safe merely for being a string. This month is
+        about to become the premise of the next one, and a month nothing
+        checked would put its content into a generation that carries the
+        current stamp.
+        """
+        refusal = _month_refusal(row)
+        if refusal:
+            logger.error(
+                "previous month %s cannot be used as context: %s",
+                row["month_id"],
+                refusal,
+            )
+            return None
+        return row["narrative"]
 
     def _pending_count(self, run_id: str, year_number: int) -> int:
         if self._experiences is None:

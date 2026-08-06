@@ -116,11 +116,24 @@ class MonthNarrative(BaseModel):
 
 
 class AnnualSynthesis(BaseModel):
-    """Stage C output: the year as its months turned out (34.6)."""
+    """Stage C output: the year as its months turned out (34.6).
+
+    A compression of months that already passed world validation, not a place
+    to add to them — the same contract an extracted experience is held to, and
+    for the same reason: a second model call produced it. The world metadata is
+    required here because a summary with none could put the USER into a year
+    whose months never had one, and the summary is what the next year reads as
+    its context.
+    """
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     summary: str = Field(default="", max_length=4000)
+    #: Who the year involved, in the closed vocabulary. Must be a subset of
+    #: what its months had.
+    participants: tuple[WorldParticipant, ...]
+    #: Where the year's contact took place.
+    interaction_scope: GenesisInteractionScope
     #: Where the finished year contradicts the original scaffold. Recorded
     #: rather than smoothed over: the months win, and the disagreement is
     #: evidence that they did.

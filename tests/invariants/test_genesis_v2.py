@@ -132,7 +132,12 @@ class Storyteller:
                 interests=("本",),
             )
         if schema is AnnualSynthesis:
-            return AnnualSynthesis(summary="読んでばかりの一年。", revisions=("特になし",))
+            return AnnualSynthesis(
+                summary="読んでばかりの一年。",
+                revisions=("特になし",),
+                participants=("npc",),
+                interaction_scope="local_to_subject_world",
+            )
         if schema is Extraction:
             return Extraction(
                 experiences=tuple(

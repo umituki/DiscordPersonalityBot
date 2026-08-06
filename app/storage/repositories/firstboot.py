@@ -57,6 +57,23 @@ class FirstBootRepository:
             "SELECT * FROM first_boot_state ORDER BY rowid DESC LIMIT 1"
         )
 
+    def authoritative_genesis_run_id(self) -> str | None:
+        """The run whose life she is actually living, or ``None``.
+
+        The single source for "which Genesis life is authoritative". World
+        provenance used to answer this with the most recently started run,
+        which is a different question: a later run can exist without FIRST BOOT
+        ever having pointed at it, and then a stale life passes because a newer
+        one is sitting beside it in the table.
+
+        ``None`` means FIRST BOOT has not attached a run — a life that has not
+        begun. That is not a licence to go looking for one.
+        """
+        row = self.current()
+        if row is None:
+            return None
+        return row["genesis_run_id"] or None
+
     def transition(
         self,
         epoch_id: str,

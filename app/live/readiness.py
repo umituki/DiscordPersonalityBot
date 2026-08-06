@@ -203,9 +203,17 @@ class LiveReadiness:
             # Reported, not blocking. A legacy Common Ground row cannot become
             # a fact — the correction boundary already refuses it — so holding
             # the door over one would stop her talking about nothing.
+            #
+            # `passed=False, advisory=True` rather than `passed=True`: the two
+            # differ only in presentation, and the presentation is the whole
+            # point. A passing advisory prints `[ok]` and is filtered out of
+            # `LiveReport.warnings`, so the one operator who needed to know
+            # there are legacy rows sees a clean report. This way `blocks` is
+            # still False — the character plane opens — and the row appears
+            # under `warnings` and prints `[warn]`.
             return Check(
                 "world_model_current",
-                True,
+                False,
                 f"world model v{report.current}; legacy rows present: "
                 + "; ".join(report.advisory),
                 advisory=True,

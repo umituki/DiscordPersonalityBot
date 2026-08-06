@@ -55,7 +55,18 @@ from typing import Sequence
 #:
 #: 1 — the digital-existence identity, retroactively. No row was ever tagged 1.
 #: 2 — YUI is a person in her own world; nothing physical reaches the USER's.
-CURRENT_WORLD_MODEL_VERSION = 2
+#: 3 — the same, plus: the USER is absent from Genesis *entirely*, including
+#:     `shared_communication`, because those years predate the conversation;
+#:     the authoritative life is the one FIRST BOOT points at rather than the
+#:     most recent run; a resume revalidates stored data instead of trusting
+#:     the checkpoint that recorded the work; and an annual synthesis is a
+#:     checked derivation of its months rather than free prose.
+#:
+#: v2 rows are stale under v3. Several of those changes turn what used to pass
+#: into a refusal, so a life judged under v2 was judged by rules that no longer
+#: hold — and there is no way to re-judge it that does not mean reading its
+#: prose. Explicit rebuild, as always.
+CURRENT_WORLD_MODEL_VERSION = 3
 
 #: What a row carries when nothing recorded its provenance.
 UNVERIFIED_WORLD_MODEL_VERSION = 0

@@ -105,7 +105,7 @@ def _at(tmp_path, clock, version: int, name: str) -> Database:
 
 class TestMigration37:
     def test_a_fresh_database_is_at_the_latest(self, db: Database) -> None:
-        assert schema_version(db) == LATEST_VERSION == 38
+        assert schema_version(db) == LATEST_VERSION == 39
 
     @pytest.mark.parametrize(
         ("table", "column"),
@@ -129,7 +129,7 @@ class TestMigration37:
         try:
             result = migrate(db, clock=clock)
 
-            assert result.applied == (37, 38)
+            assert result.applied == (37, 38, 39)
             assert schema_version(db) == LATEST_VERSION
         finally:
             db.close()
@@ -166,10 +166,12 @@ class TestMigration37:
             _seed_month(db, "君と映画を見に行った")
             migrate(db, clock=clock)
 
-            report = read_world_provenance(db)
+            report = read_world_provenance(
+                db, authoritative_genesis_run_id="gen_x"
+            )
 
             assert report.rebuild_required
-            assert any(item.startswith("life_months=") for item in report.stale)
+            assert any(item.startswith("life_months=") for item in report.blocking)
         finally:
             db.close()
 
@@ -729,7 +731,9 @@ class TestGenesisRunProvenance:
             assert GenesisRunRepository(db).world_model_version("gen_old") == (
                 UNVERIFIED_WORLD_MODEL_VERSION
             )
-            assert read_world_provenance(db).rebuild_required
+            assert read_world_provenance(
+                db, authoritative_genesis_run_id="gen_old"
+            ).rebuild_required
         finally:
             db.close()
 
@@ -828,9 +832,18 @@ class TestGenesisRunnerGates:
         claim goes through runs here too."""
         from app.genesis.runner import _month_refusal
 
+        # The Genesis USER ban fires first and does not depend on the scope:
+        # 「USERと話した」 as `shared_communication` is coherent in the present
+        # and is a conversation that had not happened yet.
         assert _month_refusal(_row(participants_json='["user"]')).startswith(
-            "interaction_scope_world_mismatch"
+            "first_boot_boundary"
         )
+        assert _month_refusal(
+            _row(
+                participants_json='["user"]',
+                interaction_scope="shared_communication",
+            )
+        ).startswith("first_boot_boundary")
 
     def test_a_good_row_passes(self) -> None:
         from app.genesis.runner import _month_refusal, _stored_participants
@@ -909,7 +922,7 @@ def _row(**overrides):
 
 class TestBlockingAndAdvisory:
     @staticmethod
-    def _gate(db):
+    def _gate(db, run_id=None):
         from app.live.readiness import LiveReadiness
 
         class Born:
@@ -920,14 +933,16 @@ class TestBlockingAndAdvisory:
             first_boot=Born(),
             shadow=None,
             shadow_decisions=None,
-            world_provenance=lambda: read_world_provenance(db),
+            world_provenance=lambda: read_world_provenance(
+                db, authoritative_genesis_run_id=run_id
+            ),
         )
 
     @staticmethod
-    def _check(db):
+    def _check(db, run_id=None):
         return next(
             item
-            for item in TestBlockingAndAdvisory._gate(db).check().checks
+            for item in TestBlockingAndAdvisory._gate(db, run_id).check().checks
             if item.name == "world_model_current"
         )
 
@@ -944,9 +959,9 @@ class TestBlockingAndAdvisory:
         )
 
     def test_a_current_life_passes(self, db, clock) -> None:
-        self._current_life(db, clock)
+        run_id = self._current_life(db, clock)
 
-        assert self._check(db).passed
+        assert self._check(db, run_id).passed
 
     def test_a_stale_common_ground_row_alone_does_not_block(
         self, db, clock
@@ -954,27 +969,38 @@ class TestBlockingAndAdvisory:
         """It cannot become a fact — the correction boundary already refuses
         it — so holding the door over one would stop her talking about
         nothing. Reported, because the OWNER should know it is there."""
-        self._current_life(db, clock)
+        run_id = self._current_life(db, clock)
         _legacy_common_ground(db, clock)
 
-        report = read_world_provenance(db)
+        report = read_world_provenance(db, authoritative_genesis_run_id=run_id)
         assert not report.rebuild_required
         assert any(item.startswith("common_ground_claims=") for item in report.advisory)
 
-        check = self._check(db)
-        assert check.passed
+        check = self._check(db, run_id)
+        # Not blocking, and not `[ok]` either. A passing advisory is filtered
+        # out of `LiveReport.warnings` and prints as a pass, so the one
+        # operator who needed to know the rows are there sees a clean report.
+        assert not check.blocks
+        assert not check.passed
         assert check.advisory
         assert "legacy rows present" in check.detail
+
+        report_out = self._gate(db, run_id).check()
+        assert check not in report_out.blockers, (
+            "an advisory must not hold the character plane"
+        )
+        assert check in report_out.warnings
+        assert "[warn] world_model_current" in report_out.describe()
 
     @pytest.mark.parametrize("store", ["life_months", "genesis_experiences"])
     def test_a_stale_life_row_does_block(self, db, clock, store) -> None:
         run_id = self._current_life(db, clock)
         _legacy_life_row(db, store, run_id)
 
-        report = read_world_provenance(db)
+        report = read_world_provenance(db, authoritative_genesis_run_id=run_id)
         assert report.rebuild_required
         assert any(item.startswith(f"{store}=") for item in report.blocking)
-        assert not self._check(db).passed
+        assert not self._check(db, run_id).passed
 
     def test_a_stale_run_blocks(self, db, clock) -> None:
         from app.storage.repositories.rebuild import RebuildEpochRepository
@@ -991,9 +1017,9 @@ class TestBlockingAndAdvisory:
             ),
         )
 
-        report = read_world_provenance(db)
+        report = read_world_provenance(db, authoritative_genesis_run_id="gen_old")
         assert "genesis_run=1" in report.blocking
-        assert not self._check(db).passed
+        assert not self._check(db, "gen_old").passed
 
     def test_a_missing_reader_fails_closed(self) -> None:
         """"The reader was not wired" is indistinguishable from "nothing was

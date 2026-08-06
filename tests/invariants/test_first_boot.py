@@ -153,7 +153,11 @@ class Storyteller:
                 people=("ミカ",),
             )
         if schema is AnnualSynthesis:
-            return AnnualSynthesis(summary="読んでばかりの年。")
+            return AnnualSynthesis(
+                summary="読んでばかりの年。",
+                participants=("npc",),
+                interaction_scope="local_to_subject_world",
+            )
         if schema is Extraction:
             return Extraction(
                 experiences=(

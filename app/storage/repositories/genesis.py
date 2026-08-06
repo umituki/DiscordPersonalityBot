@@ -253,17 +253,32 @@ class LifeRecordRepository:
         )
         return year_id
 
-    def synthesise(self, year_id: str, *, summary: str) -> None:
-        """Stage C (34.6). The scaffold is kept, not overwritten.
+    def synthesise(
+        self,
+        year_id: str,
+        *,
+        summary: str,
+        participants: Sequence[str] = (),
+        interaction_scope: str = "",
+    ) -> None:
+        """Store the year's summary with the world metadata it was checked as.
 
-        The months win when they disagree with the original sketch — and the
-        sketch stays on the row, because "these two disagreed and the months
-        were preferred" is a fact worth being able to see.
+        One write. A version stamped by a later UPDATE would leave a window in
+        which the summary exists without provenance, and the row inside that
+        window is exactly the one this guards against.
         """
         self._db.execute(
-            "UPDATE life_years SET final_summary = ?, status = 'synthesised' "
-            "WHERE year_id = ?",
-            (summary, year_id),
+            "UPDATE life_years SET final_summary = ?, status = 'synthesised', "
+            "final_summary_participants_json = ?, "
+            "final_summary_interaction_scope = ?, "
+            "final_summary_world_model_version = ? WHERE year_id = ?",
+            (
+                summary,
+                json.dumps(list(participants)),
+                interaction_scope,
+                CURRENT_WORLD_MODEL_VERSION,
+                year_id,
+            ),
         )
 
     def year(self, run_id: str, year_number: int) -> sqlite3.Row | None:

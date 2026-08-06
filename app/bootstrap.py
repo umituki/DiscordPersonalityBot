@@ -1204,7 +1204,15 @@ class Application:
             # the question is asked, not as it stood at startup — a
             # rebuild-reset inside a running process would otherwise keep
             # reporting the life it replaced.
-            world_provenance=lambda: read_world_provenance(db),
+            world_provenance=lambda: read_world_provenance(
+                db,
+                # FIRST BOOT decides which life is authoritative. Reading the
+                # most recent run instead lets a newer row hide the stale life
+                # FIRST BOOT is actually pointing at.
+                authoritative_genesis_run_id=(
+                    first_boot_repo.authoritative_genesis_run_id()
+                ),
+            ),
         )
 
         # Audit finding 6. Built from the repositories' *published* APIs, and

@@ -2280,6 +2280,29 @@ _0038_GENESIS_RUN_WORLD_PROVENANCE = Migration(
 )
 
 
+_0039_ANNUAL_SYNTHESIS_PROVENANCE = Migration(
+    version=39,
+    name="annual_synthesis_provenance",
+    statements=(
+        # A year's summary is written by a model from months that were
+        # validated — and until now carried no world metadata of its own, so
+        # nothing could tell whether the summary described those months or
+        # introduced somebody they never had. It is also what the *next* year
+        # reads as context, which is how one sentence becomes the premise of
+        # eighteen more.
+        #
+        # The same shape already fixed for extracted experiences: a derivative
+        # of validated input is not thereby validated.
+        "ALTER TABLE life_years ADD COLUMN final_summary_world_model_version "
+        "INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE life_years ADD COLUMN final_summary_participants_json "
+        "TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE life_years ADD COLUMN final_summary_interaction_scope "
+        "TEXT NOT NULL DEFAULT ''",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -2319,6 +2342,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0036_GENESIS_WORLD_METADATA,
     _0037_WORLD_MODEL_PROVENANCE,
     _0038_GENESIS_RUN_WORLD_PROVENANCE,
+    _0039_ANNUAL_SYNTHESIS_PROVENANCE,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)
