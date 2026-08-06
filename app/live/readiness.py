@@ -181,21 +181,37 @@ class LiveReadiness:
         rebuild-reset.
         """
         if self._world_provenance is None:
-            return Check("world_model_current", True, "not wired")
+            # Fail closed. This is a hard go-live dependency, and "the reader
+            # was not wired" is indistinguishable from "nothing was checked" —
+            # which is the state it exists to detect. A wiring regression must
+            # not read as a pass.
+            return Check(
+                "world_model_current", False, "world provenance reader is not wired"
+            )
         try:
             report = self._world_provenance()
         except Exception as exc:  # noqa: BLE001
             return Check("world_model_current", False, repr(exc)[:120])
-        if not report.stale:
+        if report.blocking:
+            return Check(
+                "world_model_current",
+                False,
+                "rebuild_required_world_model_version: "
+                + "; ".join(report.blocking),
+            )
+        if report.advisory:
+            # Reported, not blocking. A legacy Common Ground row cannot become
+            # a fact — the correction boundary already refuses it — so holding
+            # the door over one would stop her talking about nothing.
             return Check(
                 "world_model_current",
                 True,
-                f"world model v{report.current}",
+                f"world model v{report.current}; legacy rows present: "
+                + "; ".join(report.advisory),
+                advisory=True,
             )
         return Check(
-            "world_model_current",
-            False,
-            "rebuild_required_world_model_version: " + "; ".join(report.stale),
+            "world_model_current", True, f"world model v{report.current}"
         )
 
     def _first_boot_complete(self) -> Check:

@@ -2262,6 +2262,24 @@ _0037_WORLD_MODEL_PROVENANCE = Migration(
 )
 
 
+_0038_GENESIS_RUN_WORLD_PROVENANCE = Migration(
+    version=38,
+    name="genesis_run_world_provenance",
+    statements=(
+        # Provenance reached the rows a Genesis run produces — months,
+        # experiences — but not the run itself. A resume takes a run id, and an
+        # old run id is a thing somebody can type. Without this the entrance
+        # cannot answer "was this life started under the current rules", and
+        # every gate downstream is one the resume has already walked past.
+        #
+        # An epoch being current does not settle it either: epochs and runs are
+        # separate entities, and inferring one from the other is the kind of
+        # reasoning provenance exists to replace.
+        "ALTER TABLE genesis_runs ADD COLUMN world_model_version INTEGER NOT NULL DEFAULT 0",
+    ),
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     _0001_CORE,
     _0002_LLM_CALLS,
@@ -2300,6 +2318,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     _0035_SEMANTIC_MEMORY_IDENTITY,
     _0036_GENESIS_WORLD_METADATA,
     _0037_WORLD_MODEL_PROVENANCE,
+    _0038_GENESIS_RUN_WORLD_PROVENANCE,
 )
 
 LATEST_VERSION = max(migration.version for migration in MIGRATIONS)

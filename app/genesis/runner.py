@@ -49,6 +49,7 @@ from app.genesis.experience_world import validate_experience
 from app.world.scope import (
     CURRENT_WORLD_MODEL_VERSION,
     is_current_world_model,
+    validate_interaction,
 )
 from app.genesis.ledger import ContinuityLedger
 from app.genesis.models import (
@@ -134,19 +135,51 @@ def _int_column(row, name: str) -> int:
         return 0
 
 
-def _stored_participants(row) -> tuple[str, ...]:
-    """The world metadata a month was written with.
+def _month_refusal(row) -> str:
+    """Why this stored month may not be used, if it may not.
 
-    Rows from before migration 36 have the column's default — an empty list —
-    which is what they were generated under: the substring critic was already
-    looking for the USER, so a month that got through named nobody it should
-    not have. Nothing is inferred from the prose here.
+    Provenance first, then the metadata itself. A month stamped current whose
+    `participants_json` will not parse is *not* a month with no participants —
+    reading a corrupt blob as "nobody was there" is the permissive direction,
+    and it is available to anything that edits the database by hand.
+    """
+    if not is_current_world_model(_int_column(row, "world_model_version")):
+        return "month_world_model_unverified"
+    import json as _json
+
+    try:
+        participants = tuple(_json.loads(row["participants_json"] or "[]"))
+    except Exception:  # noqa: BLE001
+        return "month_world_metadata_unreadable"
+    scope = row["interaction_scope"] or ""
+    if not scope:
+        return "month_world_metadata_missing"
+    return validate_interaction(
+        subject="yui", participants=participants, scope=scope
+    )
+
+
+def _stale_months(rows) -> list[tuple[str, str]]:
+    """``(month_id, reason)`` for every month that may not be used."""
+    return [
+        (row["month_id"], refusal)
+        for row in rows
+        if (refusal := _month_refusal(row))
+    ]
+
+
+def _stored_participants(row) -> tuple[str, ...]:
+    """The world metadata a month was written with, for a row already checked.
+
+    Callers run `_month_refusal` first; this is the read after that passed, so
+    an exception here would mean the two disagree. It returns nothing rather
+    than raising, and nothing is a refusal everywhere it is used.
     """
     import json as _json
 
     try:
         return tuple(_json.loads(row["participants_json"] or "[]"))
-    except Exception:  # noqa: BLE001 - a malformed blob names nobody
+    except Exception:  # noqa: BLE001
         return ()
 
 
@@ -264,6 +297,40 @@ class GenesisRunner:
         self, anchors: LifeAnchors, *, resume: str | None = None, max_years: int | None = None
     ) -> GenesisProgress:
         """Build a life. Resumable, and never twice for the same year."""
+        if resume is not None:
+            # The entrance, and it is before everything: no anchors saved, no
+            # model call, no month reused, no experience staged, no event.
+            #
+            # A resume takes a run id, and an old run id is as easy to supply
+            # as a new one. Every gate after this point is one the resume has
+            # already walked past — and the月 → synthesis → extraction →
+            # experience chain ends in `stage()`, which stamps the *current*
+            # version onto whatever reaches it. That is how a life generated
+            # under the old rules would come out the far side looking verified.
+            version = self._runs.world_model_version(resume)
+            if not is_current_world_model(version):
+                logger.error(
+                    "refusing to resume genesis run %s: world model v%s, current is v%s",
+                    resume,
+                    version,
+                    CURRENT_WORLD_MODEL_VERSION,
+                )
+                progress = GenesisProgress(run_id=resume)
+                progress.blocked_by.append(
+                    CriticIssue(
+                        severity="fatal",
+                        target_id=resume,
+                        code="GENESIS_RUN_WORLD_MODEL_UNVERIFIED",
+                        reason=(
+                            "genesis_run_world_model_unverified: this run predates "
+                            f"world model v{CURRENT_WORLD_MODEL_VERSION}; "
+                            "rebuild_required_world_model_version"
+                        ),
+                        repair_scope="genesis_run",
+                    )
+                )
+                return progress
+
         run_id = resume or self._runs.start(
             birth=anchors.birth_datetime,
             present=anchors.present_datetime,
@@ -481,6 +548,25 @@ class GenesisRunner:
     ) -> None:
         existing = self._records.month(year["year_id"], number)
         if existing is not None and existing["narrative"]:
+            # A resume reuses what is already written — but only if the current
+            # rules wrote it. Counting a stale month as done is how one gets
+            # carried into a synthesis, an extraction and an experience without
+            # anything having judged it.
+            stale = _month_refusal(existing)
+            if stale:
+                progress.blocked_by.append(
+                    CriticIssue(
+                        severity="fatal",
+                        target_id=existing["month_id"],
+                        code="MONTH_WORLD_MODEL_UNVERIFIED",
+                        reason=f"{stale}; rebuild_required_world_model_version",
+                        repair_scope="month",
+                    )
+                )
+                progress.incomplete.append(
+                    f"year_{year['year_number']}_month_{number} ({stale})"
+                )
+                return
             progress.months_written += 1
             return
 
@@ -568,6 +654,21 @@ class GenesisRunner:
         blocked: list[CriticIssue] = []
         unavailable: list[str] = []
         for month in self._records.months(year_id):
+            stale = _month_refusal(month)
+            if stale:
+                # Never reaches the critic. Sending it there would put the
+                # answer back on the substring pass, which a paraphrase walks
+                # past — that is the layer this replaced, not the fallback.
+                blocked.append(
+                    CriticIssue(
+                        severity="fatal",
+                        target_id=month["month_id"],
+                        code="MONTH_WORLD_MODEL_UNVERIFIED",
+                        reason=f"{stale}; rebuild_required_world_model_version",
+                        repair_scope="month",
+                    )
+                )
+                continue
             target = ReviewTarget(
                 target_type="month",
                 target_id=month["month_id"],
@@ -576,6 +677,12 @@ class GenesisRunner:
                 age_end=month["age_end"],
                 anchors=anchors.describe(),
                 continuity=ledger.render(span.start),
+                # The structured metadata the month was written with, so the
+                # critic decides on participants rather than on wording.
+                participants=_stored_participants(month),
+                interaction_scope=(
+                    month["interaction_scope"] or "local_to_subject_world"
+                ),
             )
             review = await self._critics.review(target)
             progress.audits_run += 1
@@ -599,6 +706,17 @@ class GenesisRunner:
             return True  # a resume must not rewrite a finished synthesis
         months = self._records.months(year_id)
         if not months:
+            return False
+        stale = _stale_months(months)
+        if stale:
+            # A synthesis is a new current row summarising these months. One
+            # stale month in the input and the summary launders it: the prose
+            # comes out the other side stamped with the current version.
+            logger.error(
+                "refusing to synthesise year %s: %s",
+                span.year_number,
+                ", ".join(f"{month_id}:{reason}" for month_id, reason in stale),
+            )
             return False
         synthesis = await self._generate(
             SYNTHESIS_PROMPT,
@@ -636,6 +754,30 @@ class GenesisRunner:
             return True
         staged = 0
         for month in self._records.months(year_id):
+            stale = _month_refusal(month)
+            if stale:
+                # The laundering path, closed at its source. `stage()` stamps
+                # the current version on whatever reaches it, so a stale month
+                # that got as far as the extraction call would come back as a
+                # current experience — with a fresh id, a real provenance mark
+                # and nothing to distinguish it from a verified one.
+                #
+                # The model is not called. Not "called and discarded": the gate
+                # is before the call, so a stale month costs nothing and
+                # changes nothing.
+                progress.blocked_by.append(
+                    CriticIssue(
+                        severity="fatal",
+                        target_id=month["month_id"],
+                        code="MONTH_WORLD_MODEL_UNVERIFIED",
+                        reason=f"{stale}; rebuild_required_world_model_version",
+                        repair_scope="month",
+                    )
+                )
+                progress.incomplete.append(
+                    f"month_{month['month_id']}_extraction ({stale})"
+                )
+                return False
             if self._experiences.for_month(month["month_id"]):
                 continue  # already extracted; a resume does not redo it
             extracted = await self._generate(

@@ -77,6 +77,14 @@ class _Unverified:
     complete = False
 
 
+def _clean_world_provenance():
+    """A database whose life was produced under the current world model."""
+    from app.storage.repositories.world_provenance import WorldProvenanceReport
+    from app.world.scope import CURRENT_WORLD_MODEL_VERSION
+
+    return WorldProvenanceReport(current=CURRENT_WORLD_MODEL_VERSION, counts={})
+
+
 def _gate(**overrides) -> LiveReadiness:
     """A gate with everything satisfied, so each test breaks exactly one thing."""
 
@@ -102,6 +110,10 @@ def _gate(**overrides) -> LiveReadiness:
         schema_version=LATEST_SCHEMA,
         latest_schema=LATEST_SCHEMA,
         enabled=True,
+        # World provenance is a hard dependency: absent reads as "nothing was
+        # checked", which is the state it exists to detect. A gate with
+        # everything satisfied has to say so explicitly.
+        world_provenance=_clean_world_provenance,
     )
     defaults.update(overrides)
     return LiveReadiness(**defaults)

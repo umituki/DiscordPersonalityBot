@@ -267,7 +267,7 @@ def test_a_schema_34_database_upgrades_without_losing_rows(
 
         result = migrate(database, clock=clock)
 
-        assert result.applied == (35, 36, 37)
+        assert result.applied == (35, 36, 37, 38)
         assert schema_version(database) == LATEST_VERSION
         assert _unique_index_columns(database, "idx_semantic_statement") == [
             "statement",
@@ -298,7 +298,7 @@ def test_a_schema_33_database_applies_both_migrations(
 
         result = migrate(database, clock=clock)
 
-        assert result.applied == (34, 35, 36, 37)
+        assert result.applied == (34, 35, 36, 37, 38)
         assert schema_version(database) == LATEST_VERSION
         row = database.query_one(
             "SELECT subject FROM semantic_memories WHERE statement = '移行前の知識'"
@@ -325,6 +325,7 @@ def test_no_migration_before_the_latest_was_edited() -> None:
     assert checksums[34].startswith("af83c6ad2b13"), "migration 34 was edited"
     assert checksums[35].startswith("56eef5bd5488"), "migration 35 was edited"
     assert checksums[36].startswith("390124beb257"), "migration 36 was edited"
-    assert LATEST_VERSION == 37
-    assert MIGRATIONS[-1].version == 37
-    assert MIGRATIONS[-1].name == "world_model_provenance"
+    assert checksums[37].startswith("2ef139ec9562"), "migration 37 was edited"
+    assert LATEST_VERSION == 38
+    assert MIGRATIONS[-1].version == 38
+    assert MIGRATIONS[-1].name == "genesis_run_world_provenance"

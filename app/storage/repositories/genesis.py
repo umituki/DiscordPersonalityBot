@@ -10,7 +10,10 @@ from typing import Any, Sequence
 from app import ids
 from app.clock import from_iso, to_iso
 from app.genesis.anchors import LifeAnchors, TemperamentSeed
-from app.world.scope import CURRENT_WORLD_MODEL_VERSION
+from app.world.scope import (
+    CURRENT_WORLD_MODEL_VERSION,
+    UNVERIFIED_WORLD_MODEL_VERSION,
+)
 from app.storage.database import Database
 
 RUN = "gen"
@@ -33,8 +36,18 @@ class GenesisRunRepository:
         run_id = ids.new_id(RUN)
         self._db.execute(
             "INSERT INTO genesis_runs (genesis_run_id, started_at, birth_datetime, "
-            "present_datetime, years) VALUES (?, ?, ?, ?, ?)",
-            (run_id, to_iso(now), to_iso(birth), to_iso(present), years),
+            "present_datetime, years, world_model_version) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                to_iso(now),
+                to_iso(birth),
+                to_iso(present),
+                years,
+                # In the same INSERT. A version written by a later UPDATE would
+                # mean a window in which a run exists without provenance, and a
+                # crash inside that window leaves exactly the row this is for.
+                CURRENT_WORLD_MODEL_VERSION,
+            ),
         )
         return run_id
 
@@ -56,6 +69,20 @@ class GenesisRunRepository:
         return self._db.query_one(
             "SELECT * FROM genesis_runs WHERE genesis_run_id = ?", (run_id,)
         )
+
+    def world_model_version(self, run_id: str) -> int:
+        """Which world model this run was started under. 0 if none recorded.
+
+        The single entrance question for a resume. A run id is something a
+        caller supplies, and an old one is as easy to supply as a new one.
+        """
+        row = self.get(run_id)
+        if row is None:
+            return UNVERIFIED_WORLD_MODEL_VERSION
+        try:
+            return int(row["world_model_version"] or 0)
+        except (IndexError, KeyError, TypeError, ValueError):
+            return UNVERIFIED_WORLD_MODEL_VERSION
 
     def latest(self) -> sqlite3.Row | None:
         return self._db.query_one(
